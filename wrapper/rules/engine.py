@@ -1,0 +1,467 @@
+#!/usr/bin/env python3
+"""
+Rules Engine for SAP Pacemaker Cluster Health Check
+
+Loads and executes health check rules from YAML files.
+Supports both live command execution and SOSreport parsing.
+"""
+
+import os
+import re
+import yaml
+import subprocess
+from pathlib import Path
+from dataclasses import dataclass, field
+from typing import List, Dict, Optional, Any, Tuple
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from enum import Enum
+
+
+class Severity(Enum):
+    """Check severity levels."""
+    INFO = "INFO"
+    WARNING = "WARNING"
+    CRITICAL = "CRITICAL"
+
+
+class CheckStatus(Enum):
+    """Check result status."""
+    PASSED = "PASSED"
+    FAILED = "FAILED"
+    SKIPPED = "SKIPPED"
+    ERROR = "ERROR"
+
+
+@dataclass
+class CheckResult:
+    """Result of a single health check."""
+    check_id: str
+    description: str
+    status: CheckStatus
+    severity: Severity
+    message: str
+    details: Dict[str, Any] = field(default_factory=dict)
+    node: Optional[str] = None
+
+
+@dataclass
+class RuleDefinition:
+    """Parsed rule definition from YAML."""
+    check_id: str
+    version: str
+    severity: str
+    description: str
+    enabled: bool
+    source_definitions: Dict[str, Any]
+    parser: Dict[str, Any]
+    validation_logic: Dict[str, Any]
+    topology_filter: Optional[str] = None
+    raw_yaml: Dict[str, Any] = field(default_factory=dict)
+
+
+class RulesEngine:
+    """Engine for loading and executing health check rules."""
+
+    DEFAULT_RULES_PATH = "/home/mmoster/projects/cluster_health_check/sap_hana_healthcheck/rules"
+    CMD_TIMEOUT = 30
+    MAX_WORKERS = 5
+
+    def __init__(self, rules_path: str = None, access_config: dict = None):
+        self.rules_path = Path(rules_path) if rules_path else Path(self.DEFAULT_RULES_PATH)
+        self.access_config = access_config or {}
+        self.rules: List[RuleDefinition] = []
+        self.results: List[CheckResult] = []
+
+    def load_rules(self) -> List[RuleDefinition]:
+        """Load all CHK_*.yaml rule files."""
+        self.rules = []
+
+        if not self.rules_path.exists():
+            print(f"[WARNING] Rules path does not exist: {self.rules_path}")
+            return self.rules
+
+        rule_files = sorted(self.rules_path.glob("CHK_*.yaml"))
+        print(f"Found {len(rule_files)} rule files in {self.rules_path}")
+
+        for rule_file in rule_files:
+            try:
+                with open(rule_file, 'r') as f:
+                    data = yaml.safe_load(f)
+
+                if not data or not data.get('enabled', True):
+                    print(f"  [SKIP] {rule_file.name} (disabled)")
+                    continue
+
+                rule = RuleDefinition(
+                    check_id=data.get('check_id', rule_file.stem),
+                    version=data.get('version', '1.0'),
+                    severity=data.get('severity', 'WARNING'),
+                    description=data.get('description', ''),
+                    enabled=data.get('enabled', True),
+                    source_definitions=data.get('source_definitions', {}),
+                    parser=data.get('parser', {}),
+                    validation_logic=data.get('validation_logic', {}),
+                    topology_filter=data.get('topology_filter'),
+                    raw_yaml=data
+                )
+                self.rules.append(rule)
+                print(f"  [LOAD] {rule.check_id}: {rule.description[:50]}...")
+
+            except Exception as e:
+                print(f"  [ERROR] Failed to load {rule_file.name}: {e}")
+
+        return self.rules
+
+    def list_rules(self) -> List[Dict[str, str]]:
+        """Return a summary list of loaded rules."""
+        return [
+            {
+                'check_id': r.check_id,
+                'severity': r.severity,
+                'description': r.description,
+                'enabled': r.enabled
+            }
+            for r in self.rules
+        ]
+
+    def _execute_command(self, cmd: str, node: str = None,
+                        method: str = 'ssh', user: str = None) -> Tuple[bool, str]:
+        """Execute a command locally, via SSH, or via Ansible."""
+        try:
+            if node and method == 'ssh':
+                ssh_user = user or os.environ.get('USER', 'root')
+                full_cmd = f"ssh -o BatchMode=yes -o ConnectTimeout=10 {ssh_user}@{node} '{cmd}'"
+            elif node and method == 'ansible':
+                full_cmd = f"ansible {node} -m shell -a '{cmd}' -o"
+            else:
+                full_cmd = cmd
+
+            result = subprocess.run(
+                full_cmd,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=self.CMD_TIMEOUT
+            )
+
+            output = result.stdout
+            if method == 'ansible' and node:
+                # Parse Ansible output - extract actual command output
+                if '|' in output and '>>' in output:
+                    output = output.split('>>', 1)[-1].strip()
+
+            return result.returncode == 0, output
+
+        except subprocess.TimeoutExpired:
+            return False, f"Command timed out after {self.CMD_TIMEOUT}s"
+        except Exception as e:
+            return False, str(e)
+
+    def _read_sosreport(self, sos_path: str, node: str, sos_base: str) -> Tuple[bool, str]:
+        """Read data from SOSreport directory."""
+        # Build full path
+        node_sos = Path(sos_base) / node
+        if not node_sos.exists():
+            # Try to find matching sosreport directory
+            for item in Path(sos_base).iterdir():
+                if item.is_dir() and node in item.name:
+                    node_sos = item
+                    break
+
+        file_path = node_sos / sos_path
+        if file_path.exists():
+            try:
+                with open(file_path, 'r') as f:
+                    return True, f.read()
+            except Exception as e:
+                return False, str(e)
+
+        return False, f"File not found: {file_path}"
+
+    def _parse_output(self, output: str, parser_config: Dict) -> Dict[str, Any]:
+        """Parse command output using configured parser."""
+        parsed = {}
+
+        if parser_config.get('type') != 'regex':
+            return {'raw': output}
+
+        patterns = parser_config.get('search_patterns', [])
+        flags = re.MULTILINE if parser_config.get('multiline', False) else 0
+
+        for pattern in patterns:
+            name = pattern.get('name')
+            regex = pattern.get('regex')
+            group = pattern.get('group', 0)
+
+            if not name or not regex:
+                continue
+
+            try:
+                match = re.search(regex, output, flags)
+                if match:
+                    if group == 0:
+                        parsed[name] = match.group(0)
+                    else:
+                        parsed[name] = match.group(group) if group <= len(match.groups()) else None
+                else:
+                    parsed[name] = None
+            except Exception as e:
+                parsed[name] = None
+                parsed[f'{name}_error'] = str(e)
+
+        return parsed
+
+    def _evaluate_expectation(self, parsed: Dict, expectation: Dict) -> Tuple[bool, str]:
+        """Evaluate a single expectation against parsed data."""
+        key = expectation.get('key')
+        operator = expectation.get('operator')
+        expected = expectation.get('value')
+        message = expectation.get('message', f"Check failed for {key}")
+
+        actual = parsed.get(key)
+
+        if operator == 'exists':
+            if expected:
+                passed = actual is not None
+            else:
+                passed = actual is None
+        elif operator == 'not_exists':
+            passed = actual is None
+        elif operator == 'eq':
+            passed = actual == expected
+        elif operator == 'ne':
+            passed = actual != expected
+        elif operator == 'in':
+            passed = actual in expected if isinstance(expected, list) else actual == expected
+        elif operator == 'not_in':
+            passed = actual not in expected if isinstance(expected, list) else actual != expected
+        elif operator == 'contains':
+            passed = expected in str(actual) if actual else False
+        elif operator == 'regex':
+            passed = bool(re.search(expected, str(actual))) if actual else False
+        elif operator == 'gt':
+            try:
+                passed = float(actual) > float(expected)
+            except (TypeError, ValueError):
+                passed = False
+        elif operator == 'lt':
+            try:
+                passed = float(actual) < float(expected)
+            except (TypeError, ValueError):
+                passed = False
+        else:
+            passed = False
+            message = f"Unknown operator: {operator}"
+
+        return passed, message
+
+    def _run_check_on_node(self, rule: RuleDefinition, node: str,
+                          method: str, user: str = None,
+                          sos_base: str = None) -> CheckResult:
+        """Run a single check on a specific node."""
+        source_defs = rule.source_definitions
+
+        # Get data based on access method
+        if method == 'sosreport' and sos_base:
+            sos_path = source_defs.get('sos_path')
+            alternates = source_defs.get('sos_path_alternates', [])
+            success, output = self._read_sosreport(sos_path, node, sos_base)
+            if not success:
+                for alt_path in alternates:
+                    success, output = self._read_sosreport(alt_path, node, sos_base)
+                    if success:
+                        break
+        else:
+            cmd = source_defs.get('live_cmd')
+            if not cmd:
+                return CheckResult(
+                    check_id=rule.check_id,
+                    description=rule.description,
+                    status=CheckStatus.SKIPPED,
+                    severity=Severity[rule.severity],
+                    message="No live command defined",
+                    node=node
+                )
+            success, output = self._execute_command(cmd, node, method, user)
+
+        if not success:
+            return CheckResult(
+                check_id=rule.check_id,
+                description=rule.description,
+                status=CheckStatus.ERROR,
+                severity=Severity[rule.severity],
+                message=f"Failed to get data: {output[:100]}",
+                node=node
+            )
+
+        # Parse output
+        parsed = self._parse_output(output, rule.parser)
+
+        # Evaluate expectations
+        validation = rule.validation_logic
+        expectations = validation.get('expectations', [])
+
+        failed_expectations = []
+        for exp in expectations:
+            passed, message = self._evaluate_expectation(parsed, exp)
+            if not passed:
+                failed_expectations.append({
+                    'key': exp.get('key'),
+                    'severity': exp.get('severity', rule.severity),
+                    'message': message
+                })
+
+        if failed_expectations:
+            # Use highest severity from failed expectations
+            max_severity = rule.severity
+            for fe in failed_expectations:
+                if fe['severity'] == 'CRITICAL':
+                    max_severity = 'CRITICAL'
+                    break
+                elif fe['severity'] == 'WARNING' and max_severity != 'CRITICAL':
+                    max_severity = 'WARNING'
+
+            return CheckResult(
+                check_id=rule.check_id,
+                description=rule.description,
+                status=CheckStatus.FAILED,
+                severity=Severity[max_severity],
+                message="; ".join(fe['message'] for fe in failed_expectations),
+                details={'parsed': parsed, 'failed': failed_expectations},
+                node=node
+            )
+
+        return CheckResult(
+            check_id=rule.check_id,
+            description=rule.description,
+            status=CheckStatus.PASSED,
+            severity=Severity[rule.severity],
+            message="All checks passed",
+            details={'parsed': parsed},
+            node=node
+        )
+
+    def run_check(self, rule: RuleDefinition, nodes: Dict[str, dict]) -> List[CheckResult]:
+        """Run a check across all nodes (multithreaded)."""
+        results = []
+        scope = rule.validation_logic.get('scope', 'per_node')
+
+        with ThreadPoolExecutor(max_workers=self.MAX_WORKERS) as executor:
+            futures = {}
+
+            for node_name, node_info in nodes.items():
+                method = node_info.get('preferred_method')
+                if not method:
+                    results.append(CheckResult(
+                        check_id=rule.check_id,
+                        description=rule.description,
+                        status=CheckStatus.SKIPPED,
+                        severity=Severity[rule.severity],
+                        message="No access method available",
+                        node=node_name
+                    ))
+                    continue
+
+                user = node_info.get('ssh_user') or node_info.get('ansible_user')
+                sos_base = self.access_config.get('sosreport_directory')
+
+                future = executor.submit(
+                    self._run_check_on_node,
+                    rule, node_name, method, user, sos_base
+                )
+                futures[future] = node_name
+
+            for future in as_completed(futures):
+                try:
+                    result = future.result()
+                    results.append(result)
+                except Exception as e:
+                    results.append(CheckResult(
+                        check_id=rule.check_id,
+                        description=rule.description,
+                        status=CheckStatus.ERROR,
+                        severity=Severity[rule.severity],
+                        message=str(e),
+                        node=futures[future]
+                    ))
+
+        return results
+
+    def run_all_checks(self, nodes: Dict[str, dict]) -> List[CheckResult]:
+        """Run all loaded checks on all nodes."""
+        self.results = []
+
+        if not self.rules:
+            self.load_rules()
+
+        print(f"\nRunning {len(self.rules)} checks on {len(nodes)} node(s)...")
+
+        for rule in self.rules:
+            print(f"\n  [{rule.severity}] {rule.check_id}: {rule.description[:40]}...")
+            check_results = self.run_check(rule, nodes)
+
+            for result in check_results:
+                self.results.append(result)
+                status_icon = {
+                    CheckStatus.PASSED: "✓",
+                    CheckStatus.FAILED: "✗",
+                    CheckStatus.SKIPPED: "○",
+                    CheckStatus.ERROR: "!"
+                }.get(result.status, "?")
+                node_str = f" ({result.node})" if result.node else ""
+                print(f"    {status_icon} {result.status.value}{node_str}: {result.message[:60]}")
+
+        return self.results
+
+    def get_summary(self) -> Dict[str, Any]:
+        """Get summary of all check results."""
+        summary = {
+            'total': len(self.results),
+            'passed': 0,
+            'failed': 0,
+            'skipped': 0,
+            'errors': 0,
+            'critical_failures': [],
+            'warnings': []
+        }
+
+        for result in self.results:
+            if result.status == CheckStatus.PASSED:
+                summary['passed'] += 1
+            elif result.status == CheckStatus.FAILED:
+                summary['failed'] += 1
+                if result.severity == Severity.CRITICAL:
+                    summary['critical_failures'].append(result)
+                else:
+                    summary['warnings'].append(result)
+            elif result.status == CheckStatus.SKIPPED:
+                summary['skipped'] += 1
+            elif result.status == CheckStatus.ERROR:
+                summary['errors'] += 1
+
+        return summary
+
+    def print_summary(self):
+        """Print formatted summary of results."""
+        summary = self.get_summary()
+
+        print("\n" + "=" * 63)
+        print(" Health Check Results Summary")
+        print("=" * 63)
+        print(f"  Total checks:  {summary['total']}")
+        print(f"  Passed:        {summary['passed']}")
+        print(f"  Failed:        {summary['failed']}")
+        print(f"  Skipped:       {summary['skipped']}")
+        print(f"  Errors:        {summary['errors']}")
+
+        if summary['critical_failures']:
+            print("\n  CRITICAL FAILURES:")
+            for r in summary['critical_failures']:
+                print(f"    - [{r.check_id}] {r.message[:50]}")
+
+        if summary['warnings']:
+            print("\n  WARNINGS:")
+            for r in summary['warnings'][:5]:  # Show first 5
+                print(f"    - [{r.check_id}] {r.message[:50]}")
+            if len(summary['warnings']) > 5:
+                print(f"    ... and {len(summary['warnings']) - 5} more")

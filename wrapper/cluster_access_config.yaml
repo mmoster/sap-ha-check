@@ -1,0 +1,17 @@
+ansible_inventory_source: default
+ansible_inventory_path: /etc/ansible/hosts
+sosreport_directory: null
+hosts_file: null
+nodes:
+  mmoster-thinkpadp1gen7.rmtde.csb:
+    hostname: mmoster-thinkpadp1gen7.rmtde.csb
+    ssh_reachable: false
+    ssh_user: null
+    ansible_reachable: true
+    ansible_host: mmoster-thinkpadp1gen7.rmtde.csb
+    ansible_user: null
+    sosreport_path: null
+    preferred_method: ansible
+    last_checked: '2026-03-05T11:34:42.724530'
+discovery_timestamp: '2026-03-05T11:34:45.201128'
+discovery_complete: true
