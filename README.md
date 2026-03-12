@@ -25,6 +25,23 @@ Requirements:
 
 ## Quick Start
 
+### Option 1: Deploy Discovery Tool (empfohlen für Tests)
+
+```bash
+# Deploy in ein beliebiges Verzeichnis
+./deploy.sh /pfad/zum/ziel hana01 hana02
+
+# Oder ohne Hosts (später in hosts.txt eintragen)
+./deploy.sh /tmp/my_discovery
+
+# Im Zielverzeichnis arbeiten
+cd /tmp/my_discovery
+./run_discovery.sh --list-rules
+./run_discovery.sh
+```
+
+### Option 2: Full Health Check
+
 ```bash
 cd wrapper
 
@@ -175,20 +192,112 @@ Example output:
            No STONITH resources configured - split-brain risk!
 ```
 
+## Standalone Discovery Framework
+
+Das Discovery-Framework ermöglicht das Sammeln von Systeminformationen via SSH basierend auf YAML-Regeln.
+
+### Deployment
+
+```bash
+# Deploy mit Hosts
+./deploy.sh /opt/cluster_discovery hana01 hana02 hana03
+
+# Deploy ohne Hosts
+./deploy.sh /tmp/discovery
+echo "hana04" >> /tmp/discovery/hosts.txt
+```
+
+### Verwendung
+
+```bash
+cd /opt/cluster_discovery
+
+# Verfügbare Regeln anzeigen
+./run_discovery.sh --list-rules
+
+# Alle Discoveries ausführen
+./run_discovery.sh
+
+# Nur bestimmte Gruppen
+./run_discovery.sh --groups system_info network
+
+# Nur bestimmten Host
+./run_discovery.sh --host hana01
+
+# Ergebnisse direkt anzeigen
+./run_discovery.sh --show-data
+```
+
+### Discovery-Gruppen
+
+| Gruppe | Beschreibung |
+|--------|--------------|
+| `system_info` | Hostname, OS, Kernel, Uptime, Architektur |
+| `cluster_basics` | Pacemaker/Corosync Version, Cluster-Name, Nodes, Quorum |
+| `sap_hana` | SID, Instanz, Version, SR-Status, Topologie |
+| `resources` | Cluster-Ressourcen, STONITH, Constraints |
+| `network` | Corosync-Ringe, IPs, /etc/hosts, Firewall |
+
+### Eigene Discovery-Regeln erstellen
+
+Neue YAML-Datei in `discovery_rules/` erstellen:
+
+```yaml
+group: storage
+description: Storage-Informationen
+enabled: true
+
+discoveries:
+  - id: DISC_DISK_USAGE
+    description: Festplattennutzung
+    live_cmd: "df -h"
+    parser:
+      type: lines
+    store_as: disk_usage
+
+  - id: DISC_MOUNTS
+    description: Gemountete Filesysteme
+    live_cmd: "mount | grep -E '^/dev'"
+    parser:
+      type: lines
+    store_as: mounts
+```
+
+### Parser-Typen
+
+| Typ | Beschreibung |
+|-----|--------------|
+| `raw` | Ausgabe als String |
+| `lines` | Ausgabe als Liste von Zeilen |
+| `key_value` | Key=Value Paare als Dictionary |
+| `regex` | Regex-Patterns extrahieren |
+
 ## Project Structure
 
 ```
 sap_hana_healthcheck/
 ├── README.md
+├── deploy.sh                       # Deployment-Script
 ├── .gitignore
-└── wrapper/
-    ├── cluster_health_check.py    # Main entry point
-    ├── cluster_access_config.yaml # Generated config
-    ├── access/
-    │   └── discover_access.py     # Access discovery module
-    └── rules/
-        ├── __init__.py
-        └── engine.py              # Rules engine
+├── wrapper/
+│   ├── cluster_health_check.py     # Main entry point
+│   ├── cluster_access_config.yaml  # Generated config
+│   ├── access/
+│   │   └── discover_access.py      # Access discovery module
+│   └── rules/
+│       ├── __init__.py
+│       └── engine.py               # Rules engine
+└── tests/
+    └── hana04_discovery/
+        ├── discovery_runner.py     # Standalone discovery runner
+        ├── run_discovery.sh        # Wrapper script
+        ├── hosts.txt               # Target hosts
+        └── discovery_rules/        # YAML rule definitions
+            ├── 00_system_info.yaml
+            ├── 01_cluster_basics.yaml
+            ├── 02_sap_hana.yaml
+            ├── 03_resources.yaml
+            └── 04_network.yaml
 ```
 
 ## License
