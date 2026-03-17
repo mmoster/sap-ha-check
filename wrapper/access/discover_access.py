@@ -116,7 +116,15 @@ class AccessDiscovery:
             print(f"Loading existing config from {self.config_path}")
             with open(self.config_path, 'r') as f:
                 data = yaml.safe_load(f) or {}
-                return AccessConfig(**data)
+                config = AccessConfig(**data)
+                # Clear old nodes if hosts file specified (fresh discovery for those hosts)
+                if self.hosts_file:
+                    if self.debug:
+                        print(f"  [DEBUG] Clearing old nodes for fresh cluster discovery")
+                    config.nodes = {}
+                return config
+        if self.force_rediscover:
+            print("Starting fresh discovery (--force)")
         return AccessConfig()
 
     def save_config(self):
