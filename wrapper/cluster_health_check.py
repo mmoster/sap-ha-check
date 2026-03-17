@@ -671,6 +671,52 @@ HEALTH CHECK RULES
 """)
 
 
+def print_steps():
+    """Print all health check steps with descriptions."""
+    print("""
+===============================================================================
+                    SAP Cluster Health Check - Steps
+===============================================================================
+
+STEP        DESCRIPTION                              SUGGESTIONS
+----        -----------                              -----------
+access      Discover access to cluster nodes         --suggest access
+            (SSH, Ansible, SOSreports)
+
+config      Check cluster configuration              --suggest config
+            (quorum, corosync, node status)
+
+pacemaker   Check Pacemaker/Corosync                 --suggest pacemaker
+            (STONITH, resources, fencing)
+
+sap         Check SAP HANA configuration             --suggest sap
+            (System Replication, HA/DR hooks)
+
+report      Generate health check report             (no suggestions)
+
+===============================================================================
+
+USAGE EXAMPLES
+--------------
+  # Run all steps
+  ./cluster_health_check.py hana01
+
+  # Skip specific steps
+  ./cluster_health_check.py --skip sap report hana01
+
+  # Only run access discovery
+  ./cluster_health_check.py --access-only hana01
+
+  # Get suggestions for a step
+  ./cluster_health_check.py --suggest config
+
+  # Get suggestions for all steps
+  ./cluster_health_check.py --suggest all
+
+===============================================================================
+""")
+
+
 def print_suggestions(step: str):
     """Print detailed suggestions for a specific step."""
     suggestions = {
@@ -1032,6 +1078,13 @@ Examples:
         help='Show suggestions and documentation for a specific step'
     )
 
+    # List steps option
+    parser.add_argument(
+        '--list-steps',
+        action='store_true',
+        help='List all health check steps with descriptions'
+    )
+
     args = parser.parse_args()
 
     # Handle guide action
@@ -1042,6 +1095,11 @@ Examples:
     # Handle suggest action
     if args.suggest:
         print_suggestions(args.suggest)
+        sys.exit(0)
+
+    # Handle list-steps action
+    if args.list_steps:
+        print_steps()
         sys.exit(0)
 
     # Determine config directory
