@@ -6,7 +6,7 @@ description: Verify HANA System Replication status is healthy
 enabled: true
 
 source_definitions:
-  live_cmd: "SAPHanaSR-showAttr 2>/dev/null || crm_attribute -G -n hana_${SID}_sync_state -q 2>/dev/null || python3 /usr/sap/${SID}/SYS/exe/hdb/python_support/systemReplicationStatus.py 2>/dev/null"
+  live_cmd: "timeout 10 SAPHanaSR-showAttr 2>/dev/null || crm_mon -A1 2>/dev/null | grep -iE 'hana|sync|SOK|SFAIL'"
   sos_path: "sos_commands/sap/SAPHanaSR-showAttr"
 
 parser:

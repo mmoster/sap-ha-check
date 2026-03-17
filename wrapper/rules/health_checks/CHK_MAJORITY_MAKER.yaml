@@ -6,7 +6,7 @@ description: Validate majority maker configuration for 2-node clusters
 enabled: true
 
 source_definitions:
-  live_cmd: "crm configure show | grep -E 'location.*majority\\|qdevice' 2>/dev/null || corosync-quorumtool -s 2>/dev/null | grep -i qdevice"
+  live_cmd: "crm configure show 2>/dev/null | grep -iE 'qdevice|majority|SBD' || grep -iE 'qdevice|sbd' /etc/corosync/corosync.conf 2>/dev/null"
   sos_path: "sos_commands/pacemaker/crm_configure_show"
 
 parser:

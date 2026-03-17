@@ -6,7 +6,7 @@ description: Verify cluster has quorum
 enabled: true
 
 source_definitions:
-  live_cmd: "corosync-quorumtool -s 2>/dev/null || crm_mon -1 2>/dev/null | grep -i quorum"
+  live_cmd: "crm_mon -1 2>/dev/null | grep -iE 'quorum|quorate' || timeout 5 corosync-quorumtool -s 2>/dev/null | grep -iE 'Quorate|quorum'"
   sos_path: "sos_commands/corosync/corosync-quorumtool_-s"
 
 parser:

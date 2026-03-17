@@ -6,7 +6,7 @@ description: Verify site roles are consistent (one primary, one secondary)
 enabled: true
 
 source_definitions:
-  live_cmd: "SAPHanaSR-showAttr 2>/dev/null | grep -E 'site|prim|sec' || crm_mon -A1 2>/dev/null | grep -E 'site|hana'"
+  live_cmd: "crm_mon -A1 2>/dev/null | grep -iE 'site|prim|master|slave' || timeout 10 SAPHanaSR-showAttr 2>/dev/null | grep -iE 'site|prim|sec'"
   sos_path: "sos_commands/sap/SAPHanaSR-showAttr"
 
 parser:

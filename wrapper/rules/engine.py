@@ -96,7 +96,7 @@ class RulesEngine:
 
     # TODO: Add CHK_*.yaml health check rules to this directory
     DEFAULT_RULES_PATH = str(Path(__file__).parent / "health_checks")
-    CMD_TIMEOUT = 30
+    CMD_TIMEOUT = 15  # Reduced from 30 to avoid long waits
     MAX_WORKERS = 5
 
     def __init__(self, rules_path: str = None, access_config: dict = None):
