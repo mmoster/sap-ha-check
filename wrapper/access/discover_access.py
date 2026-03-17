@@ -483,7 +483,26 @@ class AccessDiscovery:
         all_hosts = {}  # hostname -> {ansible_info, sosreport_path}
         file_hosts = []
 
-        # 0. Check if cluster name specified - use saved cluster nodes
+        # 0. If SOSreport directory specified, discover SOSreports FIRST and use ONLY those nodes
+        if self.sosreport_dir:
+            sosreports = self.discover_sosreports()
+            if sosreports:
+                print(f"\n[INFO] SOSreport mode: analyzing only nodes with SOSreports")
+                for hostname, path in sosreports.items():
+                    all_hosts[hostname] = {'ansible_info': None, 'sosreport_path': path}
+                # Skip all other discovery - go straight to access check
+                print(f"\n=== Checking access to {len(all_hosts)} SOSreport nodes ===")
+                for hostname, info in all_hosts.items():
+                    node = self.check_node_access(hostname, None, info.get('sosreport_path'))
+                    self.config.nodes[hostname] = asdict(node)
+                    print(f"  {hostname}: SOSreport -> {node.preferred_method or 'none'}")
+                self.config.sosreport_directory = self.sosreport_dir
+                self.config.discovery_complete = True
+                self.save_config()
+                self._print_summary()
+                return self.config
+
+        # 1. Check if cluster name specified - use saved cluster nodes
         if self.cluster_name:
             if self.cluster_name in self.config.clusters:
                 cluster_info = self.config.clusters[self.cluster_name]
