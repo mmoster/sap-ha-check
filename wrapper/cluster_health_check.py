@@ -134,6 +134,19 @@ class ClusterHealthCheck:
             print("  - SOSreport directory with extracted reports")
             return False
 
+        # Show cluster and nodes summary
+        node_names = list(self.access_config.nodes.keys())
+        cluster_name = None
+        for cname, cinfo in self.access_config.clusters.items():
+            if any(n in node_names for n in cinfo.get('nodes', [])):
+                cluster_name = cname
+                break
+
+        print("\n" + "-" * 63)
+        if cluster_name:
+            print(f"  Cluster:  {cluster_name}")
+        print(f"  Nodes:    {', '.join(sorted(node_names))}")
+        print("-" * 63)
         print(f"\n[OK] {len(accessible_nodes)} node(s) accessible for health checks")
         return True
 
@@ -413,6 +426,21 @@ class ClusterHealthCheck:
         print(" Health Check Complete")
         print("=" * 63)
         print(f"Finished: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+        # Show cluster and nodes info
+        if self.access_config:
+            nodes = list(self.access_config.nodes.keys())
+            # Find cluster name from config
+            cluster_name = None
+            for cname, cinfo in self.access_config.clusters.items():
+                if set(cinfo.get('nodes', [])) == set(nodes) or \
+                   any(n in nodes for n in cinfo.get('nodes', [])):
+                    cluster_name = cname
+                    break
+
+            if cluster_name:
+                print(f"Cluster: {cluster_name}")
+            print(f"Nodes checked: {', '.join(sorted(nodes))}")
 
         failed = [step for step, success in results.items() if not success]
         if failed:
