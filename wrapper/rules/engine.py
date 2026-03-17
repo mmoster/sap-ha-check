@@ -288,6 +288,33 @@ class RulesEngine:
 
         return passed, message
 
+    def _check_command_available(self, cmd: str, node: str, method: str, user: str = None) -> tuple:
+        """
+        Quick check if the primary command in a pipeline is available.
+        Returns (available: bool, reason: str)
+        """
+        # Extract first command from pipeline
+        first_cmd = cmd.split('|')[0].split(';')[0].split('&&')[0].strip()
+
+        # Skip check for built-in commands and common utilities
+        builtins = ['grep', 'cat', 'echo', 'awk', 'sed', 'head', 'tail', 'cut', 'tr', 'sort', 'timeout']
+        cmd_name = first_cmd.split()[0] if first_cmd else ''
+
+        if cmd_name in builtins or cmd_name.startswith('/'):
+            return True, "builtin/path"
+
+        # Check if command exists on remote node
+        check_cmd = f"command -v {cmd_name} >/dev/null 2>&1 && echo 'OK' || echo 'MISSING'"
+        success, output = self._execute_command(check_cmd, node, method, user)
+
+        if success and 'OK' in output:
+            return True, "available"
+        elif 'MISSING' in output:
+            return False, f"Command '{cmd_name}' not found on {node}"
+        else:
+            # If check failed, assume command might be available
+            return True, "unknown"
+
     def _run_check_on_node(self, rule: RuleDefinition, node: str,
                           method: str, user: str = None,
                           sos_base: str = None) -> CheckResult:
@@ -315,6 +342,21 @@ class RulesEngine:
                     message="No live command defined",
                     node=node
                 )
+
+            # Pre-flight check: verify primary command is available
+            preflight = source_defs.get('preflight_check', True)
+            if preflight:
+                cmd_available, reason = self._check_command_available(cmd, node, method, user)
+                if not cmd_available:
+                    return CheckResult(
+                        check_id=rule.check_id,
+                        description=rule.description,
+                        status=CheckStatus.SKIPPED,
+                        severity=Severity[rule.severity],
+                        message=f"Skipped: {reason}",
+                        node=node
+                    )
+
             success, output = self._execute_command(cmd, node, method, user)
 
         if not success:

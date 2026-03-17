@@ -149,6 +149,30 @@ class ClusterHealthCheck:
             self.rules_engine.load_rules()
             self._debug_print(f"Loaded {len(self.rules_engine.rules)} rules")
 
+    def _run_rules_parallel(self, rules: list, nodes: dict) -> list:
+        """Run multiple rules in parallel using thread pool."""
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        all_results = []
+        max_parallel_rules = min(len(rules), 4)  # Max 4 rules in parallel
+
+        with ThreadPoolExecutor(max_workers=max_parallel_rules) as executor:
+            futures = {}
+            for rule in rules:
+                future = executor.submit(self.rules_engine.run_check, rule, nodes)
+                futures[future] = rule.check_id
+
+            for future in as_completed(futures):
+                check_id = futures[future]
+                try:
+                    results = future.result()
+                    all_results.extend(results)
+                    self._debug_print(f"Completed: {check_id} ({len(results)} results)")
+                except Exception as e:
+                    self._debug_print(f"Error in {check_id}: {e}")
+
+        return all_results
+
     def _filter_rules_by_prefix(self, prefixes: list) -> list:
         """Filter loaded rules by check_id prefix."""
         return [r for r in self.rules_engine.rules
@@ -182,13 +206,11 @@ class ClusterHealthCheck:
 
         nodes = self.access_config.nodes if self.access_config else {}
         self._debug_print(f"Target nodes: {list(nodes.keys())}")
-        print(f"Running {len(rules_to_run)} cluster configuration checks...")
+        print(f"Running {len(rules_to_run)} cluster configuration checks (parallel)...")
 
-        for rule in rules_to_run:
-            self._debug_print(f"Executing: {rule.check_id}")
-            results = self.rules_engine.run_check(rule, nodes)
-            self.check_results.extend(results)
-            self._debug_print(f"Completed: {rule.check_id} ({len(results)} results)")
+        # Run rules in parallel
+        results = self._run_rules_parallel(rules_to_run, nodes)
+        self.check_results.extend(results)
 
         failed = [r for r in self.check_results if r.status == CheckStatus.FAILED
                   and r.check_id in config_checks]
@@ -220,13 +242,11 @@ class ClusterHealthCheck:
 
         nodes = self.access_config.nodes if self.access_config else {}
         self._debug_print(f"Target nodes: {list(nodes.keys())}")
-        print(f"Running {len(rules_to_run)} Pacemaker/Corosync checks...")
+        print(f"Running {len(rules_to_run)} Pacemaker/Corosync checks (parallel)...")
 
-        for rule in rules_to_run:
-            self._debug_print(f"Executing: {rule.check_id}")
-            results = self.rules_engine.run_check(rule, nodes)
-            self.check_results.extend(results)
-            self._debug_print(f"Completed: {rule.check_id} ({len(results)} results)")
+        # Run rules in parallel
+        results = self._run_rules_parallel(rules_to_run, nodes)
+        self.check_results.extend(results)
 
         failed = [r for r in self.check_results if r.status == CheckStatus.FAILED
                   and r.check_id in pacemaker_checks]
@@ -258,13 +278,11 @@ class ClusterHealthCheck:
 
         nodes = self.access_config.nodes if self.access_config else {}
         self._debug_print(f"Target nodes: {list(nodes.keys())}")
-        print(f"Running {len(rules_to_run)} SAP-specific checks...")
+        print(f"Running {len(rules_to_run)} SAP-specific checks (parallel)...")
 
-        for rule in rules_to_run:
-            self._debug_print(f"Executing: {rule.check_id}")
-            results = self.rules_engine.run_check(rule, nodes)
-            self.check_results.extend(results)
-            self._debug_print(f"Completed: {rule.check_id} ({len(results)} results)")
+        # Run rules in parallel
+        results = self._run_rules_parallel(rules_to_run, nodes)
+        self.check_results.extend(results)
 
         failed = [r for r in self.check_results if r.status == CheckStatus.FAILED
                   and r.check_id in sap_checks]
