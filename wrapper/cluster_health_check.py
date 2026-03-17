@@ -403,17 +403,23 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s                          Run full health check
-  %(prog)s --access-only            Only run access discovery
+  %(prog)s hana01 hana02            Check specific hosts
+  %(prog)s -d hana01 hana02         Check hosts with debug output
+  %(prog)s --access-only hana01     Only test access to host
+  %(prog)s                          Run full health check (auto-discover hosts)
   %(prog)s --show-config            Show current configuration
   %(prog)s --delete-config          Delete config and restart
   %(prog)s -H hosts.txt             Use custom hosts file
   %(prog)s -s /path/to/sosreports   Use SOSreport directory
-  %(prog)s --debug                  Run with debug output (shows config files and progress)
         """
     )
 
     # Input sources
+    parser.add_argument(
+        'hosts',
+        nargs='*',
+        help='Hostname(s) to check (e.g., hana01 hana02)'
+    )
     parser.add_argument(
         '--hosts-file', '-H',
         help='File containing list of hosts (one per line)'
@@ -489,6 +495,21 @@ Examples:
     config_dir = Path(args.config_dir) if args.config_dir else SCRIPT_DIR
     config_path = config_dir / AccessDiscovery.CONFIG_FILE
 
+    # Handle hosts provided on command line
+    hosts_file = args.hosts_file
+    temp_hosts_file = None
+    if args.hosts and not hosts_file:
+        # Create temporary hosts file from command line arguments
+        import tempfile
+        temp_hosts_file = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False)
+        for host in args.hosts:
+            temp_hosts_file.write(f"{host}\n")
+        temp_hosts_file.close()
+        hosts_file = temp_hosts_file.name
+        if args.debug:
+            print(f"[DEBUG] Created temp hosts file: {hosts_file}")
+            print(f"[DEBUG] Hosts: {', '.join(args.hosts)}")
+
     # Handle show-config action
     if args.show_config:
         show_config(config_path)
@@ -519,17 +540,26 @@ Examples:
     health_check = ClusterHealthCheck(
         config_dir=str(config_dir),
         sosreport_dir=args.sosreport_dir,
-        hosts_file=args.hosts_file,
+        hosts_file=hosts_file,
         workers=args.workers,
         rules_path=args.rules_path,
         debug=args.debug
     )
+
+    def cleanup_temp_file():
+        """Clean up temporary hosts file if created."""
+        if temp_hosts_file:
+            try:
+                os.unlink(temp_hosts_file.name)
+            except Exception:
+                pass
 
     try:
         if args.access_only:
             # Only run access discovery
             health_check.print_banner()
             success = health_check.step_access_discovery(force=args.force)
+            cleanup_temp_file()
             sys.exit(0 if success else 1)
         else:
             # Run all checks
@@ -537,9 +567,11 @@ Examples:
                 force_rediscover=args.force,
                 skip_steps=args.skip
             )
+            cleanup_temp_file()
             sys.exit(exit_code)
 
     except KeyboardInterrupt:
+        cleanup_temp_file()
         print("\n\n[INTERRUPTED] Health check aborted by user.")
         sys.exit(130)
 
