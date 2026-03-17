@@ -118,7 +118,11 @@ class AccessDiscovery:
         self.config.discovery_timestamp = datetime.now().isoformat()
         self.config_dir.mkdir(parents=True, exist_ok=True)
         with open(self.config_path, 'w') as f:
-            yaml.dump(asdict(self.config), f, default_flow_style=False, sort_keys=False)
+            # Python 3.6 / older PyYAML compatibility: sort_keys may not be supported
+            try:
+                yaml.dump(asdict(self.config), f, default_flow_style=False, sort_keys=False)
+            except TypeError:
+                yaml.dump(asdict(self.config), f, default_flow_style=False)
         print(f"Configuration saved to {self.config_path}")
 
     def discover_ansible_inventory(self) -> Optional[str]:
@@ -179,7 +183,7 @@ class AccessDiscovery:
             if self.config.ansible_inventory_path:
                 cmd.extend(["-i", self.config.ansible_inventory_path])
 
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, timeout=30)
 
             if result.returncode == 0:
                 inventory = yaml.safe_load(result.stdout)
@@ -286,7 +290,7 @@ class AccessDiscovery:
                     f"{try_user}@{hostname}",
                     "echo ok"
                 ]
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=self.SSH_TIMEOUT + 2)
+                result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, timeout=self.SSH_TIMEOUT + 2)
                 if result.returncode == 0 and "ok" in result.stdout:
                     return True, try_user
             except subprocess.TimeoutExpired:
@@ -304,7 +308,7 @@ class AccessDiscovery:
             if self.config.ansible_inventory_path:
                 cmd.extend(["-i", self.config.ansible_inventory_path])
 
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, timeout=15)
             return "SUCCESS" in result.stdout
         except Exception:
             return False

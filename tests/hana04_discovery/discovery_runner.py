@@ -157,8 +157,8 @@ class DiscoveryRunner:
 
             result = subprocess.run(
                 full_cmd,
-                capture_output=True,
-                text=True,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                universal_newlines=True,
                 timeout=self.SSH_TIMEOUT
             )
 
@@ -376,8 +376,13 @@ class DiscoveryRunner:
             }
 
         with open(output_file, 'w') as f:
-            yaml.dump(output_data, f, default_flow_style=False,
-                     sort_keys=False, allow_unicode=True)
+            # Python 3.6 / older PyYAML compatibility
+            try:
+                yaml.dump(output_data, f, default_flow_style=False,
+                         sort_keys=False, allow_unicode=True)
+            except TypeError:
+                yaml.dump(output_data, f, default_flow_style=False,
+                         allow_unicode=True)
 
         print(f"\n[SAVED] Results written to: {output_file}")
         return str(output_file)

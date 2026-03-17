@@ -168,8 +168,8 @@ class RulesEngine:
             result = subprocess.run(
                 full_cmd,
                 shell=True,
-                capture_output=True,
-                text=True,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                universal_newlines=True,
                 timeout=self.CMD_TIMEOUT
             )
 
