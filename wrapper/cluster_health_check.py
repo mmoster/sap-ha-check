@@ -442,9 +442,23 @@ class ClusterHealthCheck:
                 print(f"Cluster: {cluster_name}")
             print(f"Nodes checked: {', '.join(sorted(nodes))}")
 
+        # Show all steps with status
+        print("\nSteps completed:")
+        step_names = {
+            'access': 'Access Discovery',
+            'config': 'Cluster Configuration',
+            'pacemaker': 'Pacemaker/Corosync',
+            'sap': 'SAP HANA',
+            'report': 'Report Generation'
+        }
+        for step, success in results.items():
+            status = "[OK]" if success else "[FAIL]"
+            name = step_names.get(step, step)
+            print(f"  {status} {name}")
+
         failed = [step for step, success in results.items() if not success]
         if failed:
-            print(f"[WARNING] Failed steps: {', '.join(failed)}")
+            print(f"\n[WARNING] Failed steps: {', '.join(failed)}")
 
         # Show next steps
         self._print_next_steps(results)
