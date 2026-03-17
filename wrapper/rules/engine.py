@@ -90,7 +90,8 @@ class RuleDefinition:
 class RulesEngine:
     """Engine for loading and executing health check rules."""
 
-    DEFAULT_RULES_PATH = "/home/mmoster/projects/cluster_health_check/sap_hana_healthcheck/rules"
+    # TODO: Add CHK_*.yaml health check rules to this directory
+    DEFAULT_RULES_PATH = str(Path(__file__).parent / "health_checks")
     CMD_TIMEOUT = 30
     MAX_WORKERS = 5
 

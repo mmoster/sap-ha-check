@@ -42,7 +42,8 @@ from engine import RulesEngine, CheckStatus, Severity
 class ClusterHealthCheck:
     """Main orchestrator for SAP Pacemaker cluster health checks."""
 
-    DEFAULT_RULES_PATH = "/home/mmoster/projects/cluster_health_check/sap_hana_healthcheck/rules"
+    # Default rules path relative to script directory
+    DEFAULT_RULES_PATH = str(SCRIPT_DIR / "rules" / "health_checks")
 
     def __init__(self, config_dir: str = None, sosreport_dir: str = None,
                  hosts_file: str = None, workers: int = 10, rules_path: str = None,
