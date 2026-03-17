@@ -75,12 +75,15 @@ class AccessConfig:
     sosreport_directory: Optional[str] = None
     hosts_file: Optional[str] = None
     nodes: Dict[str, dict] = None
+    clusters: Dict[str, dict] = None  # cluster_name -> {nodes: [], discovered_from: host}
     discovery_timestamp: Optional[str] = None
     discovery_complete: bool = False
 
     def __post_init__(self):
         if self.nodes is None:
             self.nodes = {}
+        if self.clusters is None:
+            self.clusters = {}
 
 
 class AccessDiscovery:
@@ -99,7 +102,7 @@ class AccessDiscovery:
     def __init__(self, config_dir: str = ".", sosreport_dir: Optional[str] = None,
                  hosts_file: Optional[str] = None, force_rediscover: bool = False,
                  debug: bool = False, ansible_group: Optional[str] = None,
-                 skip_ansible: bool = False):
+                 skip_ansible: bool = False, cluster_name: Optional[str] = None):
         self.config_dir = Path(config_dir)
         self.config_path = self.config_dir / self.CONFIG_FILE
         self.sosreport_dir = sosreport_dir
@@ -108,6 +111,7 @@ class AccessDiscovery:
         self.debug = debug
         self.ansible_group = ansible_group
         self.skip_ansible = skip_ansible
+        self.cluster_name = cluster_name
         self.config = self._load_or_create_config()
 
     def _load_or_create_config(self) -> AccessConfig:
@@ -285,14 +289,58 @@ class AccessDiscovery:
         print(f"Found {len(sosreports)} SOSreports")
         return sosreports
 
-    def discover_cluster_nodes(self, seed_host: str, user: str = None) -> List[str]:
+    def discover_cluster_name(self, host: str, user: str = None) -> Optional[str]:
+        """Discover cluster name from a node."""
+        ssh_user = user or 'root'
+
+        # Commands to try for getting cluster name
+        name_commands = [
+            "crm_attribute -G -n cluster-name -q 2>/dev/null",
+            "pcs property show cluster-name 2>/dev/null | grep cluster-name | awk '{print $2}'",
+            "corosync-cmapctl totem.cluster_name 2>/dev/null | cut -d= -f2 | tr -d ' '",
+            "grep -oP 'cluster_name:\\s*\\K\\S+' /etc/corosync/corosync.conf 2>/dev/null",
+        ]
+
+        for cmd in name_commands:
+            try:
+                ssh_cmd = [
+                    "ssh", "-o", "BatchMode=yes",
+                    "-o", f"ConnectTimeout={self.SSH_TIMEOUT}",
+                    "-o", "StrictHostKeyChecking=no",
+                    f"{ssh_user}@{host}",
+                    cmd
+                ]
+                result = subprocess.run(ssh_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                        universal_newlines=True, timeout=self.SSH_TIMEOUT + 2)
+
+                if result.returncode == 0 and result.stdout.strip():
+                    cluster_name = result.stdout.strip()
+                    if cluster_name and cluster_name != '(null)':
+                        return cluster_name
+            except Exception:
+                continue
+
+        return None
+
+    def discover_cluster_nodes(self, seed_host: str, user: str = None) -> tuple:
         """
         Discover cluster members by connecting to a seed node and querying the cluster.
         Tries multiple methods: crm_node, pcs status, corosync-cmapctl.
-        Returns list of cluster node hostnames.
+        Returns tuple: (cluster_name, list of cluster node hostnames)
         """
         ssh_user = user or 'root'
         cluster_nodes = []
+        cluster_name = None
+
+        print(f"\n=== Discovering Cluster from {seed_host} ===")
+
+        # First get cluster name
+        cluster_name = self.discover_cluster_name(seed_host, ssh_user)
+        if cluster_name:
+            print(f"  Cluster name: {cluster_name}")
+        else:
+            if self.debug:
+                print(f"  [DEBUG] Could not determine cluster name")
 
         # Commands to try for discovering cluster nodes
         discovery_commands = [
@@ -305,8 +353,6 @@ class AccessDiscovery:
             # crm status (fallback)
             "crm status | grep -E '^Node' | awk '{print $2}'",
         ]
-
-        print(f"\n=== Discovering Cluster Nodes from {seed_host} ===")
 
         for cmd in discovery_commands:
             try:
@@ -340,7 +386,15 @@ class AccessDiscovery:
             print(f"  Using {seed_host} as only node")
             cluster_nodes = [seed_host]
 
-        return cluster_nodes
+        # Store cluster info
+        if cluster_name:
+            self.config.clusters[cluster_name] = {
+                'nodes': cluster_nodes,
+                'discovered_from': seed_host,
+                'discovered_at': datetime.now().isoformat()
+            }
+
+        return cluster_name, cluster_nodes
 
     def check_ssh_access(self, hostname: str, user: str = None) -> tuple:
         """Check SSH access to a host. Returns (reachable, user)."""
@@ -427,12 +481,27 @@ class AccessDiscovery:
 
         # Collect all hosts from different sources
         all_hosts = {}  # hostname -> {ansible_info, sosreport_path}
+        file_hosts = []
 
-        # 1. Get hosts from file/command line first
-        file_hosts = self.get_hosts_from_file()
+        # 0. Check if cluster name specified - use saved cluster nodes
+        if self.cluster_name:
+            if self.cluster_name in self.config.clusters:
+                cluster_info = self.config.clusters[self.cluster_name]
+                file_hosts = cluster_info.get('nodes', [])
+                print(f"\n=== Using saved cluster: {self.cluster_name} ===")
+                print(f"  Nodes: {', '.join(file_hosts)}")
+                print(f"  Discovered from: {cluster_info.get('discovered_from', 'unknown')}")
+            else:
+                print(f"\n[WARNING] Cluster '{self.cluster_name}' not found in config")
+                print(f"  Known clusters: {', '.join(self.config.clusters.keys()) or '(none)'}")
+                print(f"  Run with a node name first to discover the cluster")
+
+        # 1. Get hosts from file/command line
+        if not file_hosts:
+            file_hosts = self.get_hosts_from_file()
 
         # 2. If hosts specified, try to discover cluster members from first reachable host
-        if file_hosts:
+        if file_hosts and not self.cluster_name:
             if self.debug:
                 print(f"  [DEBUG] Hosts specified, attempting cluster auto-discovery")
 
@@ -441,8 +510,8 @@ class AccessDiscovery:
                 # Quick SSH check
                 reachable, ssh_user = self.check_ssh_access(seed_host)
                 if reachable:
-                    # Discover cluster members
-                    cluster_nodes = self.discover_cluster_nodes(seed_host, ssh_user)
+                    # Discover cluster members (returns cluster_name, nodes)
+                    discovered_name, cluster_nodes = self.discover_cluster_nodes(seed_host, ssh_user)
                     # Use cluster nodes instead of just the specified hosts
                     file_hosts = cluster_nodes
                     break

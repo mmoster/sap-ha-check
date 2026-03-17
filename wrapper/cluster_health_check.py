@@ -47,7 +47,8 @@ class ClusterHealthCheck:
 
     def __init__(self, config_dir: str = None, sosreport_dir: str = None,
                  hosts_file: str = None, workers: int = 10, rules_path: str = None,
-                 debug: bool = False, ansible_group: str = None, skip_ansible: bool = False):
+                 debug: bool = False, ansible_group: str = None, skip_ansible: bool = False,
+                 cluster_name: str = None):
         self.config_dir = Path(config_dir) if config_dir else SCRIPT_DIR
         self.sosreport_dir = sosreport_dir
         self.hosts_file = hosts_file
@@ -59,6 +60,7 @@ class ClusterHealthCheck:
         self.debug = debug
         self.ansible_group = ansible_group
         self.skip_ansible = skip_ansible
+        self.cluster_name = cluster_name
 
     def _debug_print(self, message: str):
         """Print debug message if debug mode is enabled."""
@@ -106,7 +108,8 @@ class ClusterHealthCheck:
             force_rediscover=force,
             debug=self.debug,
             ansible_group=self.ansible_group,
-            skip_ansible=self.skip_ansible
+            skip_ansible=self.skip_ansible,
+            cluster_name=self.cluster_name
         )
         discovery.MAX_WORKERS = self.workers
 
@@ -409,6 +412,7 @@ def main():
         epilog="""
 Examples:
   %(prog)s hana03                   Auto-discover cluster from hana03 and check all members
+  %(prog)s -C mycluster             Use previously discovered cluster 'mycluster'
   %(prog)s -d hana03                Same with debug output
   %(prog)s --access-only hana03     Only test access (discover cluster members)
   %(prog)s -g sap_cluster           Only check hosts in Ansible group 'sap_cluster'
@@ -436,6 +440,10 @@ Examples:
     parser.add_argument(
         '--group', '-g',
         help='Only check hosts from this Ansible inventory group'
+    )
+    parser.add_argument(
+        '--cluster', '-C',
+        help='Use saved cluster by name (from previous discovery)'
     )
     parser.add_argument(
         '--config-dir', '-c',
@@ -553,7 +561,8 @@ Examples:
         workers=args.workers,
         rules_path=args.rules_path,
         debug=args.debug,
-        ansible_group=args.group
+        ansible_group=args.group,
+        cluster_name=args.cluster
     )
 
     def cleanup_temp_file():
