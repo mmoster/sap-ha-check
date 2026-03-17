@@ -6,7 +6,7 @@ description: Verify STONITH/fencing is enabled and configured
 enabled: true
 
 source_definitions:
-  live_cmd: "crm_attribute -G -n stonith-enabled -q 2>/dev/null; echo '---'; crm_resource -l 2>/dev/null | grep -i stonith || pcs stonith status 2>/dev/null"
+  live_cmd: "pcs property show stonith-enabled 2>/dev/null; echo '---'; pcs status 2>/dev/null | grep -iE 'stonith|fence'"
   sos_path: "sos_commands/pacemaker/crm_mon_-1"
 
 parser:
@@ -14,13 +14,16 @@ parser:
   multiline: true
   search_patterns:
     - name: stonith_enabled
-      regex: "^true$"
+      regex: "stonith-enabled:\\s*true"
       group: 0
     - name: stonith_disabled
-      regex: "^false$"
+      regex: "stonith-enabled:\\s*false"
       group: 0
     - name: stonith_resource
-      regex: "(stonith|fence_|STONITH)"
+      regex: "(stonith:|fence_)"
+      group: 0
+    - name: stonith_started
+      regex: "(stonith|fence).*Started"
       group: 0
 
 validation_logic:

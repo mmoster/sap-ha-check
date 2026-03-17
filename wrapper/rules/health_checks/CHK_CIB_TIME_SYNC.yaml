@@ -6,8 +6,8 @@ description: Verify CIB (Cluster Information Base) is synchronized across nodes
 enabled: true
 
 source_definitions:
-  live_cmd: "cibadmin -Q --local 2>/dev/null | grep 'cib.*epoch' || crm_mon -1 2>/dev/null | head -5"
-  sos_path: "sos_commands/pacemaker/cibadmin_-Q"
+  live_cmd: "crm_mon -1 2>/dev/null | head -20"
+  sos_path: "sos_commands/pacemaker/crm_mon_-1"
 
 parser:
   type: regex

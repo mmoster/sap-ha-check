@@ -6,34 +6,30 @@ description: Verify site roles are consistent (one primary, one secondary)
 enabled: true
 
 source_definitions:
-  live_cmd: "crm_mon -A1 2>/dev/null | grep -iE 'site|prim|master|slave' || timeout 10 SAPHanaSR-showAttr 2>/dev/null | grep -iE 'site|prim|sec'"
-  sos_path: "sos_commands/sap/SAPHanaSR-showAttr"
+  live_cmd: "pcs status 2>/dev/null | grep -iE 'Masters|Slaves|SAPHana' || crm_mon -1 2>/dev/null | grep -iE 'Masters|Slaves|SAPHana'"
+  sos_path: "sos_commands/pacemaker/crm_mon_-1"
 
 parser:
   type: regex
   multiline: true
   search_patterns:
-    - name: primary_site
-      regex: "(P|PRIMARY|prim)"
+    - name: master_node
+      regex: "Masters:\\s*\\[\\s*(\\w+)"
       group: 0
-    - name: secondary_site
-      regex: "(S|SECONDARY|sec)"
+    - name: slave_node
+      regex: "Slaves:\\s*\\[\\s*(\\w+)"
       group: 0
-    - name: site_conflict
-      regex: "(P.*P|PRIMARY.*PRIMARY)"
+    - name: saphana_resource
+      regex: "SAPHana"
       group: 0
 
 validation_logic:
   expectations:
-    - key: primary_site
+    - key: master_node
       operator: exists
       value: true
-      message: "No primary site detected"
-    - key: secondary_site
+      message: "No master/primary node detected"
+    - key: slave_node
       operator: exists
       value: true
-      message: "No secondary site detected - no failover target"
-    - key: site_conflict
-      operator: not_exists
-      value: true
-      message: "Multiple primary sites detected - split-brain"
+      message: "No slave/secondary node detected - no failover target"

@@ -6,21 +6,24 @@ description: Verify HANA System Replication status is healthy
 enabled: true
 
 source_definitions:
-  live_cmd: "timeout 10 SAPHanaSR-showAttr 2>/dev/null || crm_mon -A1 2>/dev/null | grep -iE 'hana|sync|SOK|SFAIL'"
-  sos_path: "sos_commands/sap/SAPHanaSR-showAttr"
+  live_cmd: "pcs status 2>/dev/null | grep -iE 'SAPHana|Masters|Slaves|Started' || crm_mon -1 2>/dev/null | grep -iE 'SAPHana|Masters|Slaves'"
+  sos_path: "sos_commands/pacemaker/crm_mon_-1"
 
 parser:
   type: regex
   multiline: true
   search_patterns:
-    - name: sync_state
-      regex: "(SOK|SFAIL|PRIM|sync_state=\\w+)"
+    - name: hana_master
+      regex: "(Masters:|Master:)\\s*\\[\\s*(\\w+)"
       group: 0
-    - name: sr_active
-      regex: "(active|PRIMARY|SECONDARY)"
+    - name: hana_slave
+      regex: "(Slaves:|Slave:)\\s*\\[\\s*(\\w+)"
+      group: 0
+    - name: hana_started
+      regex: "SAPHana.*Started"
       group: 0
     - name: sr_error
-      regex: "(ERROR|SFAIL|UNKNOWN|CONNECTION TIMEOUT)"
+      regex: "(SFAIL|Failed|Stopped|UNKNOWN)"
       group: 0
 
 validation_logic:
@@ -29,7 +32,7 @@ validation_logic:
       operator: not_exists
       value: true
       message: "HANA System Replication reports errors"
-    - key: sr_active
+    - key: hana_master
       operator: exists
       value: true
-      message: "HANA System Replication not active"
+      message: "No HANA master found - System Replication may not be active"
