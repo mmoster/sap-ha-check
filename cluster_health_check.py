@@ -156,19 +156,30 @@ class ClusterHealthCheck:
         status['node'] = node
 
         # Check packages FIRST (if installed, subscription/repos don't matter)
-        required_packages = ['pacemaker', 'corosync', 'pcs', 'resource-agents-sap-hana']
+        # Note: rpm -q returns exit code 1 if ANY package is missing, but still outputs info
+        # sap-hana-ha is the newer package, resource-agents-sap-hana is legacy
+        required_packages = ['pacemaker', 'corosync', 'pcs']
+        sap_packages = ['sap-hana-ha', 'resource-agents-sap-hana']  # Either one is OK
         success, output = self._execute_check_cmd(
-            "rpm -q pacemaker corosync pcs resource-agents-sap-hana 2>/dev/null",
+            "rpm -q pacemaker corosync pcs sap-hana-ha resource-agents-sap-hana 2>/dev/null",
             node, method, user
         )
-        if success:
-            status['packages_installed'] = 'not installed' not in output
+        # Parse output even if exit code is non-zero (rpm returns 1 if any package missing)
+        if output:
             for pkg in required_packages:
-                if f'{pkg} is not installed' in output or pkg not in output:
+                if f'{pkg} is not installed' in output or f'package {pkg} is not installed' in output:
                     status['missing_packages'].append(pkg)
+                elif pkg not in output:
+                    status['missing_packages'].append(pkg)
+            # Check if at least one SAP package is installed
+            sap_pkg_found = any(pkg in output and f'{pkg} is not installed' not in output
+                               for pkg in sap_packages)
+            if not sap_pkg_found:
+                status['missing_packages'].append('sap-hana-ha')  # Recommend newer package
+            status['packages_installed'] = len(status['missing_packages']) == 0
         else:
             status['packages_installed'] = False
-            status['missing_packages'] = required_packages
+            status['missing_packages'] = required_packages + ['sap-hana-ha']
 
         # If packages are installed, subscription/repos are OK (could be local repo)
         if status['packages_installed']:
