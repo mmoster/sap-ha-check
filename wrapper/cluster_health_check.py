@@ -1176,11 +1176,17 @@ Pacemaker HA cluster on RHEL 9/10. Run these steps on BOTH nodes unless noted.
 STEP 1: PREREQUISITES & SUBSCRIPTIONS (both nodes)
 ===============================================================================
 
-  # Register system and attach SAP subscription
-  subscription-manager register
-  subscription-manager attach --pool=<SAP_POOL_ID>
+  # Check if system is already registered
+  subscription-manager status
 
-  # Enable required repositories (RHEL 9)
+  # If NOT registered, register and attach SAP subscription:
+  # subscription-manager register
+  # subscription-manager attach --pool=<SAP_POOL_ID>
+
+  # Enable required repositories (RHEL 9) - skip if already enabled
+  subscription-manager repos --list-enabled | grep -E 'highavailability|sap'
+
+  # If HA/SAP repos are missing, enable them:
   subscription-manager repos --enable=rhel-9-for-x86_64-baseos-e4s-rpms
   subscription-manager repos --enable=rhel-9-for-x86_64-appstream-e4s-rpms
   subscription-manager repos --enable=rhel-9-for-x86_64-sap-solutions-e4s-rpms
