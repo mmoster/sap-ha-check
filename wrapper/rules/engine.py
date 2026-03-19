@@ -250,6 +250,88 @@ class RulesEngine:
 
         return parsed
 
+    def _handle_detection_check(self, rule: RuleDefinition, parsed: Dict, node: str) -> CheckResult:
+        """Handle detection-type checks that gather information rather than validate."""
+        if rule.check_id == 'CHK_CLUSTER_TYPE':
+            return self._detect_cluster_type(rule, parsed, node)
+
+        # Default: return parsed data as info
+        return CheckResult(
+            check_id=rule.check_id,
+            description=rule.description,
+            status=CheckStatus.PASSED,
+            severity=Severity.INFO,
+            message="Detection completed",
+            details={'parsed': parsed},
+            node=node
+        )
+
+    def _detect_cluster_type(self, rule: RuleDefinition, parsed: Dict, node: str) -> CheckResult:
+        """Detect SAP HANA HA cluster configuration type."""
+        # Extract parsed values
+        node_count_str = parsed.get('node_count')
+        node_list = parsed.get('node_list')
+        saphana_resource = parsed.get('saphana_resource')
+        saphana_controller = parsed.get('saphana_controller')
+        majority_maker = parsed.get('majority_maker')
+
+        # Count nodes
+        try:
+            node_count = int(node_count_str) if node_count_str else 0
+        except (ValueError, TypeError):
+            node_count = 0
+
+        # Count HANA instances (look for multiple SAPHana resources or SAPHanaController)
+        has_controller = saphana_controller is not None
+        has_majority_maker = majority_maker is not None
+
+        # Determine cluster type
+        cluster_type = "Unknown"
+        details = {
+            'node_count': node_count,
+            'has_saphana_controller': has_controller,
+            'has_majority_maker': has_majority_maker,
+            'parsed': parsed
+        }
+
+        if node_count == 0:
+            cluster_type = "Not detected"
+            message = "Could not detect cluster configuration (cluster may not be running)"
+        elif has_controller:
+            # SAPHanaController is used for Scale-Out
+            cluster_type = "Scale-Out"
+            if has_majority_maker:
+                message = f"Scale-Out configuration ({node_count} nodes with majority maker)"
+            else:
+                message = f"Scale-Out configuration ({node_count} nodes, SAPHanaController detected)"
+        elif node_count > 2:
+            # More than 2 nodes without controller - likely Scale-Out with majority maker
+            cluster_type = "Scale-Out"
+            if has_majority_maker:
+                message = f"Scale-Out configuration ({node_count} nodes with majority maker)"
+            else:
+                message = f"Scale-Out configuration ({node_count} nodes)"
+        elif node_count == 2:
+            # 2 nodes - Scale-Up
+            cluster_type = "Scale-Up"
+            message = f"Scale-Up configuration (2 nodes, standard HA)"
+        else:
+            # 1 node - single node (no HA)
+            cluster_type = "Single Node"
+            message = "Single node configuration (no HA)"
+
+        details['cluster_type'] = cluster_type
+
+        return CheckResult(
+            check_id=rule.check_id,
+            description=rule.description,
+            status=CheckStatus.PASSED,
+            severity=Severity.INFO,
+            message=message,
+            details=details,
+            node=node
+        )
+
     def _evaluate_expectation(self, parsed: Dict, expectation: Dict) -> Tuple[bool, str]:
         """Evaluate a single expectation against parsed data."""
         key = expectation.get('key')
@@ -378,8 +460,12 @@ class RulesEngine:
         # Parse output
         parsed = self._parse_output(output, rule.parser)
 
-        # Evaluate expectations
+        # Handle detection-type checks (e.g., CHK_CLUSTER_TYPE)
         validation = rule.validation_logic
+        if validation.get('type') == 'detection':
+            return self._handle_detection_check(rule, parsed, node)
+
+        # Evaluate expectations
         expectations = validation.get('expectations', [])
 
         failed_expectations = []

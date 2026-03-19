@@ -445,6 +445,16 @@ class ClusterHealthCheck:
                 print(f"Cluster: {cluster_name}")
             print(f"Nodes checked: {', '.join(sorted(nodes))}")
 
+            # Show detected cluster type from CHK_CLUSTER_TYPE
+            if self.rules_engine and hasattr(self.rules_engine, 'results'):
+                for r in self.rules_engine.results:
+                    if hasattr(r, 'check_id') and r.check_id == 'CHK_CLUSTER_TYPE':
+                        cluster_type = r.details.get('cluster_type', 'Unknown') if r.details else 'Unknown'
+                        print(f"Cluster Type: {cluster_type}")
+                        if r.message and 'configuration' in r.message:
+                            print(f"  ({r.message})")
+                        break
+
         # Show all steps with status
         print("\nSteps completed:")
         step_names = {
@@ -1015,7 +1025,7 @@ DOCUMENTATION
 ===============================================================================
 
 This guide covers installation of SAP HANA Scale-Up System Replication with
-Pacemaker HA cluster on RHEL 8/9. Run these steps on BOTH nodes unless noted.
+Pacemaker HA cluster on RHEL 9/10. Run these steps on BOTH nodes unless noted.
 
 ===============================================================================
 STEP 1: PREREQUISITES & SUBSCRIPTIONS (both nodes)
@@ -1032,7 +1042,7 @@ STEP 1: PREREQUISITES & SUBSCRIPTIONS (both nodes)
   subscription-manager repos --enable=rhel-9-for-x86_64-sap-netweaver-e4s-rpms
   subscription-manager repos --enable=rhel-9-for-x86_64-highavailability-e4s-rpms
 
-  # For RHEL 8, replace "9" with "8" in the above commands
+  # For RHEL 10, replace "9" with "10" in the above commands
 
 ===============================================================================
 STEP 2: INSTALL CLUSTER PACKAGES (both nodes)

@@ -1,0 +1,43 @@
+# CHK_CLUSTER_TYPE - Detect SAP HANA HA configuration type
+check_id: CHK_CLUSTER_TYPE
+version: "1.0"
+severity: INFO
+description: Detect SAP HANA HA cluster configuration (Scale-Up vs Scale-Out)
+enabled: true
+
+source_definitions:
+  live_cmd: |
+    echo "=== NODES ===" && crm_node -l 2>/dev/null | wc -l && crm_node -l 2>/dev/null;
+    echo "=== HANA_RESOURCES ===" && pcs resource show 2>/dev/null | grep -E 'SAPHana|SAPHanaController|SAPHanaTopology' || crm_mon -1 2>/dev/null | grep -E 'SAPHana|SAPHanaController';
+    echo "=== MAJORITY_MAKER ===" && pcs resource show 2>/dev/null | grep -iE 'majority|qdevice' || crm_node -l 2>/dev/null | grep -i majority || echo "none"
+  sos_path: "sos_commands/pacemaker/crm_mon_-1"
+
+parser:
+  type: regex
+  multiline: true
+  search_patterns:
+    - name: node_count
+      regex: "=== NODES ===\\s*(\\d+)"
+      group: 1
+    - name: node_list
+      regex: "\\d+\\s+(\\S+)\\s+(member|lost)"
+      group: 0
+    - name: saphana_resource
+      regex: "(SAPHana_\\S+)"
+      group: 1
+    - name: saphana_controller
+      regex: "(SAPHanaController_\\S+)"
+      group: 1
+    - name: saphana_topology
+      regex: "(SAPHanaTopology\\S*)"
+      group: 1
+    - name: majority_maker
+      regex: "(majority|qdevice|Majority)"
+      group: 0
+
+validation_logic:
+  scope: cluster  # Cluster-wide detection, only needs one node
+  type: detection  # This is a detection check, not pass/fail
+  expectations: []
+  # No expectations - this is informational
+  # The engine will determine cluster type based on parsed values
