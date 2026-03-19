@@ -2635,15 +2635,15 @@ Examples:
         print("\n" + "=" * 63)
         print(" What would you like to do next?")
         print("=" * 63)
-        print("  [1] Show installation status (-i)")
+        print("  [1] Show installation status (-i)  [default]")
         print("  [2] Rerun health check")
         print("  [3] Run on different hosts")
         print("  [4] Show configuration")
         print("  [q] Quit")
         print("-" * 63)
         try:
-            choice = input("  Enter choice [1-4/q]: ").strip().lower()
-            return choice
+            choice = input("  Enter choice [1-4/q] (default=1): ").strip().lower()
+            return choice if choice else '1'  # Default to installation status
         except (EOFError, KeyboardInterrupt):
             return 'q'
 
@@ -2692,7 +2692,7 @@ Examples:
                     # Show configuration
                     from access.discover_access import show_config
                     show_config(health_check.config_dir / 'cluster_access_config.yaml')
-                elif choice == 'q' or choice == 'quit' or choice == 'exit' or choice == '':
+                elif choice == 'q' or choice == 'quit' or choice == 'exit':
                     print("\n  Goodbye!")
                     break
                 else:
