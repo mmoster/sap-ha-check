@@ -1338,6 +1338,7 @@ Examples:
   %(prog)s --show-config            Show current configuration
   %(prog)s -H hosts.txt             Use custom hosts file
   %(prog)s -s /path/to/sosreports   Use SOSreport directory
+  %(prog)s -i                        Show installation guide (shortcut)
   %(prog)s --suggest                Show suggestions for first failing step
   %(prog)s --suggest install        Show full installation guide
   %(prog)s --list-steps             List all steps with suggestion commands
@@ -1441,6 +1442,13 @@ Examples:
         help='Show detailed usage guide with examples and next steps'
     )
 
+    # Install guide shortcut
+    parser.add_argument(
+        '--install', '-i',
+        action='store_true',
+        help='Show installation guide (shortcut for --suggest install)'
+    )
+
     # Suggest option
     parser.add_argument(
         '--suggest',
@@ -1468,6 +1476,11 @@ Examples:
     # Handle guide action
     if args.guide:
         print_guide()
+        sys.exit(0)
+
+    # Handle install guide shortcut (-i / --install)
+    if args.install:
+        print_suggestions('install')
         sys.exit(0)
 
     # Handle suggest action
