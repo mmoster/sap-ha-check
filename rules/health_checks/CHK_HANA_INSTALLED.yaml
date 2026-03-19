@@ -1,23 +1,31 @@
 # CHK_HANA_INSTALLED - Check if SAP HANA is installed
 check_id: CHK_HANA_INSTALLED
-version: "1.1"
+version: "1.2"
 severity: INFO
 description: Check if SAP HANA database is installed on this node
 enabled: true
 
 source_definitions:
-  # Check for HANA-specific indicators:
-  # 1. HDB instance directory with hdbsql executable
-  # 2. Or /hana/shared with SID directory
-  # 3. Or hdbuserstore command available
+  # Check for HANA-specific indicators (based on SAP standard paths):
+  # 1. /usr/sap/<SID>/HDB<instance> directory structure (standard HANA installation)
+  # 2. Running HANA processes (hdbdaemon, hdbnameserver, hdbindexserver)
+  # 3. <sid>adm user with HDB in home directory
+  # 4. /hana/shared filesystem (common for HANA installations)
   live_cmd: |
-    if ls /usr/sap/*/HDB*/exe/hdbsql 2>/dev/null | head -1 | grep -q .; then
+    # Method 1: Check for HANA instance directories /usr/sap/<SID>/HDB<NN>
+    if ls -d /usr/sap/*/HDB[0-9][0-9] 2>/dev/null | head -1 | grep -q .; then
       echo 'HANA_FOUND'
-    elif ls /hana/shared/*/HDB*/exe/hdbsql 2>/dev/null | head -1 | grep -q .; then
+    # Method 2: Check for running HANA processes
+    elif ps -ef 2>/dev/null | grep -E 'hdbdaemon|hdbnameserver|hdbindexserver' | grep -v grep | head -1 | grep -q .; then
       echo 'HANA_FOUND'
-    elif command -v hdbuserstore >/dev/null 2>&1; then
+    # Method 3: Check for <sid>adm users with HDB home directory
+    elif grep -E '^[a-z]{3}adm:.*HDB' /etc/passwd 2>/dev/null | head -1 | grep -q .; then
       echo 'HANA_FOUND'
-    elif ls /hana/data 2>/dev/null | grep -q .; then
+    # Method 4: Check for /hana/shared with SID subdirectory
+    elif ls -d /hana/shared/*/HDB[0-9][0-9] 2>/dev/null | head -1 | grep -q .; then
+      echo 'HANA_FOUND'
+    # Method 5: Check for sapcontrol with HANA instance
+    elif ls /usr/sap/*/HDB*/exe/sapcontrol 2>/dev/null | head -1 | grep -q .; then
       echo 'HANA_FOUND'
     else
       echo 'HANA_NOT_FOUND'
