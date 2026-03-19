@@ -18,6 +18,7 @@ parser:
       group: 0
 
 validation_logic:
+  scope: cluster  # Failure history is cluster-wide
   expectations:
     - key: failed_actions
       operator: not_exists

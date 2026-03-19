@@ -27,6 +27,7 @@ parser:
       group: 0
 
 validation_logic:
+  scope: cluster  # STONITH config is cluster-wide
   expectations:
     - key: stonith_disabled
       operator: not_exists

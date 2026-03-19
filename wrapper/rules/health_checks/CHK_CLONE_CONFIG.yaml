@@ -24,6 +24,7 @@ parser:
       group: 0
 
 validation_logic:
+  scope: cluster  # Clone config is cluster-wide
   expectations:
     - key: master_slave
       operator: exists

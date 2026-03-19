@@ -27,6 +27,10 @@ parser:
       group: 0
 
 validation_logic:
+  scope: all_nodes_equal  # Config should be same on all nodes
+  compare_keys:
+    - two_node
+    - expected_votes
   expectations:
     - key: quorum_section
       operator: exists

@@ -24,6 +24,11 @@ parser:
       group: 0
 
 validation_logic:
+  scope: all_nodes_equal  # Package versions must match across all nodes
+  compare_keys:
+    - pacemaker_version
+    - corosync_version
+    - saphanasr_version
   expectations:
     - key: pacemaker_version
       operator: exists

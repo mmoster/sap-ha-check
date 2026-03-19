@@ -21,6 +21,7 @@ parser:
       group: 0
 
 validation_logic:
+  scope: cluster  # CIB status is cluster-wide
   expectations:
     - key: dc_present
       operator: exists

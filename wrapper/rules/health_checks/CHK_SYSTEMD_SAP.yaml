@@ -21,6 +21,7 @@ parser:
       group: 0
 
 validation_logic:
+  scope: per_node  # Services must run on each node
   expectations:
     - key: saphostagent_active
       operator: exists

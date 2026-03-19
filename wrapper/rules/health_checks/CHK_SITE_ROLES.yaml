@@ -24,6 +24,7 @@ parser:
       group: 0
 
 validation_logic:
+  scope: cluster  # Site roles are cluster-wide
   expectations:
     - key: master_node
       operator: exists

@@ -21,5 +21,6 @@ parser:
       group: 0
 
 validation_logic:
+  scope: cluster  # Alert config is cluster-wide
   expectations: []
   # This is informational - alerts are optional but recommended

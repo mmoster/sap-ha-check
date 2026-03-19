@@ -27,6 +27,7 @@ parser:
       group: 0
 
 validation_logic:
+  scope: cluster  # Setup validation is cluster-wide
   expectations:
     - key: maintenance_mode
       operator: not_exists

@@ -423,10 +423,40 @@ class RulesEngine:
         )
 
     def run_check(self, rule: RuleDefinition, nodes: Dict[str, dict]) -> List[CheckResult]:
-        """Run a check across all nodes (multithreaded)."""
+        """
+        Run a check across nodes based on scope.
+
+        Scope modes:
+        - per_node: Check each node independently (default)
+        - any_node: Pass if at least one node passes
+        - all_nodes_equal: All nodes must return the same parsed values
+        - cluster: Run only on one node (cluster-wide info)
+        """
         results = []
         scope = rule.validation_logic.get('scope', 'per_node')
+        compare_keys = rule.validation_logic.get('compare_keys', [])
 
+        # For 'cluster' scope, only run on first accessible node
+        if scope == 'cluster':
+            for node_name, node_info in nodes.items():
+                method = node_info.get('preferred_method')
+                if method:
+                    user = node_info.get('ssh_user') or node_info.get('ansible_user')
+                    sos_base = self.access_config.get('sosreport_directory')
+                    result = self._run_check_on_node(rule, node_name, method, user, sos_base)
+                    result.node = f"{node_name} (cluster)"
+                    return [result]
+            # No accessible node
+            return [CheckResult(
+                check_id=rule.check_id,
+                description=rule.description,
+                status=CheckStatus.SKIPPED,
+                severity=Severity[rule.severity],
+                message="No accessible node for cluster check",
+                node=None
+            )]
+
+        # Run on all nodes (multithreaded)
         with ThreadPoolExecutor(max_workers=self.MAX_WORKERS) as executor:
             futures = {}
 
@@ -465,6 +495,72 @@ class RulesEngine:
                         message=str(e),
                         node=futures[future]
                     ))
+
+        # Handle scope-specific logic
+        if scope == 'any_node':
+            # Pass if at least one node passed
+            passed = [r for r in results if r.status == CheckStatus.PASSED]
+            if passed:
+                return [CheckResult(
+                    check_id=rule.check_id,
+                    description=rule.description,
+                    status=CheckStatus.PASSED,
+                    severity=Severity[rule.severity],
+                    message=f"Passed on {len(passed)}/{len(results)} node(s)",
+                    details={'passed_nodes': [r.node for r in passed]},
+                    node=None
+                )]
+            else:
+                return [CheckResult(
+                    check_id=rule.check_id,
+                    description=rule.description,
+                    status=CheckStatus.FAILED,
+                    severity=Severity[rule.severity],
+                    message="Failed on all nodes",
+                    details={'results': [{'node': r.node, 'message': r.message} for r in results]},
+                    node=None
+                )]
+
+        elif scope == 'all_nodes_equal':
+            # All nodes must have the same values for compare_keys
+            passed_results = [r for r in results if r.status == CheckStatus.PASSED]
+            if len(passed_results) < 2:
+                return results  # Not enough nodes to compare
+
+            # Get values to compare
+            if not compare_keys:
+                # Use all parsed keys
+                compare_keys = list(passed_results[0].details.get('parsed', {}).keys())
+
+            # Compare values across nodes
+            mismatches = []
+            reference_node = passed_results[0].node
+            reference_values = passed_results[0].details.get('parsed', {})
+
+            for result in passed_results[1:]:
+                node_values = result.details.get('parsed', {})
+                for key in compare_keys:
+                    ref_val = reference_values.get(key)
+                    node_val = node_values.get(key)
+                    if ref_val != node_val:
+                        mismatches.append({
+                            'key': key,
+                            'node': result.node,
+                            'expected': ref_val,
+                            'actual': node_val
+                        })
+
+            if mismatches:
+                # Add a comparison failure result
+                results.append(CheckResult(
+                    check_id=rule.check_id,
+                    description=rule.description,
+                    status=CheckStatus.FAILED,
+                    severity=Severity[rule.severity],
+                    message=f"Values differ across nodes: {', '.join(set(m['key'] for m in mismatches))}",
+                    details={'mismatches': mismatches, 'reference_node': reference_node},
+                    node="(comparison)"
+                ))
 
         return results
 

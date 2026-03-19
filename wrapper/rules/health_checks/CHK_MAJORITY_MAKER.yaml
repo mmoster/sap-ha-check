@@ -24,5 +24,6 @@ parser:
       group: 0
 
 validation_logic:
+  scope: cluster  # Majority maker config is cluster-wide
   expectations: []
   # Informational - majority maker is needed for some setups

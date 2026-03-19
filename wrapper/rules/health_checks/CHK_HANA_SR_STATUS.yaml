@@ -27,6 +27,7 @@ parser:
       group: 0
 
 validation_logic:
+  scope: cluster  # SR status is cluster-wide
   expectations:
     - key: sr_error
       operator: not_exists

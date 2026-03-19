@@ -21,6 +21,7 @@ parser:
       group: 0
 
 validation_logic:
+  scope: per_node  # Autostart must be disabled on each node
   expectations:
     - key: autostart_enabled
       operator: not_exists
