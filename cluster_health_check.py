@@ -1396,6 +1396,7 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                      str(r.status) == 'CheckStatus.ERROR']
             cluster_not_running = False
             cluster_not_created = False
+            install_status = None
             if len(errors) >= 3 and not packages_missing and not essential_cmd_missing:
                 # Many errors with packages installed - check if cluster exists
                 try:
@@ -1421,6 +1422,19 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
     - Cluster setup and configuration
 """)
             elif cluster_not_created:
+                # Build list of missing steps only
+                missing_steps = []
+                if install_status:
+                    if not install_status.get('hacluster_password'):
+                        missing_steps.append("passwd hacluster")
+                    if not install_status.get('pcsd_running'):
+                        missing_steps.append("systemctl enable --now pcsd")
+                    if not install_status.get('nodes_authenticated'):
+                        missing_steps.append("pcs host auth <node1> <node2>")
+                # These are always needed if cluster not created
+                missing_steps.append("pcs cluster setup <name> <node1> <node2>")
+                missing_steps.append("pcs cluster start --all")
+
                 print("""
   ╔═══════════════════════════════════════════════════════════════╗
   ║  [!] CLUSTER NOT YET CREATED                                  ║
@@ -1428,14 +1442,11 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
   ║                                                               ║
   ║  /etc/corosync/corosync.conf does not exist                  ║
   ║                                                               ║
-  ║  ACTION REQUIRED - Create the cluster first:                  ║
-  ║  ───────────────────────────────────────────                  ║
-  ║  1. Set hacluster password:  passwd hacluster                 ║
-  ║  2. Start pcsd:              systemctl enable --now pcsd      ║
-  ║  3. Authenticate nodes:      pcs host auth node1 node2        ║
-  ║  4. Create cluster:          pcs cluster setup <name> node1.. ║
-  ║  5. Start cluster:           pcs cluster start --all          ║
-  ║                                                               ║
+  ║  ACTION REQUIRED:                                             ║
+  ║  ─────────────────                                            ║""")
+                for i, step in enumerate(missing_steps, 1):
+                    print(f"  ║  {i}. {step:<55} ║")
+                print("""  ║                                                               ║
   ║  Run ./cluster_health_check.py -i for detailed guide          ║
   ╚═══════════════════════════════════════════════════════════════╝
 """)
