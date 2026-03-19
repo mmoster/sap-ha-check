@@ -117,6 +117,7 @@ class ClusterHealthCheck:
             'pcsd_enabled': None,
             # Phase 2: Cluster Creation
             'nodes_authenticated': None,
+            'corosync_conf_exists': None,
             'cluster_configured': None,
             'corosync_running': None,
             'pacemaker_running': None,
@@ -222,12 +223,24 @@ class ClusterHealthCheck:
         )
         status['pcsd_enabled'] = success and 'enabled' in output
 
-        # Check if nodes are authenticated (corosync.conf exists)
+        # Check if nodes are authenticated (known-hosts has multiple nodes)
+        # pcs host auth stores tokens in /var/lib/pcsd/known-hosts
         success, output = self._execute_check_cmd(
-            "test -f /etc/corosync/corosync.conf && echo 'authenticated'",
+            "cat /var/lib/pcsd/known-hosts 2>/dev/null | grep -c '\"token\"' || echo '0'",
             node, method, user
         )
-        status['nodes_authenticated'] = success and 'authenticated' in output
+        try:
+            token_count = int(output.strip())
+            status['nodes_authenticated'] = token_count >= 2  # At least 2 nodes authenticated
+        except (ValueError, AttributeError):
+            status['nodes_authenticated'] = False
+
+        # Check if corosync.conf exists (cluster was set up)
+        success, output = self._execute_check_cmd(
+            "test -f /etc/corosync/corosync.conf && echo 'exists'",
+            node, method, user
+        )
+        status['corosync_conf_exists'] = success and 'exists' in output
 
         # Check cluster configured and get cluster name
         success, output = self._execute_check_cmd(
@@ -381,9 +394,10 @@ class ClusterHealthCheck:
 
         # Phase 2: Cluster Creation
         print("\n  PHASE 2 - CLUSTER CREATION:")
-        print(f"    {status_icon(status['nodes_authenticated'])} Nodes authenticated (corosync.conf)")
+        print(f"    {status_icon(status['nodes_authenticated'])} Nodes authenticated (pcs host auth)")
         cluster_info = f" ({status['cluster_name']})" if status['cluster_name'] else ""
-        print(f"    {status_icon(status['cluster_configured'])} Cluster configured{cluster_info}")
+        print(f"    {status_icon(status.get('corosync_conf_exists'))} Cluster created (corosync.conf)")
+        print(f"    {status_icon(status['cluster_configured'])} Cluster running{cluster_info}")
         print(f"    {status_icon(status['corosync_running'])} Corosync running (messaging)")
         print(f"    {status_icon(status['pacemaker_running'])} Pacemaker running (resource mgr)")
         print(f"    {status_icon(status['cluster_enabled'])} Cluster enabled on boot")
@@ -393,8 +407,8 @@ class ClusterHealthCheck:
         if status.get('offline_nodes'):
             print(f"        Offline: {', '.join(status['offline_nodes'])}")
 
-        # Warning if cluster is configured but not running
-        if status['cluster_configured'] and not status['pacemaker_running']:
+        # Warning if cluster is created but not running
+        if status.get('corosync_conf_exists') and not status['pacemaker_running']:
             print("""
   ╔═════════════════════════════════════════════════════════════╗
   ║  [!] CLUSTER NOT RUNNING                                    ║
@@ -1401,8 +1415,8 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                 # Many errors with packages installed - check if cluster exists
                 try:
                     install_status = self.check_install_status()
-                    if not install_status.get('nodes_authenticated'):
-                        # corosync.conf doesn't exist - cluster not created
+                    if not install_status.get('corosync_conf_exists'):
+                        # corosync.conf doesn't exist - cluster not created (pcs cluster setup not run)
                         cluster_not_created = True
                     elif not install_status.get('pacemaker_running'):
                         # corosync.conf exists but cluster not running
