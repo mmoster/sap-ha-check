@@ -962,22 +962,11 @@ def show_config(config_path: Path):
 
 
 def delete_config(config_path: Path):
-    """Delete the configuration file and optionally health check reports."""
+    """Delete health check reports and status files (keeps node access config)."""
     import glob
 
     config_dir = config_path.parent
     deleted_count = 0
-
-    # Delete config file
-    if config_path.exists():
-        try:
-            os.remove(config_path)
-            print(f"Deleted: {config_path.name}")
-            deleted_count += 1
-        except Exception as e:
-            print(f"Error deleting configuration: {e}")
-    else:
-        print(f"No configuration file found at {config_path}")
 
     # Delete last_run_status.yaml
     status_file = config_dir / "last_run_status.yaml"
@@ -1015,13 +1004,19 @@ def delete_config(config_path: Path):
             print(f"Deleted {len(report_files)} report file(s)")
         else:
             print("Report files kept.")
+    else:
+        print("No health check report files found.")
+
+    # Show info about config file
+    if config_path.exists():
+        print(f"\nNote: Node access config preserved: {config_path.name}")
+        print("      Use -f (--force) to re-discover nodes.")
 
     if deleted_count > 0:
         print(f"\nTotal files deleted: {deleted_count}")
-        print("Run discovery again to start a fresh investigation.")
         return True
     else:
-        print("\nNo files to delete.")
+        print("\nNo files deleted.")
         return False
 
 

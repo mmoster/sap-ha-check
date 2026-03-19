@@ -772,7 +772,7 @@ OPTIONS REFERENCE
   Actions:
     -a, --access-only  Only run access discovery
     -S, --show-config  Show current configuration
-    -D, --delete-config Delete config (fresh start)
+    -D, --delete-reports Delete report files (keeps node config)
     -L, --list-rules   List available health checks
     -G, --guide        Show this guide
 
@@ -1481,7 +1481,7 @@ USAGE EXAMPLES
         print("Options:")
         print("  [Enter]     Continue with these nodes")
         print("  [nodes]     Enter different node names (space-separated)")
-        print("  [d]         Delete config and start fresh")
+        print("  [d]         Delete reports and start fresh")
         print("  [q]         Quit")
     else:
         print("NO EXISTING CONFIGURATION")
@@ -1590,9 +1590,9 @@ Examples:
         help='Display current configuration and exit'
     )
     parser.add_argument(
-        '--delete-config', '-D',
+        '--delete-reports', '-D',
         action='store_true',
-        help='Delete configuration file to restart investigation'
+        help='Delete report files (keeps node access config)'
     )
     parser.add_argument(
         '--force', '-f',
@@ -1774,7 +1774,7 @@ Examples:
     no_input_specified = (not args.hosts and not args.hosts_file and
                           not args.sosreport_dir and not args.cluster and
                           not args.local and not args.access_only and
-                          not args.show_config and not args.delete_config and
+                          not args.show_config and not args.delete_reports and
                           not args.list_rules and not args.force)
 
     if no_input_specified:
@@ -1811,7 +1811,7 @@ Examples:
         sys.exit(0)
 
     # Handle delete-config action
-    if args.delete_config:
+    if args.delete_reports:
         delete_config(config_path)
         sys.exit(0)
 
