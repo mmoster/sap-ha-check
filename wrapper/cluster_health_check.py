@@ -1328,6 +1328,9 @@ Examples:
   %(prog)s --show-config            Show current configuration
   %(prog)s -H hosts.txt             Use custom hosts file
   %(prog)s -s /path/to/sosreports   Use SOSreport directory
+  %(prog)s --suggest                Show suggestions for first failing step
+  %(prog)s --suggest install        Show full installation guide
+  %(prog)s --list-steps             List all steps with suggestion commands
         """
     )
 
