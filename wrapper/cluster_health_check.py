@@ -128,9 +128,10 @@ class ClusterHealthCheck:
 
         status['node'] = node
 
-        # Check subscription status
+        # Check subscription status (check identity which is more reliable)
         success, output = self._execute_check_cmd(
-            "subscription-manager status 2>/dev/null | grep -q 'Overall Status: Current' && echo 'registered'",
+            "subscription-manager identity 2>/dev/null | grep -q 'system identity' && echo 'registered' || "
+            "subscription-manager status 2>/dev/null | grep -qE 'Overall Status: (Current|Registered)' && echo 'registered'",
             node, method, user
         )
         status['subscription_registered'] = success and 'registered' in output
