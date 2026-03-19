@@ -637,16 +637,22 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
             install_results = self._run_rules_parallel([hana_installed_rule], nodes)
             self.check_results.extend(install_results)
 
-            # Check if HANA is installed on at least one node
-            hana_installed = any(
-                r.status == CheckStatus.PASSED for r in install_results
-            )
+            # Check if HANA is installed on ALL nodes (required for HA cluster)
+            nodes_checked = [r.node for r in install_results]
+            nodes_with_hana = [r.node for r in install_results if r.status == CheckStatus.PASSED]
+            nodes_without_hana = [r.node for r in install_results if r.status != CheckStatus.PASSED]
+
+            hana_installed = len(nodes_without_hana) == 0 and len(nodes_with_hana) > 0
 
             self._debug_print(f"HANA install check results: {[(r.node, str(r.status)) for r in install_results]}")
-            self._debug_print(f"HANA installed: {hana_installed}")
+            self._debug_print(f"Nodes with HANA: {nodes_with_hana}, Nodes without: {nodes_without_hana}")
+            self._debug_print(f"HANA installed on all nodes: {hana_installed}")
 
             if not hana_installed:
-                print("[SKIP] SAP HANA not installed - skipping HANA-specific checks")
+                if nodes_without_hana:
+                    print(f"[SKIP] SAP HANA not installed on: {', '.join(nodes_without_hana)}")
+                else:
+                    print("[SKIP] SAP HANA not installed - skipping HANA-specific checks")
                 # Add skipped results for other SAP checks
                 sap_checks = ['CHK_HANA_SR_STATUS', 'CHK_REPLICATION_MODE', 'CHK_HADR_HOOKS',
                              'CHK_HANA_AUTOSTART', 'CHK_SYSTEMD_SAP', 'CHK_SITE_ROLES']
