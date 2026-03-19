@@ -69,6 +69,333 @@ class ClusterHealthCheck:
             timestamp = datetime.now().strftime('%H:%M:%S.%f')[:-3]
             print(f"  [DEBUG {timestamp}] {message}")
 
+    def _execute_check_cmd(self, cmd: str, node: str, method: str, user: str = None) -> tuple:
+        """Execute a command on a node and return (success, output)."""
+        import subprocess
+        try:
+            if method == 'local':
+                full_cmd = cmd
+            elif method == 'ssh':
+                ssh_user = user or 'root'
+                escaped_cmd = cmd.replace("'", "'\"'\"'")
+                full_cmd = f"ssh -o BatchMode=yes -o ConnectTimeout=10 {ssh_user}@{node} '{escaped_cmd}'"
+            else:
+                return False, "Unsupported method"
+
+            result = subprocess.run(
+                full_cmd, shell=True,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                universal_newlines=True, timeout=30
+            )
+            return result.returncode == 0, result.stdout.strip()
+        except Exception as e:
+            return False, str(e)
+
+    def check_install_status(self, node: str = None, method: str = 'ssh', user: str = None) -> dict:
+        """
+        Check installation status on a node.
+        Returns dict with status of each installation step.
+        """
+        status = {
+            'subscription_registered': None,
+            'repos_enabled': None,
+            'packages_installed': None,
+            'pcsd_running': None,
+            'cluster_configured': None,
+            'stonith_configured': None,
+            'hana_resources': None,
+            'missing_packages': [],
+            'missing_repos': [],
+            'node': node,
+            'method': method,
+        }
+
+        if not node and not self.access_config:
+            return status
+
+        # Use first accessible node if not specified
+        if not node and self.access_config:
+            for n, info in self.access_config.nodes.items():
+                if info.get('preferred_method'):
+                    node = n
+                    method = info.get('preferred_method', 'ssh')
+                    user = info.get('ssh_user', 'root')
+                    break
+
+        if not node:
+            return status
+
+        status['node'] = node
+
+        # Check subscription status
+        success, output = self._execute_check_cmd(
+            "subscription-manager status 2>/dev/null | grep -q 'Overall Status: Current' && echo 'registered'",
+            node, method, user
+        )
+        status['subscription_registered'] = success and 'registered' in output
+
+        # Check required repos
+        success, output = self._execute_check_cmd(
+            "subscription-manager repos --list-enabled 2>/dev/null | grep -E 'highavailability|sap' | head -5",
+            node, method, user
+        )
+        status['repos_enabled'] = success and ('highavailability' in output or 'sap' in output)
+        if not status['repos_enabled']:
+            status['missing_repos'] = ['highavailability', 'sap-solutions']
+
+        # Check packages
+        required_packages = ['pacemaker', 'corosync', 'pcs', 'resource-agents-sap-hana']
+        success, output = self._execute_check_cmd(
+            "rpm -q pacemaker corosync pcs resource-agents-sap-hana 2>/dev/null",
+            node, method, user
+        )
+        if success:
+            status['packages_installed'] = 'not installed' not in output
+            for pkg in required_packages:
+                if f'{pkg} is not installed' in output or pkg not in output:
+                    status['missing_packages'].append(pkg)
+        else:
+            status['packages_installed'] = False
+            status['missing_packages'] = required_packages
+
+        # Check pcsd service
+        success, output = self._execute_check_cmd(
+            "systemctl is-active pcsd 2>/dev/null",
+            node, method, user
+        )
+        status['pcsd_running'] = success and 'active' in output
+
+        # Check cluster configured
+        success, output = self._execute_check_cmd(
+            "pcs cluster status 2>/dev/null | head -1",
+            node, method, user
+        )
+        status['cluster_configured'] = success and 'Cluster' in output
+
+        # Check STONITH
+        success, output = self._execute_check_cmd(
+            "pcs stonith status 2>/dev/null | grep -v 'NO stonith'",
+            node, method, user
+        )
+        status['stonith_configured'] = success and output and 'Started' in output
+
+        # Check HANA resources
+        success, output = self._execute_check_cmd(
+            "pcs resource status 2>/dev/null | grep -i saphana",
+            node, method, user
+        )
+        status['hana_resources'] = success and 'SAPHana' in output
+
+        return status
+
+    def print_dynamic_install_guide(self, node: str = None):
+        """Print installation guide showing only steps that are still needed."""
+        print("\n" + "=" * 63)
+        print(" Checking current installation status...")
+        print("=" * 63)
+
+        # Get first accessible node
+        method = 'ssh'
+        user = 'root'
+        if not node and self.access_config:
+            for n, info in self.access_config.nodes.items():
+                if info.get('preferred_method'):
+                    node = n
+                    method = info.get('preferred_method', 'ssh')
+                    user = info.get('ssh_user', 'root')
+                    break
+
+        if not node:
+            print("\n[WARNING] No accessible nodes found. Showing full guide.")
+            print_suggestions('install')
+            return
+
+        print(f"  Checking node: {node} ({method})")
+        status = self.check_install_status(node, method, user)
+
+        # Print status summary
+        print("\n" + "-" * 63)
+        print(" Current Status")
+        print("-" * 63)
+
+        def status_icon(val):
+            if val is None:
+                return "[?]"
+            return "[OK]" if val else "[--]"
+
+        print(f"  {status_icon(status['subscription_registered'])} Subscription registered")
+        print(f"  {status_icon(status['repos_enabled'])} HA/SAP repositories enabled")
+        print(f"  {status_icon(status['packages_installed'])} Cluster packages installed")
+        if status['missing_packages']:
+            print(f"      Missing: {', '.join(status['missing_packages'])}")
+        print(f"  {status_icon(status['pcsd_running'])} PCSD service running")
+        print(f"  {status_icon(status['cluster_configured'])} Cluster configured")
+        print(f"  {status_icon(status['stonith_configured'])} STONITH/fencing configured")
+        print(f"  {status_icon(status['hana_resources'])} SAP HANA resources configured")
+
+        # Determine what steps are needed
+        steps_needed = []
+        if not status['subscription_registered']:
+            steps_needed.append('subscription')
+        if not status['repos_enabled']:
+            steps_needed.append('repos')
+        if not status['packages_installed']:
+            steps_needed.append('packages')
+        if not status['pcsd_running']:
+            steps_needed.append('pcsd')
+        if not status['cluster_configured']:
+            steps_needed.append('cluster')
+        if not status['stonith_configured']:
+            steps_needed.append('stonith')
+        if not status['hana_resources']:
+            steps_needed.append('hana')
+
+        if not steps_needed:
+            print("\n" + "=" * 63)
+            print(" All installation steps completed!")
+            print("=" * 63)
+            print("\n  Run health check to verify configuration:")
+            print("    ./cluster_health_check.py")
+            return
+
+        # Print only the needed steps
+        print("\n" + "=" * 63)
+        print(f" Required Steps ({len(steps_needed)} remaining)")
+        print("=" * 63)
+
+        step_num = 1
+
+        if 'subscription' in steps_needed:
+            print(f"""
+STEP {step_num}: REGISTER SUBSCRIPTION (both nodes)
+---------------------------------------------------------------
+  # Register system and attach SAP subscription
+  subscription-manager register
+  subscription-manager attach --pool=<SAP_POOL_ID>
+""")
+            step_num += 1
+
+        if 'repos' in steps_needed:
+            print(f"""
+STEP {step_num}: ENABLE REPOSITORIES (both nodes)
+---------------------------------------------------------------
+  # Enable required repositories (RHEL 9)
+  subscription-manager repos --enable=rhel-9-for-x86_64-baseos-e4s-rpms
+  subscription-manager repos --enable=rhel-9-for-x86_64-appstream-e4s-rpms
+  subscription-manager repos --enable=rhel-9-for-x86_64-sap-solutions-e4s-rpms
+  subscription-manager repos --enable=rhel-9-for-x86_64-sap-netweaver-e4s-rpms
+  subscription-manager repos --enable=rhel-9-for-x86_64-highavailability-e4s-rpms
+
+  # For RHEL 10, replace "9" with "10" in the above commands
+""")
+            step_num += 1
+
+        if 'packages' in steps_needed:
+            missing = status['missing_packages']
+            pkg_list = ' '.join(missing) if missing else 'pacemaker pcs fence-agents-all resource-agents-sap-hana'
+            print(f"""
+STEP {step_num}: INSTALL CLUSTER PACKAGES (both nodes)
+---------------------------------------------------------------
+  # Install missing packages
+  dnf install -y {pkg_list}
+
+  # Verify installation
+  rpm -q pacemaker corosync pcs resource-agents-sap-hana
+""")
+            step_num += 1
+
+        if 'pcsd' in steps_needed:
+            print(f"""
+STEP {step_num}: CONFIGURE PCSD SERVICE (both nodes)
+---------------------------------------------------------------
+  # Set password for hacluster user
+  passwd hacluster
+
+  # Enable and start pcsd service
+  systemctl enable --now pcsd.service
+
+  # Open firewall ports
+  firewall-cmd --permanent --add-service=high-availability
+  firewall-cmd --reload
+""")
+            step_num += 1
+
+        if 'cluster' in steps_needed:
+            print(f"""
+STEP {step_num}: CREATE CLUSTER (one node only)
+---------------------------------------------------------------
+  # Authenticate cluster nodes
+  pcs host auth node1 node2 -u hacluster -p 'YourPassword'
+
+  # Create and start the cluster
+  pcs cluster setup <cluster_name> --start node1 node2
+
+  # Enable cluster to start on boot
+  pcs cluster enable --all
+
+  # Verify cluster status
+  pcs cluster status
+""")
+            step_num += 1
+
+        if 'stonith' in steps_needed:
+            print(f"""
+STEP {step_num}: CONFIGURE STONITH/FENCING (one node only)
+---------------------------------------------------------------
+  IMPORTANT: STONITH is REQUIRED for production SAP HANA clusters!
+
+  # Example: IPMI/iLO fencing
+  pcs stonith create fence_node1 fence_ipmilan \\
+      ipaddr=<IPMI_IP> login=<USER> passwd=<PASS> \\
+      lanplus=1 pcmk_host_list=node1
+
+  # Example: Cloud fencing (Azure)
+  pcs stonith create fence_azure fence_azure_arm ...
+
+  # Verify fencing
+  pcs stonith status
+""")
+            step_num += 1
+
+        if 'hana' in steps_needed:
+            print(f"""
+STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
+---------------------------------------------------------------
+  # Ensure HANA System Replication is configured first!
+  # Run as <sid>adm: hdbnsutil -sr_state
+
+  # Create SAPHanaTopology resource
+  pcs resource create SAPHanaTopology_<SID>_<INST> SAPHanaTopology \\
+      SID=<SID> InstanceNumber=<INST> \\
+      op start timeout=600 op stop timeout=300 op monitor interval=10 timeout=600 \\
+      clone clone-max=2 clone-node-max=1 interleave=true
+
+  # Create SAPHana resource
+  pcs resource create SAPHana_<SID>_<INST> SAPHana \\
+      SID=<SID> InstanceNumber=<INST> \\
+      PREFER_SITE_TAKEOVER=true DUPLICATE_PRIMARY_TIMEOUT=7200 AUTOMATED_REGISTER=true \\
+      op start timeout=3600 op stop timeout=3600 \\
+      op monitor interval=61 role=Slave timeout=700 \\
+      op monitor interval=59 role=Master timeout=700 \\
+      op promote timeout=3600 op demote timeout=3600 \\
+      promotable meta notify=true clone-max=2 clone-node-max=1 interleave=true
+
+  # Create virtual IP
+  pcs resource create vip_<SID>_<INST> IPaddr2 ip=<VIP> cidr_netmask=24 \\
+      op monitor interval=10 timeout=20
+
+  # Add constraints
+  pcs constraint colocation add vip_<SID>_<INST> with master SAPHana_<SID>_<INST>-clone 4000
+  pcs constraint order SAPHanaTopology_<SID>_<INST>-clone then SAPHana_<SID>_<INST>-clone
+""")
+            step_num += 1
+
+        print("-" * 63)
+        print(" After completing these steps, rerun the health check:")
+        print("   ./cluster_health_check.py")
+        print("-" * 63)
+
     def print_banner(self):
         """Print the tool banner."""
         print("""
@@ -606,7 +933,7 @@ class ClusterHealthCheck:
                     return self.run_all_checks(force_rediscover=False, skip_steps=[])
                 elif response == 'i':
                     print()
-                    print_suggestions('install')
+                    self.print_dynamic_install_guide()
                 elif response == 'd':
                     from access.discover_access import delete_config
                     delete_config(self.config_dir / AccessDiscovery.CONFIG_FILE)
@@ -1735,6 +2062,22 @@ Examples:
 
     # Handle install guide shortcut (-i / --install)
     if args.install:
+        # Try to use dynamic guide if we have access config
+        config_dir = Path(args.config_dir) if args.config_dir else SCRIPT_DIR
+        config_path = config_dir / AccessDiscovery.CONFIG_FILE
+        if config_path.exists():
+            try:
+                with open(config_path, 'r') as f:
+                    access_data = yaml.safe_load(f) or {}
+                if access_data.get('nodes'):
+                    # Create minimal health check instance for dynamic guide
+                    hc = ClusterHealthCheck(config_dir=str(config_dir), local_mode=args.local)
+                    hc.access_config = type('Config', (), {'nodes': access_data.get('nodes', {})})()
+                    hc.print_dynamic_install_guide()
+                    sys.exit(0)
+            except Exception:
+                pass
+        # Fall back to static guide
         print_suggestions('install')
         sys.exit(0)
 
@@ -1803,6 +2146,21 @@ Examples:
                     print(f"Other failing steps: {others}")
                     print(f"\nTo skip this and see next: --suggest --suggest-skip {step}")
                 print()
+
+        # Use dynamic guide for install step
+        if step == 'install':
+            config_path = config_dir / AccessDiscovery.CONFIG_FILE
+            if config_path.exists():
+                try:
+                    with open(config_path, 'r') as f:
+                        access_data = yaml.safe_load(f) or {}
+                    if access_data.get('nodes'):
+                        hc = ClusterHealthCheck(config_dir=str(config_dir), local_mode=args.local)
+                        hc.access_config = type('Config', (), {'nodes': access_data.get('nodes', {})})()
+                        hc.print_dynamic_install_guide()
+                        sys.exit(0)
+                except Exception:
+                    pass
 
         print_suggestions(step)
         sys.exit(0)
