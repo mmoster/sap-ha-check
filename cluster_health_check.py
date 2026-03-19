@@ -775,6 +775,9 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
         Run all health checks in sequence.
         Returns exit code (0 = success, non-zero = failure).
         """
+        # Clear results from any previous run
+        self.check_results = []
+
         self.print_banner()
         print(f"Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"Config directory: {self.config_dir}")
@@ -952,6 +955,9 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                 skipped = sum(1 for r in step_results if str(r.status) == 'CheckStatus.SKIPPED')
                 errors = sum(1 for r in step_results if str(r.status) == 'CheckStatus.ERROR')
                 total = len(step_results)
+
+                if self.debug:
+                    print(f"  [DEBUG] {step}: {[(r.check_id, str(r.status), r.node) for r in step_results]}")
 
                 # Show ratio and details
                 if passed == total and total > 0:
