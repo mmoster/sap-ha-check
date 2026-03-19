@@ -962,18 +962,66 @@ def show_config(config_path: Path):
 
 
 def delete_config(config_path: Path):
-    """Delete the configuration file to restart investigation."""
-    if not config_path.exists():
-        print(f"No configuration file found at {config_path}")
-        return False
+    """Delete the configuration file and optionally health check reports."""
+    import glob
 
-    try:
-        os.remove(config_path)
-        print(f"Configuration file deleted: {config_path}")
+    config_dir = config_path.parent
+    deleted_count = 0
+
+    # Delete config file
+    if config_path.exists():
+        try:
+            os.remove(config_path)
+            print(f"Deleted: {config_path.name}")
+            deleted_count += 1
+        except Exception as e:
+            print(f"Error deleting configuration: {e}")
+    else:
+        print(f"No configuration file found at {config_path}")
+
+    # Delete last_run_status.yaml
+    status_file = config_dir / "last_run_status.yaml"
+    if status_file.exists():
+        try:
+            os.remove(status_file)
+            print(f"Deleted: {status_file.name}")
+            deleted_count += 1
+        except Exception:
+            pass
+
+    # Check for health check report files
+    report_pattern = str(config_dir / "health_check_report_*.yaml")
+    report_files = glob.glob(report_pattern)
+
+    if report_files:
+        print(f"\nFound {len(report_files)} health check report file(s):")
+        for f in sorted(report_files)[-5:]:  # Show last 5
+            print(f"  {Path(f).name}")
+        if len(report_files) > 5:
+            print(f"  ... and {len(report_files) - 5} more")
+
+        try:
+            response = input("\nDelete all health check report files? [y/N]: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            response = 'n'
+
+        if response == 'y':
+            for f in report_files:
+                try:
+                    os.remove(f)
+                    deleted_count += 1
+                except Exception:
+                    pass
+            print(f"Deleted {len(report_files)} report file(s)")
+        else:
+            print("Report files kept.")
+
+    if deleted_count > 0:
+        print(f"\nTotal files deleted: {deleted_count}")
         print("Run discovery again to start a fresh investigation.")
         return True
-    except Exception as e:
-        print(f"Error deleting configuration: {e}")
+    else:
+        print("\nNo files to delete.")
         return False
 
 
