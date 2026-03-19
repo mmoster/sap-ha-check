@@ -393,6 +393,13 @@ class ClusterHealthCheck:
         if status.get('offline_nodes'):
             print(f"        Offline: {', '.join(status['offline_nodes'])}")
 
+        # Warning if cluster is configured but not running
+        if status['cluster_configured'] and not status['pacemaker_running']:
+            print("\n  " + "-" * 59)
+            print("  [!] CLUSTER NOT RUNNING - 'pcs status' will fail!")
+            print("      Run: pcs cluster start --all")
+            print("  " + "-" * 59)
+
         # Phase 3: Fencing & Resources
         print("\n  PHASE 3 - FENCING & RESOURCES:")
         print(f"    {status_icon(status['stonith_enabled'])} STONITH enabled")
@@ -543,12 +550,18 @@ STEP {step_num}: CREATE CLUSTER (one node only)
             print(f"""
 STEP {step_num}: START CLUSTER (one node only)
 ---------------------------------------------------------------
+  NOTE: If 'pcs status' shows "Connection to cluster failed: Connection
+        refused" - the cluster needs to be STARTED or CREATED first!
+
   # Start the cluster on all nodes
   pcs cluster start --all
 
   # Verify cluster is running
   pcs cluster status
   pcs status
+
+  # If cluster doesn't exist yet, create it first:
+  pcs cluster setup <cluster_name> <node1> <node2>
 
   # Monitor in real-time
   watch pcs status
@@ -1376,6 +1389,14 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                     if match and match.group(1) in essential_commands:
                         essential_cmd_missing = True
 
+            # Check for "cluster not running" scenario - many errors, packages installed
+            errors = [r for r in all_results if hasattr(r, 'status') and
+                     str(r.status) == 'CheckStatus.ERROR']
+            cluster_not_running = False
+            if len(errors) >= 3 and not packages_missing and not essential_cmd_missing:
+                # Many errors with packages installed suggests cluster isn't running
+                cluster_not_running = True
+
             if packages_missing or essential_cmd_missing:
                 print(f"""
   INSTALLATION REQUIRED: Cluster packages not installed!
@@ -1385,6 +1406,21 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
     - Pacemaker, Corosync, pcs
     - SAP HANA resource agents
     - Cluster setup and configuration
+""")
+            elif cluster_not_running:
+                print(f"""
+  CLUSTER MAY NOT BE RUNNING ({len(errors)} errors detected)
+    If 'pcs status' shows "Connection to cluster failed: Connection refused"
+    the cluster needs to be STARTED or CREATED first!
+
+    To start an existing cluster:
+      pcs cluster start --all
+
+    To create a new cluster:
+      pcs cluster setup <cluster_name> <node1> <node2>
+      pcs cluster start --all
+
+    Run ./cluster_health_check.py -i for full installation status.
 """)
             elif critical:
                 print(f"""
