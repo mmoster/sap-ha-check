@@ -23,8 +23,10 @@ env/
 *.swo
 *~
 
-# Generated reports (keep config, ignore timestamped reports)
+# Generated reports and runtime files
 health_check_report_*.yaml
+cluster_access_config.yaml
+last_run_status.yaml
 
 # OS
 .DS_Store
