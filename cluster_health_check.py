@@ -829,11 +829,14 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
             print(f"  PASSED:  {len(passed):3d}  FAILED: {len(failed_checks):3d}  SKIPPED: {len(skipped):3d}  ERROR: {len(errors):3d}")
 
             # Check for installation issues
+            # Essential commands - crm is SUSE-specific, pcs is RHEL-specific
+            essential_commands = ['pacemaker', 'corosync', 'pcs', 'crm_mon']
+            optional_commands = ['crm', 'crmsh']  # SUSE-specific, not needed on RHEL
             packages_missing = False
             commands_missing = []
             for r in all_results:
                 msg = getattr(r, 'message', '') or ''
-                if 'package not found' in msg.lower():
+                if 'pacemaker package not found' in msg.lower() or 'corosync package not found' in msg.lower():
                     packages_missing = True
                 if "command '" in msg.lower() and "not found" in msg.lower():
                     # Extract command name
@@ -841,7 +844,8 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                     match = re.search(r"command '(\w+)'", msg.lower())
                     if match:
                         cmd = match.group(1)
-                        if cmd not in commands_missing:
+                        # Only track essential commands as missing
+                        if cmd in essential_commands and cmd not in commands_missing:
                             commands_missing.append(cmd)
 
             if packages_missing or commands_missing:
@@ -939,6 +943,9 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
         has_failures = False
         has_skipped = False
         needs_install = False
+        # Essential commands - if these are missing, installation is needed
+        # Note: 'crm' is SUSE-specific, 'pcs' is RHEL-specific - only one needed
+        essential_commands = ['pacemaker', 'corosync', 'pcs', 'crm_mon']
         if self.check_results:
             for r in self.check_results:
                 status = str(getattr(r, 'status', ''))
@@ -947,8 +954,14 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                     has_failures = True
                 if status == 'CheckStatus.SKIPPED':
                     has_skipped = True
-                if 'package not found' in msg.lower() or ("command '" in msg.lower() and "not found" in msg.lower()):
+                # Only trigger needs_install for essential package/command issues
+                if 'pacemaker package not found' in msg.lower() or 'corosync package not found' in msg.lower():
                     needs_install = True
+                elif "command '" in msg.lower() and "not found" in msg.lower():
+                    import re
+                    match = re.search(r"command '(\w+)'", msg.lower())
+                    if match and match.group(1) in essential_commands:
+                        needs_install = True
 
         if failed:
             # Show hint about --suggest
@@ -1055,17 +1068,22 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
             skipped = [r for r in all_results if hasattr(r, 'status') and
                       str(r.status) == 'CheckStatus.SKIPPED']
 
-            # Check for package/command not found issues
+            # Check for essential package/command not found issues
+            # crm is SUSE-specific, pcs is RHEL-specific - only one needed
+            essential_commands = ['pacemaker', 'corosync', 'pcs', 'crm_mon']
             packages_missing = False
-            commands_missing = False
+            essential_cmd_missing = False
             for r in all_results:
                 msg = getattr(r, 'message', '') or ''
-                if 'package not found' in msg.lower() or 'not found' in msg.lower():
+                if 'pacemaker package not found' in msg.lower() or 'corosync package not found' in msg.lower():
                     packages_missing = True
                 if "command '" in msg.lower() and "not found" in msg.lower():
-                    commands_missing = True
+                    import re
+                    match = re.search(r"command '(\w+)'", msg.lower())
+                    if match and match.group(1) in essential_commands:
+                        essential_cmd_missing = True
 
-            if packages_missing or commands_missing:
+            if packages_missing or essential_cmd_missing:
                 print(f"""
   INSTALLATION REQUIRED: Cluster packages not installed!
     Run: ./cluster_health_check.py --suggest install
