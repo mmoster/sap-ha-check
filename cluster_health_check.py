@@ -894,14 +894,17 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
         }
 
         for step, success in results.items():
-            status_icon = "[OK]" if success else "[FAIL]"
             name = step_names.get(step, step)
 
             # Get detailed results for this step
             if step == 'access':
                 nodes = self.access_config.nodes if self.access_config else {}
                 accessible = sum(1 for n in nodes.values() if n.get('preferred_method'))
-                print(f"  {status_icon} {name}: {accessible} node(s) accessible")
+                total = len(nodes)
+                if accessible == total and total > 0:
+                    print(f"  [{accessible}/{total}] {name}: PASSED")
+                else:
+                    print(f"  [{accessible}/{total}] {name}: {accessible} node(s) accessible")
             elif step in step_checks and self.check_results:
                 check_ids = step_checks[step]
                 step_results = [r for r in self.check_results if r.check_id in check_ids]
@@ -909,20 +912,23 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                 failed = sum(1 for r in step_results if str(r.status) == 'CheckStatus.FAILED')
                 skipped = sum(1 for r in step_results if str(r.status) == 'CheckStatus.SKIPPED')
                 errors = sum(1 for r in step_results if str(r.status) == 'CheckStatus.ERROR')
+                total = len(step_results)
 
-                details = []
-                if passed: details.append(f"{passed} passed")
-                if failed: details.append(f"{failed} failed")
-                if skipped: details.append(f"{skipped} skipped")
-                if errors: details.append(f"{errors} errors")
-
-                if details:
-                    print(f"  {status_icon} {name}: {', '.join(details)}")
+                # Show ratio and details
+                if passed == total and total > 0:
+                    print(f"  [{passed}/{total}] {name}: PASSED")
                 else:
-                    print(f"  {status_icon} {name}")
+                    details = []
+                    if failed: details.append(f"{failed} failed")
+                    if skipped: details.append(f"{skipped} skipped")
+                    if errors: details.append(f"{errors} errors")
+                    detail_str = f" ({', '.join(details)})" if details else ""
+                    print(f"  [{passed}/{total}] {name}{detail_str}")
             elif step == 'report':
-                print(f"  {status_icon} {name}: report saved")
+                status_icon = "[OK]" if success else "[FAIL]"
+                print(f"  {status_icon} {name}")
             else:
+                status_icon = "[OK]" if success else "[FAIL]"
                 print(f"  {status_icon} {name}")
 
         failed = [step for step, success in results.items() if not success]
