@@ -2184,10 +2184,10 @@ Examples:
     if args.suggest:
         step = args.suggest
         skip_steps = args.suggest_skip or []
+        config_dir = Path(args.config_dir) if args.config_dir else SCRIPT_DIR
 
         if step == 'auto':
             # Read last run status to find first failing step
-            config_dir = Path(args.config_dir) if args.config_dir else SCRIPT_DIR
             status_file = config_dir / "last_run_status.yaml"
 
             if not status_file.exists():
