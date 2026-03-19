@@ -400,6 +400,26 @@ class ClusterHealthCheck:
         print(f"Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"Config directory: {self.config_dir}")
 
+        # Show what source is being used
+        config_file = self.config_dir / AccessDiscovery.CONFIG_FILE
+        if self.local_mode:
+            print(f"Mode: LOCAL (running on cluster node)")
+        elif self.sosreport_dir:
+            print(f"Source: SOSreports from {self.sosreport_dir}")
+        elif self.hosts_file:
+            print(f"Source: Hosts file {self.hosts_file}")
+        elif self.cluster_name:
+            print(f"Source: Saved cluster '{self.cluster_name}'")
+        elif config_file.exists():
+            print(f"Source: Existing config (use -f to rediscover, -D to reset)")
+        else:
+            print(f"Source: Ansible inventory (auto-discovery)")
+
+        print("-" * 63)
+        print("To use different nodes:  ./cluster_health_check.py <node1> <node2>")
+        print("To reset configuration:  ./cluster_health_check.py -D")
+        print("-" * 63)
+
         skip_steps = skip_steps or []
         results = {}
 
