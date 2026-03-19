@@ -642,6 +642,9 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                 r.status == CheckStatus.PASSED for r in install_results
             )
 
+            self._debug_print(f"HANA install check results: {[(r.node, str(r.status)) for r in install_results]}")
+            self._debug_print(f"HANA installed: {hana_installed}")
+
             if not hana_installed:
                 print("[SKIP] SAP HANA not installed - skipping HANA-specific checks")
                 # Add skipped results for other SAP checks

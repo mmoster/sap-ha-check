@@ -6,21 +6,22 @@ description: Check if SAP HANA is installed on this node
 enabled: true
 
 source_definitions:
-  live_cmd: "ls -d /usr/sap/*/HDB* 2>/dev/null | head -1 || ls -d /hana/shared/*/HDB* 2>/dev/null | head -1"
+  # Use explicit check that returns FOUND or NOT_FOUND
+  live_cmd: "if ls -d /usr/sap/*/HDB* /hana/shared/*/HDB* 2>/dev/null | head -1 | grep -q .; then echo 'HANA_FOUND'; else echo 'HANA_NOT_FOUND'; fi"
   sos_path: "sos_commands/sap/sap_discovery"
 
 parser:
   type: regex
   multiline: false
   search_patterns:
-    - name: hana_path
-      regex: "(/usr/sap/\\w+/HDB\\d+|/hana/shared/\\w+/HDB\\d+)"
-      group: 0
+    - name: hana_status
+      regex: "(HANA_FOUND|HANA_NOT_FOUND)"
+      group: 1
 
 validation_logic:
   scope: node
   expectations:
-    - key: hana_path
-      operator: exists
-      value: true
+    - key: hana_status
+      operator: eq
+      value: "HANA_FOUND"
       message: "SAP HANA not installed on this node"
