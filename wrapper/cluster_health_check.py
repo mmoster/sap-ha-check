@@ -964,6 +964,13 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
             print("\n" + "=" * 63)
             print(" [ACTION REQUIRED] Cluster packages not installed.")
             print("=" * 63)
+
+            # Show first suggested commands
+            print("\n  Quick start (run on cluster nodes):")
+            print("    dnf install -y pacemaker pcs resource-agents-sap-hana")
+            print("    systemctl enable --now pcsd")
+            print("\n  For full guide: ./cluster_health_check.py -i")
+
             print("\nOptions:")
             print("  [Enter]  Rerun health check (monitor installation progress)")
             print("  [i]      Show installation guide")
