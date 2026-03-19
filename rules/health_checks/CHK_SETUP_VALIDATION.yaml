@@ -6,7 +6,20 @@ description: Validate cluster setup against SAP HANA HA best practices
 enabled: true
 
 source_definitions:
-  live_cmd: "crm configure show 2>/dev/null || pcs config show 2>/dev/null"
+  # Validate cluster setup - supports both pcs (RHEL) and crm (SUSE)
+  live_cmd: |
+    if command -v pcs >/dev/null 2>&1; then
+      echo "=== CLUSTER PROPERTIES ==="
+      pcs property show 2>/dev/null
+      echo "=== RESOURCE DEFAULTS ==="
+      pcs resource defaults 2>/dev/null
+      echo "=== OPERATION DEFAULTS ==="
+      pcs resource op defaults 2>/dev/null
+    elif command -v crm >/dev/null 2>&1; then
+      crm configure show 2>/dev/null
+    else
+      echo "NO_CLUSTER_TOOLS"
+    fi
   sos_path: "sos_commands/pacemaker/crm_configure_show"
 
 parser:

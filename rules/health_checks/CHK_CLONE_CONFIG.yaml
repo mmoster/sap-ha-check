@@ -6,7 +6,15 @@ description: Validate SAPHana clone/promotable resource configuration
 enabled: true
 
 source_definitions:
-  live_cmd: "crm configure show 2>/dev/null | grep -A10 'clone\\|ms\\|promotable' || pcs resource config 2>/dev/null | grep -A10 'promotable'"
+  # Check clone/promotable resource config - supports both pcs (RHEL) and crm (SUSE)
+  live_cmd: |
+    if command -v pcs >/dev/null 2>&1; then
+      pcs resource config 2>/dev/null | grep -iE 'clone|promotable|SAPHana' || echo "NO_CLONE_CONFIG"
+    elif command -v crm >/dev/null 2>&1; then
+      crm configure show 2>/dev/null | grep -A10 'clone\|ms\|promotable'
+    else
+      echo "NO_CLUSTER_TOOLS"
+    fi
   sos_path: "sos_commands/pacemaker/crm_configure_show"
 
 parser:
@@ -14,19 +22,22 @@ parser:
   multiline: true
   search_patterns:
     - name: clone_max
-      regex: "(clone-max=\\d+|promotable-max=\\d+)"
+      regex: "(clone-max=\\d+|promotable-max=\\d+|Clone)"
       group: 0
     - name: clone_node_max
       regex: "(clone-node-max=1|promoted-node-max=1)"
       group: 0
     - name: master_slave
-      regex: "(ms |master-slave|promotable)"
+      regex: "(ms |master-slave|promotable|Promotable|SAPHana.*clone)"
+      group: 0
+    - name: saphana_resource
+      regex: "(SAPHana_|SAPHanaTopology)"
       group: 0
 
 validation_logic:
   scope: cluster  # Clone config is cluster-wide
   expectations:
-    - key: master_slave
+    - key: saphana_resource
       operator: exists
       value: true
-      message: "No master/slave (promotable) resource found for SAPHana"
+      message: "No SAPHana clone/promotable resource found"
