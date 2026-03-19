@@ -84,6 +84,7 @@ class RuleDefinition:
     parser: Dict[str, Any] = None
     validation_logic: Dict[str, Any] = None
     topology_filter: Optional[str] = None
+    requires: Optional[str] = None  # Check ID that must pass before this one runs
     raw_yaml: Dict[str, Any] = None
 
     def __post_init__(self):
@@ -135,6 +136,7 @@ class RulesEngine:
                     parser=data.get('parser', {}),
                     validation_logic=data.get('validation_logic', {}),
                     topology_filter=data.get('topology_filter'),
+                    requires=data.get('requires'),
                     raw_yaml=data
                 )
                 self.rules.append(rule)

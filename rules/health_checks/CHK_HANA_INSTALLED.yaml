@@ -1,0 +1,26 @@
+# CHK_HANA_INSTALLED - Check if SAP HANA is installed
+check_id: CHK_HANA_INSTALLED
+version: "1.0"
+severity: INFO
+description: Check if SAP HANA is installed on this node
+enabled: true
+
+source_definitions:
+  live_cmd: "ls -d /usr/sap/*/HDB* 2>/dev/null | head -1 || ls -d /hana/shared/*/HDB* 2>/dev/null | head -1"
+  sos_path: "sos_commands/sap/sap_discovery"
+
+parser:
+  type: regex
+  multiline: false
+  search_patterns:
+    - name: hana_path
+      regex: "(/usr/sap/\\w+/HDB\\d+|/hana/shared/\\w+/HDB\\d+)"
+      group: 0
+
+validation_logic:
+  scope: node
+  expectations:
+    - key: hana_path
+      operator: exists
+      value: true
+      message: "SAP HANA not installed on this node"
