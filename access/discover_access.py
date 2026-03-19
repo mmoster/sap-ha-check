@@ -65,6 +65,7 @@ class NodeAccess:
     sosreport_path: Optional[str] = None
     preferred_method: Optional[str] = None  # 'ssh', 'ansible', 'sosreport'
     last_checked: Optional[str] = None
+    machine_id: Optional[str] = None  # Unique host identifier from /etc/machine-id
 
 
 @dataclass
@@ -608,6 +609,65 @@ class AccessDiscovery:
 
         return False, None
 
+    def get_machine_id(self, hostname: str, user: str = None) -> Optional[str]:
+        """Get the machine ID from a remote host via SSH."""
+        ssh_user = user or 'root'
+        try:
+            cmd = [
+                "ssh", "-o", "BatchMode=yes",
+                "-o", f"ConnectTimeout={self.SSH_TIMEOUT}",
+                "-o", "StrictHostKeyChecking=no",
+                f"{ssh_user}@{hostname}",
+                "cat /etc/machine-id 2>/dev/null || hostid"
+            ]
+            result = subprocess.run(
+                cmd, stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                universal_newlines=True, timeout=self.SSH_TIMEOUT + 2
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return result.stdout.strip()[:32]  # machine-id is 32 chars
+        except Exception as e:
+            if self.debug:
+                print(f"    [DEBUG] Failed to get machine-id from {hostname}: {e}")
+        return None
+
+    def get_machine_id_ansible(self, hostname: str) -> Optional[str]:
+        """Get the machine ID from a remote host via Ansible."""
+        try:
+            cmd = [
+                "ansible", hostname, "-m", "shell",
+                "-a", "cat /etc/machine-id 2>/dev/null || hostid",
+                "--one-line"
+            ]
+            result = subprocess.run(
+                cmd, stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                universal_newlines=True, timeout=30
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                # Ansible output format: "hostname | SUCCESS | rc=0 >> <output>"
+                output = result.stdout.strip()
+                if '>>' in output:
+                    machine_id = output.split('>>')[-1].strip()
+                    return machine_id[:32]
+        except Exception as e:
+            if self.debug:
+                print(f"    [DEBUG] Failed to get machine-id via Ansible from {hostname}: {e}")
+        return None
+
+    def get_machine_id_sosreport(self, sosreport_path: str) -> Optional[str]:
+        """Get the machine ID from a SOSreport."""
+        try:
+            sos_path = Path(sosreport_path)
+            machine_id_file = sos_path / "etc/machine-id"
+            if machine_id_file.exists():
+                return machine_id_file.read_text().strip()[:32]
+        except Exception as e:
+            if self.debug:
+                print(f"    [DEBUG] Failed to get machine-id from SOSreport: {e}")
+        return None
+
     def check_ansible_access(self, hostname: str, ansible_host: str = None,
                             ansible_user: str = None) -> bool:
         """Check Ansible access to a host using ansible ping."""
@@ -632,6 +692,10 @@ class AccessDiscovery:
         ssh_host = ansible_info.get('ansible_host', hostname) if ansible_info else hostname
         node.ssh_reachable, node.ssh_user = self.check_ssh_access(ssh_host, ssh_user)
 
+        # If SSH is reachable, get the machine ID for verification
+        if node.ssh_reachable:
+            node.machine_id = self.get_machine_id(ssh_host, node.ssh_user)
+
         # Check Ansible access
         if ansible_info:
             node.ansible_host = ansible_info.get('ansible_host')
@@ -639,10 +703,16 @@ class AccessDiscovery:
             if not node.ssh_reachable:  # Only check Ansible if SSH failed
                 node.ansible_reachable = self.check_ansible_access(hostname,
                     node.ansible_host, node.ansible_user)
+                # Get machine ID via Ansible if SSH failed
+                if node.ansible_reachable:
+                    node.machine_id = self.get_machine_id_ansible(hostname)
 
         # Record SOSreport path
         if sosreport_path:
             node.sosreport_path = sosreport_path
+            # Try to get machine ID from SOSreport
+            if not node.machine_id:
+                node.machine_id = self.get_machine_id_sosreport(sosreport_path)
 
         # Determine preferred access method
         if node.ssh_reachable:
@@ -798,7 +868,8 @@ class AccessDiscovery:
                         status.append("Ansible")
                     if node.sosreport_path:
                         status.append("SOSreport")
-                    print(f"  {hostname}: {', '.join(status) if status else 'NO ACCESS'} "
+                    machine_id_short = f" [{node.machine_id[:8]}]" if node.machine_id else ""
+                    print(f"  {hostname}: {', '.join(status) if status else 'NO ACCESS'}{machine_id_short} "
                           f"-> {node.preferred_method or 'none'}")
                 except Exception as e:
                     print(f"  {hostname}: Error - {e}")
@@ -849,7 +920,8 @@ class AccessDiscovery:
                 status = []
                 if node.ssh_reachable:
                     status.append(f"SSH({node.ssh_user})")
-                print(f"  {node_name}: {', '.join(status) if status else 'NO ACCESS'} "
+                machine_id_short = f" [{node.machine_id[:8]}]" if node.machine_id else ""
+                print(f"  {node_name}: {', '.join(status) if status else 'NO ACCESS'}{machine_id_short} "
                       f"-> {node.preferred_method or 'none'}")
 
         self.config.discovery_complete = True
@@ -931,7 +1003,9 @@ def show_config(config_path: Path):
             for name in sorted(accessible)[:10]:  # Show first 10
                 info = nodes[name]
                 method = info.get('preferred_method', 'none')
-                print(f"    {name}: {method}")
+                machine_id = info.get('machine_id', '')
+                machine_id_short = f" [{machine_id[:8]}]" if machine_id else ""
+                print(f"    {name}: {method}{machine_id_short}")
             if len(accessible) > 10:
                 print(f"    ... and {len(accessible) - 10} more")
 
