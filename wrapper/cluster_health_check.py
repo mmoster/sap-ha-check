@@ -868,7 +868,7 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                         print(f"  - {r.check_id}: {r.message[:50]}...")
                 print("-" * 63)
 
-        # Show all steps with status
+        # Show all steps with status and results
         print("\nSteps completed:")
         step_names = {
             'access': 'Access Discovery',
@@ -877,10 +877,49 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
             'sap': 'SAP HANA',
             'report': 'Report Generation'
         }
+
+        # Map check IDs to steps for counting
+        step_checks = {
+            'config': ['CHK_NODE_STATUS', 'CHK_CLUSTER_QUORUM', 'CHK_QUORUM_CONFIG',
+                      'CHK_CLONE_CONFIG', 'CHK_SETUP_VALIDATION', 'CHK_CIB_TIME_SYNC',
+                      'CHK_PACKAGE_CONSISTENCY', 'CHK_CLUSTER_TYPE'],
+            'pacemaker': ['CHK_STONITH_CONFIG', 'CHK_RESOURCE_STATUS', 'CHK_RESOURCE_FAILURES',
+                         'CHK_ALERT_FENCING', 'CHK_MASTER_SLAVE_ROLES', 'CHK_MAJORITY_MAKER'],
+            'sap': ['CHK_HANA_SR_STATUS', 'CHK_REPLICATION_MODE', 'CHK_HADR_HOOKS',
+                   'CHK_HANA_AUTOSTART', 'CHK_SYSTEMD_SAP', 'CHK_SITE_ROLES']
+        }
+
         for step, success in results.items():
-            status = "[OK]" if success else "[FAIL]"
+            status_icon = "[OK]" if success else "[FAIL]"
             name = step_names.get(step, step)
-            print(f"  {status} {name}")
+
+            # Get detailed results for this step
+            if step == 'access':
+                nodes = self.access_config.nodes if self.access_config else {}
+                accessible = sum(1 for n in nodes.values() if n.get('preferred_method'))
+                print(f"  {status_icon} {name}: {accessible} node(s) accessible")
+            elif step in step_checks and self.check_results:
+                check_ids = step_checks[step]
+                step_results = [r for r in self.check_results if r.check_id in check_ids]
+                passed = sum(1 for r in step_results if str(r.status) == 'CheckStatus.PASSED')
+                failed = sum(1 for r in step_results if str(r.status) == 'CheckStatus.FAILED')
+                skipped = sum(1 for r in step_results if str(r.status) == 'CheckStatus.SKIPPED')
+                errors = sum(1 for r in step_results if str(r.status) == 'CheckStatus.ERROR')
+
+                details = []
+                if passed: details.append(f"{passed} passed")
+                if failed: details.append(f"{failed} failed")
+                if skipped: details.append(f"{skipped} skipped")
+                if errors: details.append(f"{errors} errors")
+
+                if details:
+                    print(f"  {status_icon} {name}: {', '.join(details)}")
+                else:
+                    print(f"  {status_icon} {name}")
+            elif step == 'report':
+                print(f"  {status_icon} {name}: report saved")
+            else:
+                print(f"  {status_icon} {name}")
 
         failed = [step for step, success in results.items() if not success]
         if failed:
