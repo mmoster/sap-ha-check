@@ -144,24 +144,7 @@ class ClusterHealthCheck:
 
         status['node'] = node
 
-        # Check subscription status (check identity which is more reliable)
-        success, output = self._execute_check_cmd(
-            "subscription-manager identity 2>/dev/null | grep -q 'system identity' && echo 'registered' || "
-            "subscription-manager status 2>/dev/null | grep -qE 'Overall Status: (Current|Registered)' && echo 'registered'",
-            node, method, user
-        )
-        status['subscription_registered'] = success and 'registered' in output
-
-        # Check required repos
-        success, output = self._execute_check_cmd(
-            "subscription-manager repos --list-enabled 2>/dev/null | grep -E 'highavailability|sap' | head -5",
-            node, method, user
-        )
-        status['repos_enabled'] = success and ('highavailability' in output or 'sap' in output)
-        if not status['repos_enabled']:
-            status['missing_repos'] = ['highavailability', 'sap-solutions']
-
-        # Check packages
+        # Check packages FIRST (if installed, subscription/repos don't matter)
         required_packages = ['pacemaker', 'corosync', 'pcs', 'resource-agents-sap-hana']
         success, output = self._execute_check_cmd(
             "rpm -q pacemaker corosync pcs resource-agents-sap-hana 2>/dev/null",
@@ -175,6 +158,30 @@ class ClusterHealthCheck:
         else:
             status['packages_installed'] = False
             status['missing_packages'] = required_packages
+
+        # If packages are installed, subscription/repos are OK (could be local repo)
+        if status['packages_installed']:
+            status['subscription_registered'] = True
+            status['repos_enabled'] = True
+        else:
+            # Check subscription status
+            success, output = self._execute_check_cmd(
+                "subscription-manager identity 2>/dev/null | grep -qE 'system identity|org ID' && echo 'registered' || "
+                "subscription-manager status 2>/dev/null | grep -qE 'Overall Status:' && echo 'registered' || "
+                "test -f /etc/yum.repos.d/*.repo && echo 'registered'",
+                node, method, user
+            )
+            status['subscription_registered'] = success and 'registered' in output
+
+            # Check required repos
+            success, output = self._execute_check_cmd(
+                "subscription-manager repos --list-enabled 2>/dev/null | grep -E 'highavailability|sap' || "
+                "dnf repolist 2>/dev/null | grep -iE 'highavailability|ha|sap'",
+                node, method, user
+            )
+            status['repos_enabled'] = success and output.strip() != ''
+            if not status['repos_enabled']:
+                status['missing_repos'] = ['highavailability', 'sap-solutions']
 
         # Check pcsd service
         success, output = self._execute_check_cmd(
@@ -215,26 +222,50 @@ class ClusterHealthCheck:
             node, method, user
         )
         if success:
-            status['cluster_online'] = 'Online:' in output
-            # Extract online nodes
+            status['cluster_online'] = 'Online:' in output and output.strip() != ''
+            # Extract online nodes - handles both "Online: [ node1 node2 ]" and "Online: node1 node2"
             import re
-            match = re.search(r'Online:\s*\[(.*?)\]', output)
+            # Try bracket format first
+            match = re.search(r'Online:\s*\[\s*(.*?)\s*\]', output)
             if match:
                 status['cluster_nodes'] = [n.strip() for n in match.group(1).split() if n.strip()]
+            else:
+                # Try space-separated format: "Online: node1 node2"
+                match = re.search(r'Online:\s*(.+?)(?:\n|$)', output)
+                if match:
+                    nodes = match.group(1).strip()
+                    # Filter out empty strings and common non-node words
+                    status['cluster_nodes'] = [n.strip() for n in nodes.split()
+                                               if n.strip() and n.strip() not in ['Standby:', 'Offline:', 'Maintenance:']]
 
-        # Check STONITH enabled
+        # Check STONITH enabled (default is true if not explicitly set in modern pacemaker)
         success, output = self._execute_check_cmd(
             "pcs property show stonith-enabled 2>/dev/null",
             node, method, user
         )
-        status['stonith_enabled'] = success and 'true' in output.lower()
+        # If stonith-enabled is explicitly set to false, it's disabled
+        # If not set or set to true, it's enabled
+        if success:
+            if 'false' in output.lower():
+                status['stonith_enabled'] = False
+            else:
+                # Check if stonith devices exist (if they do, stonith is effectively enabled)
+                stonith_check, stonith_out = self._execute_check_cmd(
+                    "pcs stonith status 2>/dev/null | grep -E 'Started|Stopped'",
+                    node, method, user
+                )
+                status['stonith_enabled'] = stonith_check and stonith_out.strip() != ''
 
-        # Check STONITH configured
+        # Check STONITH configured and running
         success, output = self._execute_check_cmd(
-            "pcs stonith status 2>/dev/null | grep -v 'NO stonith'",
+            "pcs stonith status 2>/dev/null",
             node, method, user
         )
-        status['stonith_configured'] = success and output and 'Started' in output
+        if success:
+            status['stonith_configured'] = 'Started' in output
+            if 'NO stonith' in output or 'no stonith' in output.lower():
+                status['stonith_configured'] = False
+                status['stonith_enabled'] = False
 
         # Check HANA installed
         success, output = self._execute_check_cmd(
