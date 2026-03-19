@@ -6,21 +6,28 @@ description: Detect failed resource operations in cluster history
 enabled: true
 
 source_definitions:
-  live_cmd: "crm_mon -1 -f 2>/dev/null | grep -i fail || pcs status --full 2>/dev/null | grep -i fail"
+  # Check for failed actions - if none found, output NO_FAILURES
+  live_cmd: |
+    FAILURES=$(crm_mon -1 -f 2>/dev/null | grep -iE 'FAILED|fail-count=[1-9]|Failed Actions' || pcs status --full 2>/dev/null | grep -iE 'FAILED|fail-count=[1-9]|Failed Actions')
+    if [ -n "$FAILURES" ]; then
+      echo "$FAILURES"
+    else
+      echo "NO_FAILURES"
+    fi
   sos_path: "sos_commands/pacemaker/crm_mon_-1_-Arf"
 
 parser:
   type: regex
   multiline: true
   search_patterns:
-    - name: failed_actions
-      regex: "(FAILED|fail-count=[1-9]|Failed Actions)"
+    - name: status
+      regex: "(NO_FAILURES|FAILED|fail-count=[1-9]|Failed Actions)"
       group: 0
 
 validation_logic:
   scope: cluster  # Failure history is cluster-wide
   expectations:
-    - key: failed_actions
-      operator: not_exists
-      value: true
-      message: "Failed resource actions detected - may need cleanup"
+    - key: status
+      operator: eq
+      value: "NO_FAILURES"
+      message: "Failed resource actions detected - may need cleanup with: pcs resource cleanup"
