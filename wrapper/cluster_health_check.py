@@ -75,6 +75,8 @@ class ClusterHealthCheck:
 ╔═══════════════════════════════════════════════════════════════╗
 ║       SAP Pacemaker Cluster Health Check Tool                 ║
 ║       RHEL / SUSE Linux Enterprise                            ║
+╠───────────────────────────────────────────────────────────────╣
+║  -h help | -i install guide | -G usage guide | --suggest tips ║
 ╚═══════════════════════════════════════════════════════════════╝
 """)
         if self.debug:
@@ -573,8 +575,12 @@ class ClusterHealthCheck:
         print("  Documentation:")
         print("    SAP HANA Admin:  https://help.sap.com/docs/SAP_HANA_PLATFORM")
         print("    SAP HANA SR:     https://help.sap.com/docs/SAP_HANA_PLATFORM/6b94445c94ae495c83a19646e7c3fd56")
-        print("    Red Hat HA:      https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/8/html/configuring_and_managing_high_availability_clusters/")
+        print("    Red Hat HA:      https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/9/html/configuring_and_managing_high_availability_clusters/")
         print("    Pacemaker:       https://clusterlabs.org/pacemaker/doc/")
+
+        print("\n" + "-" * 63)
+        print(" Quick: -h help | -i install | -G guide | --suggest | --list-steps")
+        print("-" * 63)
 
 
 def print_guide():
