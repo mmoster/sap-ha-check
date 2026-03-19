@@ -1348,6 +1348,110 @@ DOCUMENTATION
         print(suggestions.get(step, f"No suggestions available for '{step}'"))
 
 
+def interactive_startup(config_path: Path) -> tuple:
+    """
+    Interactive startup when no arguments provided.
+    Shows quick guide and asks user to confirm nodes or specify different ones.
+    Returns: (nodes_list, should_continue)
+    """
+    print("""
+╔═══════════════════════════════════════════════════════════════╗
+║       SAP Pacemaker Cluster Health Check Tool                 ║
+║       RHEL / SUSE Linux Enterprise                            ║
+╠───────────────────────────────────────────────────────────────╣
+║  -h help | -i install guide | -G usage guide | --suggest tips ║
+╚═══════════════════════════════════════════════════════════════╝
+
+QUICK START
+-----------
+This tool checks SAP HANA Pacemaker cluster health by:
+  1. Discovering cluster nodes (via SSH, Ansible, or SOSreports)
+  2. Running health checks on cluster configuration
+  3. Validating Pacemaker/Corosync settings
+  4. Checking SAP HANA System Replication status
+  5. Generating a detailed report
+
+USAGE EXAMPLES
+--------------
+  ./cluster_health_check.py hana01 hana02    Check specific nodes
+  ./cluster_health_check.py -s /path/sos     Analyze SOSreports
+  ./cluster_health_check.py -i               Show installation guide
+  ./cluster_health_check.py -G               Show full usage guide
+""")
+
+    # Check for existing configuration
+    existing_nodes = []
+    cluster_name = None
+    if config_path.exists():
+        try:
+            with open(config_path, 'r') as f:
+                config = yaml.safe_load(f) or {}
+            existing_nodes = list(config.get('nodes', {}).keys())
+            # Find cluster name
+            for cname, cinfo in config.get('clusters', {}).items():
+                if any(n in existing_nodes for n in cinfo.get('nodes', [])):
+                    cluster_name = cname
+                    break
+        except Exception:
+            pass
+
+    print("-" * 63)
+    if existing_nodes:
+        print(f"EXISTING CONFIGURATION FOUND")
+        if cluster_name:
+            print(f"  Cluster: {cluster_name}")
+        print(f"  Nodes:   {', '.join(sorted(existing_nodes))}")
+        print()
+        print("Options:")
+        print("  [Enter]     Continue with these nodes")
+        print("  [nodes]     Enter different node names (space-separated)")
+        print("  [d]         Delete config and start fresh")
+        print("  [q]         Quit")
+    else:
+        print("NO EXISTING CONFIGURATION")
+        print()
+        print("Options:")
+        print("  [nodes]     Enter node names to check (space-separated)")
+        print("  [l]         Run in local mode (on this cluster node)")
+        print("  [q]         Quit")
+    print("-" * 63)
+
+    try:
+        response = input("\nYour choice: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print("\n")
+        return None, False
+
+    if response == 'q':
+        print("Exiting.")
+        return None, False
+
+    if response == 'd':
+        if config_path.exists():
+            config_path.unlink()
+            print(f"Deleted: {config_path}")
+        print("Configuration deleted. Run again to start fresh.")
+        return None, False
+
+    if response == 'l':
+        return ['local'], True
+
+    if response == '':
+        # Continue with existing nodes
+        if existing_nodes:
+            return existing_nodes, True
+        else:
+            print("No nodes configured. Please specify node names.")
+            return None, False
+
+    # User entered node names
+    nodes = response.split()
+    if nodes:
+        return nodes, True
+
+    return None, False
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='SAP Pacemaker Cluster Health Check Tool',
@@ -1587,36 +1691,43 @@ Examples:
     config_dir = Path(args.config_dir) if args.config_dir else SCRIPT_DIR
     config_path = config_dir / AccessDiscovery.CONFIG_FILE
 
-    # Auto-detect local mode: if no hosts, no SOSreport, no cluster name, and no existing config
+    # Interactive mode: if no arguments provided, show intro and ask user
     local_mode = args.local
-    if not local_mode and not args.hosts and not args.hosts_file and not args.sosreport_dir and not args.cluster:
-        # Check if we have an existing config with nodes
-        if config_path.exists() and not args.force:
-            with open(config_path, 'r') as f:
-                existing_config = yaml.safe_load(f) or {}
-            if not existing_config.get('nodes'):
-                # No existing nodes, assume local mode
-                local_mode = True
-                print("[INFO] No input source specified, assuming local mode (running on cluster node)")
-        else:
-            # No config file, assume local mode
-            local_mode = True
-            print("[INFO] No input source specified, assuming local mode (running on cluster node)")
+    interactive_hosts = None
 
-    # Handle hosts provided on command line
+    no_input_specified = (not args.hosts and not args.hosts_file and
+                          not args.sosreport_dir and not args.cluster and
+                          not args.local and not args.access_only and
+                          not args.show_config and not args.delete_config and
+                          not args.list_rules and not args.force)
+
+    if no_input_specified:
+        # Run interactive startup
+        nodes, should_continue = interactive_startup(config_path)
+        if not should_continue:
+            sys.exit(0)
+
+        if nodes == ['local']:
+            local_mode = True
+        elif nodes:
+            interactive_hosts = nodes
+
+    # Handle hosts provided on command line or from interactive mode
     hosts_file = args.hosts_file
     temp_hosts_file = None
-    if args.hosts and not hosts_file:
-        # Create temporary hosts file from command line arguments
+    hosts_to_use = args.hosts or interactive_hosts
+
+    if hosts_to_use and not hosts_file:
+        # Create temporary hosts file from command line or interactive input
         import tempfile
         temp_hosts_file = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False)
-        for host in args.hosts:
+        for host in hosts_to_use:
             temp_hosts_file.write(f"{host}\n")
         temp_hosts_file.close()
         hosts_file = temp_hosts_file.name
         if args.debug:
             print(f"[DEBUG] Created temp hosts file: {hosts_file}")
-            print(f"[DEBUG] Hosts: {', '.join(args.hosts)}")
+            print(f"[DEBUG] Hosts: {', '.join(hosts_to_use)}")
 
     # Handle show-config action
     if args.show_config:
