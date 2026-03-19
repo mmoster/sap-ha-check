@@ -708,6 +708,9 @@ def print_steps():
 
 STEP        DESCRIPTION                              SUGGESTIONS
 ----        -----------                              -----------
+install     Full installation guide for SAP HANA     --suggest install
+            HA cluster (packages, setup, config)
+
 access      Discover access to cluster nodes         --suggest access
             (SSH, Ansible, SOSreports)
 
@@ -726,6 +729,9 @@ report      Generate health check report             (no suggestions)
 
 USAGE EXAMPLES
 --------------
+  # Show full installation guide
+  ./cluster_health_check.py --suggest install
+
   # Run all steps
   ./cluster_health_check.py hana01
 
@@ -981,11 +987,305 @@ DOCUMENTATION
 
   Red Hat SAP HANA HA:
     https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux_for_sap_solutions/8/
+""",
+        'install': """
+===============================================================================
+                    INSTALLATION GUIDE - SAP HANA HA Cluster
+===============================================================================
+
+This guide covers installation of SAP HANA Scale-Up System Replication with
+Pacemaker HA cluster on RHEL 8/9. Run these steps on BOTH nodes unless noted.
+
+===============================================================================
+STEP 1: PREREQUISITES & SUBSCRIPTIONS (both nodes)
+===============================================================================
+
+  # Register system and attach SAP subscription
+  subscription-manager register
+  subscription-manager attach --pool=<SAP_POOL_ID>
+
+  # Enable required repositories (RHEL 9)
+  subscription-manager repos --enable=rhel-9-for-x86_64-baseos-e4s-rpms
+  subscription-manager repos --enable=rhel-9-for-x86_64-appstream-e4s-rpms
+  subscription-manager repos --enable=rhel-9-for-x86_64-sap-solutions-e4s-rpms
+  subscription-manager repos --enable=rhel-9-for-x86_64-sap-netweaver-e4s-rpms
+  subscription-manager repos --enable=rhel-9-for-x86_64-highavailability-e4s-rpms
+
+  # For RHEL 8, replace "9" with "8" in the above commands
+
+===============================================================================
+STEP 2: INSTALL CLUSTER PACKAGES (both nodes)
+===============================================================================
+
+  # Install Pacemaker, Corosync, and SAP HANA resource agents
+  dnf install -y pacemaker pcs fence-agents-all resource-agents-sap-hana
+
+  # Additional useful packages
+  dnf install -y sap-cluster-connector
+
+  # Verify installation
+  rpm -q pacemaker corosync pcs resource-agents-sap-hana
+
+===============================================================================
+STEP 3: CONFIGURE PCSD SERVICE (both nodes)
+===============================================================================
+
+  # Set password for hacluster user
+  passwd hacluster
+  # Or non-interactively:
+  echo 'YourSecurePassword' | passwd --stdin hacluster
+
+  # Enable and start pcsd service
+  systemctl enable --now pcsd.service
+
+  # Open firewall ports
+  firewall-cmd --permanent --add-service=high-availability
+  firewall-cmd --reload
+
+===============================================================================
+STEP 4: AUTHENTICATE CLUSTER NODES (one node only)
+===============================================================================
+
+  # Authenticate from first node to all cluster nodes
+  pcs host auth node1 node2 -u hacluster -p 'YourSecurePassword'
+
+  # Expected output: "node1: Authorized" and "node2: Authorized"
+
+===============================================================================
+STEP 5: CREATE CLUSTER (one node only)
+===============================================================================
+
+  # Create and start the cluster
+  pcs cluster setup <cluster_name> --start node1 node2
+
+  # Example:
+  pcs cluster setup hana_cluster --start hana01 hana02
+
+  # Enable cluster to start on boot
+  pcs cluster enable --all
+
+  # Verify cluster status
+  pcs cluster status
+  pcs status
+
+===============================================================================
+STEP 6: CONFIGURE STONITH/FENCING (one node only)
+===============================================================================
+
+  IMPORTANT: STONITH is REQUIRED for production SAP HANA clusters!
+
+  # Example: IPMI/iLO fencing
+  pcs stonith create fence_node1 fence_ipmilan \\
+      ipaddr=<IPMI_IP_NODE1> login=<USER> passwd=<PASS> \\
+      lanplus=1 pcmk_host_list=node1 power_timeout=240 pcmk_reboot_timeout=480
+
+  pcs stonith create fence_node2 fence_ipmilan \\
+      ipaddr=<IPMI_IP_NODE2> login=<USER> passwd=<PASS> \\
+      lanplus=1 pcmk_host_list=node2 power_timeout=240 pcmk_reboot_timeout=480
+
+  # Example: Cloud fencing (Azure)
+  pcs stonith create fence_azure fence_azure_arm \\
+      subscriptionId=<SUB_ID> resourceGroup=<RG> tenantId=<TENANT> \\
+      login=<APP_ID> passwd=<SECRET> pcmk_host_map="node1:node1-vm;node2:node2-vm"
+
+  # Example: SBD fencing (shared storage)
+  pcs stonith create sbd fence_sbd devices=/dev/disk/by-id/<SBD_DEVICE>
+
+  # Verify fencing
+  pcs stonith status
+  pcs property show stonith-enabled
+
+===============================================================================
+STEP 7: CLUSTER PROPERTIES (one node only)
+===============================================================================
+
+  # Set cluster properties for SAP HANA
+  pcs property set stonith-enabled=true
+  pcs property set stonith-timeout=300s
+
+  # Resource defaults
+  pcs resource defaults update resource-stickiness=1000
+  pcs resource defaults update migration-threshold=3
+
+  # Operation defaults
+  pcs resource op defaults update timeout=600s
+
+===============================================================================
+STEP 8: INSTALL SAP HANA (both nodes)
+===============================================================================
+
+  # Run SAP HANA installation (as root)
+  # Primary node (SITE1):
+  ./hdblcm --action=install --sid=<SID> --number=<INST_NO>
+
+  # Secondary node (SITE2):
+  ./hdblcm --action=install --sid=<SID> --number=<INST_NO>
+
+  # Verify HANA is running (as <sid>adm)
+  HDB info
+  sapcontrol -nr <INST_NO> -function GetProcessList
+
+===============================================================================
+STEP 9: CONFIGURE HANA SYSTEM REPLICATION (both nodes)
+===============================================================================
+
+  # On PRIMARY node (as <sid>adm):
+  # 1. Create backup (required before enabling SR)
+  hdbsql -u SYSTEM -d SYSTEMDB "BACKUP DATA USING FILE ('initial_backup')"
+
+  # 2. Enable System Replication
+  hdbnsutil -sr_enable --name=<SITE1_NAME>
+  # Example: hdbnsutil -sr_enable --name=DC1
+
+  # On SECONDARY node (as <sid>adm):
+  # 1. Stop HANA
+  HDB stop
+
+  # 2. Register as secondary
+  hdbnsutil -sr_register --remoteHost=<PRIMARY_HOST> \\
+      --remoteInstance=<INST_NO> --replicationMode=sync \\
+      --operationMode=logreplay --name=<SITE2_NAME>
+
+  # Example:
+  hdbnsutil -sr_register --remoteHost=hana01 \\
+      --remoteInstance=00 --replicationMode=sync \\
+      --operationMode=logreplay --name=DC2
+
+  # 3. Start HANA
+  HDB start
+
+  # 4. Verify replication (on primary)
+  hdbnsutil -sr_state
+  # Should show: "mode: sync", "status: active"
+
+===============================================================================
+STEP 10: CONFIGURE HA/DR PROVIDER HOOKS (both nodes)
+===============================================================================
+
+  # Edit global.ini (as <sid>adm or root)
+  # Path: /hana/shared/<SID>/global/hdb/custom/config/global.ini
+
+  # Add these sections:
+  [ha_dr_provider_SAPHanaSR]
+  provider = SAPHanaSR
+  path = /usr/share/SAPHanaSR
+  execution_order = 1
+
+  [ha_dr_provider_suschksrv]
+  provider = susChkSrv
+  path = /usr/share/SAPHanaSR
+  execution_order = 3
+  action_on_lost = stop
+
+  [trace]
+  ha_dr_saphanasr = info
+
+  # Create sudoers entry for <sid>adm (as root)
+  cat > /etc/sudoers.d/20-saphana <<EOF
+  <sid>adm ALL=(ALL) NOPASSWD: /usr/sbin/crm_attribute -n hana_<sid>_*
+  <sid>adm ALL=(ALL) NOPASSWD: /usr/sbin/SAPHanaSR-hookHelper *
+  EOF
+
+  # Restart HANA to load hooks (as <sid>adm)
+  HDB stop && HDB start
+
+===============================================================================
+STEP 11: DISABLE HANA AUTOSTART (both nodes)
+===============================================================================
+
+  # Cluster must control HANA startup, not systemd/sapinit
+
+  # Edit HANA profile (as <sid>adm)
+  # Path: /usr/sap/<SID>/SYS/profile/<SID>_HDB<INST>_<hostname>
+  # Set: Autostart = 0
+
+  # Or via command:
+  sed -i 's/Autostart = 1/Autostart = 0/' /usr/sap/<SID>/SYS/profile/<SID>_HDB*
+
+===============================================================================
+STEP 12: CREATE CLUSTER RESOURCES (one node only)
+===============================================================================
+
+  # Variables (adjust for your environment)
+  SID=<SID>          # e.g., HDB
+  INST=<INST_NO>     # e.g., 00
+
+  # 1. Create SAPHanaTopology clone resource
+  pcs resource create SAPHanaTopology_${SID}_${INST} SAPHanaTopology \\
+      SID=${SID} InstanceNumber=${INST} \\
+      op start timeout=600 \\
+      op stop timeout=300 \\
+      op monitor interval=10 timeout=600 \\
+      clone clone-max=2 clone-node-max=1 interleave=true
+
+  # 2. Create SAPHana promotable resource
+  pcs resource create SAPHana_${SID}_${INST} SAPHana \\
+      SID=${SID} InstanceNumber=${INST} \\
+      PREFER_SITE_TAKEOVER=true \\
+      DUPLICATE_PRIMARY_TIMEOUT=7200 \\
+      AUTOMATED_REGISTER=true \\
+      op start timeout=3600 \\
+      op stop timeout=3600 \\
+      op monitor interval=61 role=Unpromoted timeout=700 \\
+      op monitor interval=59 role=Promoted timeout=700 \\
+      op promote timeout=3600 \\
+      op demote timeout=3600 \\
+      promotable promoted-max=1 clone-max=2 clone-node-max=1 interleave=true notify=true
+
+  # 3. Create Virtual IP resource
+  pcs resource create vip_${SID}_${INST} IPaddr2 \\
+      ip=<VIRTUAL_IP> cidr_netmask=<NETMASK> \\
+      op monitor interval=10 timeout=20
+
+  # 4. Create constraints
+  pcs constraint order SAPHanaTopology_${SID}_${INST}-clone \\
+      then SAPHana_${SID}_${INST}-clone symmetrical=false
+
+  pcs constraint colocation add vip_${SID}_${INST} \\
+      with Promoted SAPHana_${SID}_${INST}-clone 2000
+
+===============================================================================
+STEP 13: VERIFY CLUSTER (one node only)
+===============================================================================
+
+  # Check overall status
+  pcs status
+
+  # Check HANA resources
+  pcs resource status
+
+  # Check SR attributes
+  SAPHanaSR-showAttr
+
+  # Expected output:
+  # - Both nodes online
+  # - SAPHanaTopology running on both nodes
+  # - SAPHana Promoted on primary, Unpromoted on secondary
+  # - Virtual IP on primary node
+  # - sync_state = SOK (sync OK)
+
+===============================================================================
+DOCUMENTATION
+===============================================================================
+
+  Red Hat SAP HANA Scale-Up HA (RHEL 9):
+    https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux_for_sap_solutions/9/html/deploying_sap_hana_scale-up_system_replication_high_availability
+
+  Red Hat SAP HANA Scale-Out HA:
+    https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux_for_sap_solutions/9/html/deploying_sap_hana_scale-out_system_replication_high_availability
+
+  SAP HANA System Replication:
+    https://help.sap.com/docs/SAP_HANA_PLATFORM/6b94445c94ae495c83a19646e7c3fd56
+
+  Pacemaker Documentation:
+    https://clusterlabs.org/pacemaker/doc/
+
+===============================================================================
 """
     }
 
     if step == 'all':
-        for s in ['access', 'config', 'pacemaker', 'sap']:
+        for s in ['install', 'access', 'config', 'pacemaker', 'sap']:
             print(suggestions.get(s, f"No suggestions available for '{s}'"))
     else:
         print(suggestions.get(step, f"No suggestions available for '{step}'"))
@@ -1112,7 +1412,7 @@ Examples:
         '--suggest',
         nargs='?',
         const='auto',
-        choices=['access', 'config', 'pacemaker', 'sap', 'all', 'auto'],
+        choices=['access', 'config', 'pacemaker', 'sap', 'install', 'all', 'auto'],
         help='Show suggestions for a step (default: first failing step from last run)'
     )
     parser.add_argument(
