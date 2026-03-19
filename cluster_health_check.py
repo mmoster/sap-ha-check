@@ -1104,7 +1104,7 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
             if warnings and not packages_missing:
                 print(f"  Warnings found ({len(warnings)}). Review report for details.")
 
-            if skipped and not commands_missing:
+            if skipped and not essential_cmd_missing:
                 print(f"  Skipped checks ({len(skipped)}). Some commands may not be available.")
 
         print("""
