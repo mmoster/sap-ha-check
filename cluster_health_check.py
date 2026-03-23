@@ -1070,9 +1070,24 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                 print(f"    ... and {len(warnings) - 10} more warnings")
 
         # Determine cluster name for report filename
+        # Find the cluster that contains the nodes we checked
         cluster_name = 'unknown'
         if self.access_config and self.access_config.clusters:
-            cluster_name = list(self.access_config.clusters.keys())[0]
+            current_nodes = set(self.access_config.nodes.keys())
+            for cname, cinfo in self.access_config.clusters.items():
+                cluster_nodes = set(cinfo.get('nodes', []))
+                # If current nodes match or are subset of cluster nodes, use this cluster
+                if current_nodes and current_nodes.issubset(cluster_nodes):
+                    cluster_name = cname
+                    break
+            # Fallback: use most recently discovered cluster
+            if cluster_name == 'unknown':
+                latest = None
+                for cname, cinfo in self.access_config.clusters.items():
+                    discovered_at = cinfo.get('discovered_at', '')
+                    if latest is None or discovered_at > latest:
+                        latest = discovered_at
+                        cluster_name = cname
         # Sanitize cluster name for filename (replace spaces and special chars)
         cluster_name_safe = "".join(c if c.isalnum() or c in '-_' else '_' for c in cluster_name)
 
