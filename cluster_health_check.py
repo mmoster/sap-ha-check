@@ -48,7 +48,8 @@ class ClusterHealthCheck:
     def __init__(self, config_dir: str = None, sosreport_dir: str = None,
                  hosts_file: str = None, workers: int = 10, rules_path: str = None,
                  debug: bool = False, ansible_group: str = None, skip_ansible: bool = False,
-                 cluster_name: str = None, local_mode: bool = False, strict_mode: bool = False):
+                 cluster_name: str = None, local_mode: bool = False, strict_mode: bool = False,
+                 generate_pdf: bool = False):
         self.config_dir = Path(config_dir) if config_dir else SCRIPT_DIR
         self.sosreport_dir = sosreport_dir
         self.hosts_file = hosts_file
@@ -63,6 +64,7 @@ class ClusterHealthCheck:
         self.cluster_name = cluster_name
         self.local_mode = local_mode
         self.strict_mode = strict_mode
+        self.generate_pdf = generate_pdf
 
     def _debug_print(self, message: str):
         """Print debug message if debug mode is enabled."""
@@ -1097,6 +1099,50 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
             yaml.dump(report_data, f, default_flow_style=False)
 
         print(f"\n  Report saved: {report_file}")
+
+        # Generate PDF report if requested
+        if self.generate_pdf:
+            try:
+                from report_generator import generate_health_check_report
+
+                # Gather cluster info
+                cluster_info = {
+                    'cluster_name': 'Unknown',
+                    'nodes': [],
+                    'cluster_type': 'Scale-Up',
+                }
+                if self.access_config:
+                    nodes = list(self.access_config.nodes.keys())
+                    cluster_info['nodes'] = nodes
+                    # Try to get cluster name from clusters dict
+                    if self.access_config.clusters:
+                        cluster_info['cluster_name'] = list(self.access_config.clusters.keys())[0]
+
+                # Convert results to dict format
+                results_dict = [
+                    {
+                        'check_id': r.check_id,
+                        'node': r.node,
+                        'status': r.status.value,
+                        'severity': r.severity.value,
+                        'message': r.message,
+                        'description': r.description
+                    }
+                    for r in self.check_results
+                ]
+
+                pdf_file = str(report_file).replace('.yaml', '.pdf')
+                generate_health_check_report(
+                    results_dict,
+                    report_data['summary'],
+                    cluster_info,
+                    pdf_file
+                )
+                print(f"  PDF report: {pdf_file}")
+            except ImportError:
+                print("  [WARN] PDF generation requires fpdf2: pip install fpdf2")
+            except Exception as e:
+                print(f"  [WARN] PDF generation failed: {e}")
 
         return len(critical_failures) == 0
 
@@ -2584,6 +2630,13 @@ Examples:
         help='Strict mode: all checks required (fencing, alerts). Default: optional checks are warnings only'
     )
 
+    # PDF report option
+    parser.add_argument(
+        '--pdf',
+        action='store_true',
+        help='Generate PDF report in addition to YAML (Red Hat style)'
+    )
+
     # Local mode option
     parser.add_argument(
         '--local', '-l',
@@ -2823,7 +2876,8 @@ Examples:
         ansible_group=args.group,
         cluster_name=args.cluster,
         local_mode=local_mode,
-        strict_mode=args.strict
+        strict_mode=args.strict,
+        generate_pdf=args.pdf
     )
 
     def cleanup_temp_file():
