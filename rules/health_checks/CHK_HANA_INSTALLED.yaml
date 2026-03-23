@@ -6,11 +6,12 @@ description: Check if SAP HANA database is installed on this node
 enabled: true
 
 source_definitions:
-  # Check for HANA-specific indicators (based on SAP standard paths):
-  # 1. /usr/sap/<SID>/HDB<instance> directory structure (standard HANA installation)
+  # Check for HANA-specific indicators that prove local HANA installation:
+  # 1. /usr/sap/<SID>/HDB<instance> directory structure (local HANA installation)
   # 2. Running HANA processes (hdbdaemon, hdbnameserver, hdbindexserver)
-  # 3. <sid>adm user with HDB in home directory
-  # 4. /hana/shared filesystem (common for HANA installations)
+  # 3. <sid>adm user with HDB home directory in /etc/passwd
+  # NOTE: Do NOT check /hana/shared - it's often NFS-mounted and doesn't prove local installation
+  #       (e.g., majority maker nodes mount /hana/shared but don't run HANA)
   live_cmd: |
     # Method 1: Check for HANA instance directories /usr/sap/<SID>/HDB<NN>
     if ls -d /usr/sap/*/HDB[0-9][0-9] 2>/dev/null | head -1 | grep -q .; then
@@ -21,10 +22,7 @@ source_definitions:
     # Method 3: Check for <sid>adm users with HDB home directory
     elif grep -E '^[a-z]{3}adm:.*HDB' /etc/passwd 2>/dev/null | head -1 | grep -q .; then
       echo 'HANA_FOUND'
-    # Method 4: Check for /hana/shared with SID subdirectory
-    elif ls -d /hana/shared/*/HDB[0-9][0-9] 2>/dev/null | head -1 | grep -q .; then
-      echo 'HANA_FOUND'
-    # Method 5: Check for sapcontrol with HANA instance
+    # Method 4: Check for sapcontrol with HANA instance (local executable)
     elif ls /usr/sap/*/HDB*/exe/sapcontrol 2>/dev/null | head -1 | grep -q .; then
       echo 'HANA_FOUND'
     else
