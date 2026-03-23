@@ -947,9 +947,37 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                         ))
                 return True
 
-            # Info about nodes without HANA (e.g., majority makers in Scale-Out)
+            # Check for majority maker nodes (have resource agent but no HANA)
+            majority_makers = []
             if nodes_without_hana:
-                print(f"[INFO] Nodes without HANA (majority maker?): {', '.join(nodes_without_hana)}")
+                for node_name in nodes_without_hana:
+                    node_info = nodes.get(node_name, {})
+                    method = node_info.get('preferred_method', 'ssh')
+                    user = node_info.get('ssh_user', 'root')
+
+                    # Check if resource agent is installed (indicates majority maker)
+                    check_cmd = "rpm -q sap-hana-ha resource-agents-sap-hana 2>/dev/null | grep -v 'not installed' | head -1"
+                    success, output = self.rules_engine._execute_command(check_cmd, node_name, method, user)
+
+                    if success and output.strip():
+                        majority_makers.append(node_name)
+                        self._debug_print(f"Node {node_name} is a majority maker (has resource agent: {output.strip()})")
+
+                        # Update the CHK_HANA_INSTALLED result for this majority maker to PASSED
+                        for result in self.check_results:
+                            if result.check_id == 'CHK_HANA_INSTALLED' and result.node == node_name:
+                                result.status = CheckStatus.PASSED
+                                result.message = "Majority maker node - HANA not required (resource agent installed)"
+                                break
+
+                if majority_makers:
+                    print(f"[OK] Majority maker node(s) detected: {', '.join(majority_makers)}")
+                    # Update nodes_without_hana to exclude majority makers for reporting
+                    non_majority_without_hana = [n for n in nodes_without_hana if n not in majority_makers]
+                    if non_majority_without_hana:
+                        print(f"[INFO] Nodes without HANA: {', '.join(non_majority_without_hana)}")
+                else:
+                    print(f"[INFO] Nodes without HANA (not majority makers): {', '.join(nodes_without_hana)}")
 
         # HANA is installed on some nodes, run SAP checks only on those nodes
         sap_checks = ['CHK_HANA_SR_STATUS', 'CHK_REPLICATION_MODE', 'CHK_HADR_HOOKS',
