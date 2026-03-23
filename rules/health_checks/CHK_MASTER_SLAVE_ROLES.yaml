@@ -14,10 +14,12 @@ parser:
   multiline: true
   search_patterns:
     - name: master_count
-      regex: "(Masters: \\[ \\S+ \\]|Promoted \\S+|:Master)"
+      # Match: "Masters: [ node ]", "Promoted: [ node ]", "Promoted node", "PROMOTED"
+      regex: "(Masters:\\s*\\[|Promoted:\\s*\\[|Promoted\\s+\\S|PROMOTED)"
       group: 0
     - name: slave_count
-      regex: "(Slaves: \\[ \\S+ \\]|Unpromoted \\S+|:Slave)"
+      # Match: "Slaves: [ node ]", "Unpromoted: [ node ]", "Unpromoted node", "DEMOTED"
+      regex: "(Slaves:\\s*\\[|Unpromoted:\\s*\\[|Unpromoted\\s+\\S|DEMOTED)"
       group: 0
     - name: no_role
       regex: "(Stopped|no role|unknown)"

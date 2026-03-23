@@ -6,7 +6,11 @@ description: Validate SAP HANA HA/DR provider hooks are configured
 enabled: true
 
 source_definitions:
-  live_cmd: "grep -r 'SAPHanaSR\\|susTkOver\\|susChkSrv' /hana/shared/*/global/hdb/custom/config/global.ini 2>/dev/null || cat /usr/sap/*/SYS/global/hdb/custom/config/global.ini 2>/dev/null | grep -i provider"
+  # Check for HA/DR hooks - supports various provider names
+  # HanaSR/SAPHanaSR: SUSE/Red Hat standard hook
+  # ChkSrv/susChkSrv: Additional check hook
+  # susTkOver: Takeover hook
+  live_cmd: "grep -riE 'ha_dr_provider|provider.*=.*(HanaSR|SAPHanaSR|ChkSrv|susTkOver|susChkSrv)' /hana/shared/*/global/hdb/custom/config/global.ini 2>/dev/null || grep -riE 'ha_dr_provider|provider' /usr/sap/*/SYS/global/hdb/custom/config/global.ini 2>/dev/null"
   sos_path: "hana/shared/global/hdb/custom/config/global.ini"
 
 parser:
@@ -14,10 +18,10 @@ parser:
   multiline: true
   search_patterns:
     - name: hadr_provider
-      regex: "(ha_dr_provider_SAPHanaSR|ha_dr_provider_susTkOver|provider.*=.*SAPHanaSR)"
+      regex: "(ha_dr_provider|provider.*=.*(HanaSR|SAPHanaSR|ChkSrv|susTkOver|susChkSrv))"
       group: 0
-    - name: sustkover
-      regex: "(susTkOver|SAPHanaSR)"
+    - name: provider_hook
+      regex: "(HanaSR|SAPHanaSR|ChkSrv|susTkOver|susChkSrv)"
       group: 0
 
 validation_logic:

@@ -6,7 +6,8 @@ description: Verify site roles are consistent (one primary, one secondary)
 enabled: true
 
 source_definitions:
-  live_cmd: "pcs status 2>/dev/null | grep -iE 'Masters|Slaves|SAPHana' || crm_mon -1 2>/dev/null | grep -iE 'Masters|Slaves|SAPHana'"
+  # Support both old (Masters/Slaves) and new (Promoted/Unpromoted) terminology
+  live_cmd: "pcs status 2>/dev/null | grep -iE 'Masters|Slaves|Promoted|Unpromoted|SAPHana' || crm_mon -1 2>/dev/null | grep -iE 'Masters|Slaves|Promoted|Unpromoted|SAPHana'"
   sos_path: "sos_commands/pacemaker/crm_mon_-1"
 
 parser:
@@ -14,10 +15,12 @@ parser:
   multiline: true
   search_patterns:
     - name: master_node
-      regex: "Masters:\\s*\\[\\s*(\\w+)"
+      # Match: "Masters: [ node ]" or "Promoted: [ node ]"
+      regex: "(Masters|Promoted):\\s*\\[\\s*(\\w+)"
       group: 0
     - name: slave_node
-      regex: "Slaves:\\s*\\[\\s*(\\w+)"
+      # Match: "Slaves: [ node ]" or "Unpromoted: [ node ]"
+      regex: "(Slaves|Unpromoted):\\s*\\[\\s*(\\w+)"
       group: 0
     - name: saphana_resource
       regex: "SAPHana"
