@@ -956,7 +956,8 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                     user = node_info.get('ssh_user', 'root')
 
                     # Check if resource agent is installed (indicates majority maker)
-                    check_cmd = "rpm -q sap-hana-ha resource-agents-sap-hana 2>/dev/null | grep -v 'not installed' | head -1"
+                    # Supports: sap-hana-ha (new), resource-agents-sap-hana (legacy), resource-agents-sap-hana-scaleout (Scale-Out)
+                    check_cmd = "rpm -q sap-hana-ha resource-agents-sap-hana resource-agents-sap-hana-scaleout 2>/dev/null | grep -v 'not installed' | head -1"
                     success, output = self.rules_engine._execute_command(check_cmd, node_name, method, user)
 
                     if success and output.strip():
