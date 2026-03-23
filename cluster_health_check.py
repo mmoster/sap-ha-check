@@ -159,9 +159,9 @@ class ClusterHealthCheck:
         # Check packages FIRST (if installed, subscription/repos don't matter)
         # Note: rpm -q returns exit code 1 if ANY package is missing, but still outputs info
         # SAP resource agent packages (any one is OK):
-        #   - sap-hana-ha: new RHEL 9 package for Scale-Up
-        #   - resource-agents-sap-hana: legacy package for Scale-Up
-        #   - resource-agents-sap-hana-scaleout: Scale-Out clusters
+        #   - sap-hana-ha: RHEL 9/10, Scale-Up & Scale-Out (recommended, required for RHEL 10)
+        #   - resource-agents-sap-hana: legacy Scale-Up (RHEL 8/9)
+        #   - resource-agents-sap-hana-scaleout: legacy Scale-Out (RHEL 8/9)
         required_packages = ['pacemaker', 'corosync', 'pcs']
         sap_packages = ['sap-hana-ha', 'resource-agents-sap-hana', 'resource-agents-sap-hana-scaleout']
         success, output = self._execute_check_cmd(
@@ -528,10 +528,11 @@ STEP {step_num}: INSTALL CLUSTER PACKAGES (both nodes)
   # Install required packages
   dnf install -y {pkg_list}
 
-  # SAP resource agent packages (install ONE based on topology):
-  #   Scale-Up:   dnf install -y sap-hana-ha          # RHEL 9 (recommended)
-  #   Scale-Up:   dnf install -y resource-agents-sap-hana  # legacy
-  #   Scale-Out:  dnf install -y resource-agents-sap-hana-scaleout
+  # SAP resource agent package (install ONE):
+  dnf install -y sap-hana-ha  # RHEL 9/10, Scale-Up & Scale-Out (required for RHEL 10)
+  # Legacy alternatives (RHEL 8/9 only):
+  #   dnf install -y resource-agents-sap-hana           # legacy Scale-Up
+  #   dnf install -y resource-agents-sap-hana-scaleout  # legacy Scale-Out
 
   # Verify installation
   rpm -q pacemaker corosync pcs sap-hana-ha
@@ -964,7 +965,9 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                     user = node_info.get('ssh_user', 'root')
 
                     # Check if resource agent is installed (indicates majority maker)
-                    # Supports: sap-hana-ha (new), resource-agents-sap-hana (legacy), resource-agents-sap-hana-scaleout (Scale-Out)
+                    # sap-hana-ha: RHEL 9/10 (Scale-Up & Scale-Out), required for RHEL 10
+                    # resource-agents-sap-hana: legacy Scale-Up (RHEL 8/9)
+                    # resource-agents-sap-hana-scaleout: legacy Scale-Out (RHEL 8/9)
                     check_cmd = "rpm -q sap-hana-ha resource-agents-sap-hana resource-agents-sap-hana-scaleout 2>/dev/null | grep -v 'not installed' | head -1"
                     success, output = self.rules_engine._execute_command(check_cmd, node_name, method, user)
 
@@ -2073,10 +2076,12 @@ STEP 2: INSTALL CLUSTER PACKAGES (both nodes)
   # Install Pacemaker, Corosync, and fence agents
   dnf install -y pacemaker pcs fence-agents-all
 
-  # SAP HANA resource agents (install ONE based on topology):
-  dnf install -y sap-hana-ha                        # Scale-Up (RHEL 9, recommended)
-  dnf install -y resource-agents-sap-hana           # Scale-Up (legacy)
-  dnf install -y resource-agents-sap-hana-scaleout  # Scale-Out
+  # SAP HANA resource agent (install ONE):
+  dnf install -y sap-hana-ha  # RHEL 9/10, Scale-Up & Scale-Out (required for RHEL 10)
+
+  # Legacy alternatives (RHEL 8/9 only):
+  # dnf install -y resource-agents-sap-hana           # legacy Scale-Up
+  # dnf install -y resource-agents-sap-hana-scaleout  # legacy Scale-Out
 
   # Additional useful packages
   dnf install -y sap-cluster-connector
