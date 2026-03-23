@@ -1069,8 +1069,16 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
             if len(warnings) > 10:
                 print(f"    ... and {len(warnings) - 10} more warnings")
 
-        # Save report to file
-        report_file = self.config_dir / f"health_check_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.yaml"
+        # Determine cluster name for report filename
+        cluster_name = 'unknown'
+        if self.access_config and self.access_config.clusters:
+            cluster_name = list(self.access_config.clusters.keys())[0]
+        # Sanitize cluster name for filename (replace spaces and special chars)
+        cluster_name_safe = "".join(c if c.isalnum() or c in '-_' else '_' for c in cluster_name)
+
+        # Save report to file with format: YYYYMMDD_HHMMSS_clustername.yaml
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        report_file = self.config_dir / f"{timestamp}_{cluster_name_safe}.yaml"
         report_data = {
             'timestamp': datetime.now().isoformat(),
             'summary': {
@@ -1105,18 +1113,12 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
             try:
                 from report_generator import generate_health_check_report
 
-                # Gather cluster info
+                # Gather cluster info (reuse cluster_name from above)
                 cluster_info = {
-                    'cluster_name': 'Unknown',
-                    'nodes': [],
+                    'cluster_name': cluster_name,
+                    'nodes': list(self.access_config.nodes.keys()) if self.access_config else [],
                     'cluster_type': 'Scale-Up',
                 }
-                if self.access_config:
-                    nodes = list(self.access_config.nodes.keys())
-                    cluster_info['nodes'] = nodes
-                    # Try to get cluster name from clusters dict
-                    if self.access_config.clusters:
-                        cluster_info['cluster_name'] = list(self.access_config.clusters.keys())[0]
 
                 # Convert results to dict format
                 results_dict = [
