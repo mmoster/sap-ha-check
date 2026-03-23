@@ -158,11 +158,14 @@ class ClusterHealthCheck:
 
         # Check packages FIRST (if installed, subscription/repos don't matter)
         # Note: rpm -q returns exit code 1 if ANY package is missing, but still outputs info
-        # sap-hana-ha is the newer package, resource-agents-sap-hana is legacy
+        # SAP resource agent packages (any one is OK):
+        #   - sap-hana-ha: new RHEL 9 package for Scale-Up
+        #   - resource-agents-sap-hana: legacy package for Scale-Up
+        #   - resource-agents-sap-hana-scaleout: Scale-Out clusters
         required_packages = ['pacemaker', 'corosync', 'pcs']
-        sap_packages = ['sap-hana-ha', 'resource-agents-sap-hana']  # Either one is OK
+        sap_packages = ['sap-hana-ha', 'resource-agents-sap-hana', 'resource-agents-sap-hana-scaleout']
         success, output = self._execute_check_cmd(
-            "rpm -q pacemaker corosync pcs sap-hana-ha resource-agents-sap-hana 2>/dev/null",
+            "rpm -q pacemaker corosync pcs sap-hana-ha resource-agents-sap-hana resource-agents-sap-hana-scaleout 2>/dev/null",
             node, method, user
         )
         # Parse output even if exit code is non-zero (rpm returns 1 if any package missing)
@@ -518,15 +521,20 @@ STEP {step_num}: CONFIGURE FIREWALL (both nodes)
 
         if 'packages' in steps_needed:
             missing = status['missing_packages']
-            pkg_list = ' '.join(missing) if missing else 'pacemaker pcs fence-agents-all resource-agents-sap-hana'
+            pkg_list = ' '.join(missing) if missing else 'pacemaker pcs fence-agents-all sap-hana-ha'
             print(f"""
 STEP {step_num}: INSTALL CLUSTER PACKAGES (both nodes)
 ---------------------------------------------------------------
   # Install required packages
   dnf install -y {pkg_list}
 
+  # SAP resource agent packages (install ONE based on topology):
+  #   Scale-Up:   dnf install -y sap-hana-ha          # RHEL 9 (recommended)
+  #   Scale-Up:   dnf install -y resource-agents-sap-hana  # legacy
+  #   Scale-Out:  dnf install -y resource-agents-sap-hana-scaleout
+
   # Verify installation
-  rpm -q pacemaker corosync pcs resource-agents-sap-hana
+  rpm -q pacemaker corosync pcs sap-hana-ha
 """)
             step_num += 1
 
@@ -1351,7 +1359,7 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
 
             # Show first suggested commands
             print("\n  Quick start (run on cluster nodes):")
-            print("    dnf install -y pacemaker pcs resource-agents-sap-hana")
+            print("    dnf install -y pacemaker pcs sap-hana-ha  # or resource-agents-sap-hana-scaleout")
             print("    systemctl enable --now pcsd")
             print("    ... (more steps required)")
             print("\n  For full guide: ./cluster_health_check.py -i")
@@ -2062,14 +2070,19 @@ STEP 1: PREREQUISITES & SUBSCRIPTIONS (both nodes)
 STEP 2: INSTALL CLUSTER PACKAGES (both nodes)
 ===============================================================================
 
-  # Install Pacemaker, Corosync, and SAP HANA resource agents
-  dnf install -y pacemaker pcs fence-agents-all resource-agents-sap-hana
+  # Install Pacemaker, Corosync, and fence agents
+  dnf install -y pacemaker pcs fence-agents-all
+
+  # SAP HANA resource agents (install ONE based on topology):
+  dnf install -y sap-hana-ha                        # Scale-Up (RHEL 9, recommended)
+  dnf install -y resource-agents-sap-hana           # Scale-Up (legacy)
+  dnf install -y resource-agents-sap-hana-scaleout  # Scale-Out
 
   # Additional useful packages
   dnf install -y sap-cluster-connector
 
   # Verify installation
-  rpm -q pacemaker corosync pcs resource-agents-sap-hana
+  rpm -q pacemaker corosync pcs sap-hana-ha
 
 ===============================================================================
 STEP 3: CONFIGURE PCSD SERVICE (both nodes)
