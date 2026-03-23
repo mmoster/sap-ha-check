@@ -615,6 +615,9 @@ STEP {step_num}: ENABLE CLUSTER ON BOOT (one node only)
             print(f"""
 STEP {step_num}: CONFIGURE STONITH/FENCING (one node only)
 ---------------------------------------------------------------
+
+  OPTION A: Production cluster - Configure real STONITH device
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
   IMPORTANT: STONITH is REQUIRED for production SAP HANA clusters!
 
   # Example: IPMI/iLO fencing
@@ -627,6 +630,17 @@ STEP {step_num}: CONFIGURE STONITH/FENCING (one node only)
 
   # Verify fencing
   pcs stonith status
+
+  OPTION B: Test/Dev cluster - Disable STONITH (NOT for production!)
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  # Disable STONITH for non-production/test clusters only
+  sudo pcs property set stonith-enabled=false
+
+  # Verify STONITH is disabled
+  pcs property show stonith-enabled
+
+  # To re-enable STONITH later (before going to production):
+  sudo pcs property set stonith-enabled=true
 """)
             step_num += 1
 
@@ -2074,6 +2088,8 @@ STEP 5: CREATE CLUSTER (one node only)
 STEP 6: CONFIGURE STONITH/FENCING (one node only)
 ===============================================================================
 
+  OPTION A: Production cluster - Configure real STONITH device
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
   IMPORTANT: STONITH is REQUIRED for production SAP HANA clusters!
 
   # Example: IPMI/iLO fencing
@@ -2096,6 +2112,17 @@ STEP 6: CONFIGURE STONITH/FENCING (one node only)
   # Verify fencing
   pcs stonith status
   pcs property show stonith-enabled
+
+  OPTION B: Test/Dev cluster - Disable STONITH (NOT for production!)
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  # Disable STONITH for non-production/test clusters only
+  sudo pcs property set stonith-enabled=false
+
+  # Verify STONITH is disabled
+  pcs property show stonith-enabled
+
+  # To re-enable STONITH later (before going to production):
+  sudo pcs property set stonith-enabled=true
 
 ===============================================================================
 STEP 7: CLUSTER PROPERTIES (one node only)
