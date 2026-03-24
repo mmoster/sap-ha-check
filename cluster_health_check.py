@@ -1148,12 +1148,15 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                     for r in self.check_results
                 ]
 
-                pdf_file = str(report_file).replace('.yaml', '.pdf')
+                # PDF filename format: YYYYMMDD_health_check_report_clustername_HHMM.pdf
+                pdf_timestamp = datetime.now().strftime('%Y%m%d')
+                pdf_time = datetime.now().strftime('%H%M')
+                pdf_file = self.config_dir / f"{pdf_timestamp}_health_check_report_{cluster_name_safe}_{pdf_time}.pdf"
                 generate_health_check_report(
                     results_dict,
                     report_data['summary'],
                     cluster_info,
-                    pdf_file
+                    str(pdf_file)
                 )
                 print(f"  PDF report: {pdf_file}")
             except ImportError:
@@ -2588,6 +2591,8 @@ def scan_for_resources(base_dir: str = ".") -> dict:
     for f in base_path.glob('**/health_check_report_*.yaml'):
         results['former_results'].append(str(f))
     for f in base_path.glob('**/health_check_report_*.pdf'):
+        results['pdf_reports'].append(str(f))
+    for f in base_path.glob('**/*_health_check_report_*.pdf'):
         results['pdf_reports'].append(str(f))
 
     # Scan for config files
