@@ -2910,8 +2910,7 @@ COMMON WORKFLOWS:
      # Or:
      ./cluster_health_check.py -l
 
-  4. Generate PDF report:
-     ./cluster_health_check.py hana01 --pdf
+  4. PDF reports are generated automatically after each health check.
 
 MORE OPTIONS:
   ./cluster_health_check.py --help     # Full help
@@ -3033,11 +3032,11 @@ Examples:
         help='Strict mode: all checks required (fencing, alerts). Default: optional checks are warnings only'
     )
 
-    # PDF report option
+    # PDF report option (now default, kept for backwards compatibility)
     parser.add_argument(
         '--pdf',
         action='store_true',
-        help='Generate PDF report in addition to YAML (Red Hat style)'
+        help='Generate PDF report (default: enabled, this flag is kept for compatibility)'
     )
 
     # Local mode option
@@ -3301,6 +3300,7 @@ Examples:
         sys.exit(0)
 
     # Create health check instance
+    # PDF generation is enabled by default, can be disabled with --no-pdf
     health_check = ClusterHealthCheck(
         config_dir=str(config_dir),
         sosreport_dir=args.sosreport_dir,
@@ -3312,7 +3312,7 @@ Examples:
         cluster_name=args.cluster,
         local_mode=local_mode,
         strict_mode=args.strict,
-        generate_pdf=args.pdf
+        generate_pdf=True  # Always generate PDF
     )
 
     def cleanup_temp_file():
