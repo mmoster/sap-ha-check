@@ -2534,6 +2534,392 @@ USAGE EXAMPLES
     return None, False
 
 
+def scan_for_resources(base_dir: str = ".") -> dict:
+    """
+    Scan current directory and subdirectories for sosreports, inventory files, and former results.
+    Returns dict with found resources.
+    """
+    import glob
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    base_path = Path(base_dir).resolve()
+    results = {
+        'sosreports_compressed': [],  # .tar.xz, .tar.gz files
+        'sosreports_extracted': [],   # sosreport-* directories
+        'inventory_files': [],        # ansible inventory files (hosts, inventory.*)
+        'hosts_files': [],            # hosts.txt, *_hosts.txt
+        'former_results': [],         # health_check_report_*.yaml
+        'config_files': [],           # cluster_access_config.yaml
+        'pdf_reports': [],            # *.pdf reports
+    }
+
+    print("\n" + "=" * 63)
+    print(" Scanning for resources...")
+    print("=" * 63)
+    print(f"  Base directory: {base_path}\n")
+
+    # Scan for sosreports (compressed)
+    archive_patterns = ['**/sosreport-*.tar.xz', '**/sosreport-*.tar.gz',
+                        '**/sosreport-*.tar.bz2', '**/sosreport-*.tgz', '**/sosreport-*.txz']
+    for pattern in archive_patterns:
+        for f in base_path.glob(pattern):
+            results['sosreports_compressed'].append(str(f))
+
+    # Scan for sosreports (extracted directories)
+    for d in base_path.glob('**/sosreport-*'):
+        if d.is_dir() and (d / 'etc').exists():
+            results['sosreports_extracted'].append(str(d))
+
+    # Scan for inventory files
+    inventory_patterns = ['**/inventory', '**/inventory.ini', '**/inventory.yaml',
+                          '**/inventory.yml', '**/ansible/hosts', '**/hosts.ini']
+    for pattern in inventory_patterns:
+        for f in base_path.glob(pattern):
+            if f.is_file():
+                results['inventory_files'].append(str(f))
+
+    # Scan for hosts files
+    for f in base_path.glob('**/hosts.txt'):
+        results['hosts_files'].append(str(f))
+    for f in base_path.glob('**/*_hosts.txt'):
+        results['hosts_files'].append(str(f))
+
+    # Scan for former results
+    for f in base_path.glob('**/health_check_report_*.yaml'):
+        results['former_results'].append(str(f))
+    for f in base_path.glob('**/health_check_report_*.pdf'):
+        results['pdf_reports'].append(str(f))
+
+    # Scan for config files
+    for f in base_path.glob('**/cluster_access_config.yaml'):
+        results['config_files'].append(str(f))
+    for f in base_path.glob('**/last_run_status.yaml'):
+        results['former_results'].append(str(f))
+
+    # Remove duplicates and sort
+    for key in results:
+        results[key] = sorted(list(set(results[key])))
+
+    return results
+
+
+def extract_sosreports_parallel(archives: list, max_workers: int = 4) -> list:
+    """
+    Extract multiple sosreport archives in parallel.
+    Returns list of extracted directories.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    import subprocess
+
+    extracted = []
+
+    def extract_one(archive_path: str) -> tuple:
+        """Extract single archive. Returns (success, path_or_error)."""
+        archive_name = os.path.basename(archive_path)
+        base_dir = os.path.dirname(archive_path)
+
+        # Determine expected directory name
+        dir_name = archive_name
+        for ext in ['.tar.xz', '.tar.gz', '.tar.bz2', '.tgz', '.txz']:
+            if dir_name.endswith(ext):
+                dir_name = dir_name[:-len(ext)]
+                break
+
+        expected_dir = os.path.join(base_dir, dir_name)
+
+        # Check if already extracted
+        if os.path.isdir(expected_dir):
+            return (True, expected_dir, "already extracted")
+
+        # Determine extraction command
+        if archive_path.endswith(('.tar.xz', '.txz')):
+            cmd = ['tar', 'xJf', archive_path, '-C', base_dir]
+        elif archive_path.endswith(('.tar.gz', '.tgz')):
+            cmd = ['tar', 'xzf', archive_path, '-C', base_dir]
+        elif archive_path.endswith('.tar.bz2'):
+            cmd = ['tar', 'xjf', archive_path, '-C', base_dir]
+        else:
+            return (False, archive_path, "unknown format")
+
+        try:
+            subprocess.run(cmd, check=True, capture_output=True, timeout=300)
+            return (True, expected_dir, "extracted")
+        except subprocess.TimeoutExpired:
+            return (False, archive_path, "timeout")
+        except subprocess.CalledProcessError as e:
+            return (False, archive_path, e.stderr.decode()[:100] if e.stderr else "extraction failed")
+        except Exception as e:
+            return (False, archive_path, str(e))
+
+    if not archives:
+        return extracted
+
+    print(f"\n  Extracting {len(archives)} sosreport archive(s) in parallel...")
+
+    with ThreadPoolExecutor(max_workers=min(len(archives), max_workers)) as executor:
+        futures = {executor.submit(extract_one, arch): arch for arch in archives}
+        for future in as_completed(futures):
+            archive = futures[future]
+            archive_name = os.path.basename(archive)
+            try:
+                success, path, status = future.result()
+                if success:
+                    print(f"    [OK] {archive_name} ({status})")
+                    extracted.append(path)
+                else:
+                    print(f"    [FAIL] {archive_name}: {status}")
+            except Exception as e:
+                print(f"    [ERROR] {archive_name}: {e}")
+
+    return extracted
+
+
+def run_usage_scan():
+    """
+    Run the usage scan mode: find resources, present options, and help user get started.
+    """
+    # Scan for resources
+    resources = scan_for_resources(".")
+
+    # Count what we found
+    n_compressed = len(resources['sosreports_compressed'])
+    n_extracted = len(resources['sosreports_extracted'])
+    n_inventory = len(resources['inventory_files'])
+    n_hosts = len(resources['hosts_files'])
+    n_results = len(resources['former_results'])
+    n_config = len(resources['config_files'])
+    n_pdf = len(resources['pdf_reports'])
+
+    has_sosreports = n_compressed > 0 or n_extracted > 0
+    has_inventory = n_inventory > 0 or n_hosts > 0
+    has_former = n_results > 0 or n_config > 0
+
+    # Print summary
+    print("\n" + "-" * 63)
+    print(" Found Resources")
+    print("-" * 63)
+
+    if n_compressed > 0:
+        print(f"  SOSreports (compressed):  {n_compressed}")
+        for f in resources['sosreports_compressed'][:5]:
+            print(f"    - {os.path.basename(f)}")
+        if n_compressed > 5:
+            print(f"    ... and {n_compressed - 5} more")
+
+    if n_extracted > 0:
+        print(f"  SOSreports (extracted):   {n_extracted}")
+        for f in resources['sosreports_extracted'][:5]:
+            print(f"    - {os.path.basename(f)}")
+        if n_extracted > 5:
+            print(f"    ... and {n_extracted - 5} more")
+
+    if n_inventory > 0:
+        print(f"  Inventory files:          {n_inventory}")
+        for f in resources['inventory_files'][:3]:
+            print(f"    - {f}")
+
+    if n_hosts > 0:
+        print(f"  Hosts files:              {n_hosts}")
+        for f in resources['hosts_files'][:3]:
+            print(f"    - {f}")
+
+    if n_results > 0:
+        print(f"  Former results:           {n_results}")
+        for f in sorted(resources['former_results'], reverse=True)[:3]:
+            print(f"    - {os.path.basename(f)}")
+
+    if n_pdf > 0:
+        print(f"  PDF reports:              {n_pdf}")
+
+    if n_config > 0:
+        print(f"  Config files:             {n_config}")
+
+    if not (has_sosreports or has_inventory or has_former):
+        print("  (No resources found)")
+
+    # Present options based on what was found
+    print("\n" + "-" * 63)
+    print(" Options")
+    print("-" * 63)
+
+    options = []
+
+    if has_former:
+        options.append(('d', 'Delete former results and config, start fresh'))
+        options.append(('c', 'Continue with existing configuration'))
+
+    if n_compressed > 0:
+        options.append(('e', f'Extract {n_compressed} compressed sosreport(s) and analyze'))
+
+    if n_extracted > 0 or n_compressed > 0:
+        sos_dir = os.path.dirname(resources['sosreports_extracted'][0]) if n_extracted > 0 else os.path.dirname(resources['sosreports_compressed'][0])
+        options.append(('s', f'Analyze sosreports in {sos_dir}'))
+
+    if has_inventory:
+        inv_file = resources['inventory_files'][0] if n_inventory > 0 else resources['hosts_files'][0]
+        options.append(('i', f'Use inventory/hosts file: {inv_file}'))
+
+    options.append(('n', 'Enter hostnames manually'))
+    options.append(('l', 'Run locally (on this cluster node)'))
+    options.append(('h', 'Show help and examples'))
+    options.append(('q', 'Quit'))
+
+    for key, desc in options:
+        print(f"  [{key}] {desc}")
+
+    print("-" * 63)
+
+    try:
+        choice = input("\n  Your choice: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print("\n  Cancelled.")
+        return None
+
+    if choice == 'q':
+        print("  Exiting.")
+        return None
+
+    if choice == 'h':
+        print_usage_help()
+        return None
+
+    if choice == 'd':
+        # Delete former results
+        print("\n  Deleting former results and config...")
+        deleted = 0
+        for f in resources['former_results'] + resources['config_files'] + resources['pdf_reports']:
+            try:
+                os.remove(f)
+                print(f"    Deleted: {os.path.basename(f)}")
+                deleted += 1
+            except Exception as e:
+                print(f"    Failed to delete {f}: {e}")
+        print(f"  Deleted {deleted} file(s).")
+        print("\n  Run the tool again to start fresh:")
+        print("    ./cluster_health_check.py <hostname>")
+        print("    ./cluster_health_check.py -s <sosreport_dir>")
+        return None
+
+    if choice == 'c':
+        # Continue with existing config
+        if n_config > 0:
+            config_dir = os.path.dirname(resources['config_files'][0])
+            return {'action': 'continue', 'config_dir': config_dir}
+        else:
+            print("  No existing configuration found.")
+            return None
+
+    if choice == 'e':
+        # Extract and analyze sosreports
+        extracted = extract_sosreports_parallel(resources['sosreports_compressed'])
+        if extracted:
+            sos_dir = os.path.dirname(extracted[0])
+            print(f"\n  Extracted {len(extracted)} sosreport(s).")
+            print(f"  Run health check with:")
+            print(f"    ./cluster_health_check.py -s {sos_dir}")
+            return {'action': 'sosreport', 'sosreport_dir': sos_dir}
+        else:
+            print("  No sosreports extracted.")
+            return None
+
+    if choice == 's':
+        # Analyze sosreports directly
+        if n_extracted > 0:
+            sos_dir = os.path.dirname(resources['sosreports_extracted'][0])
+        else:
+            # Extract first
+            extracted = extract_sosreports_parallel(resources['sosreports_compressed'])
+            sos_dir = os.path.dirname(extracted[0]) if extracted else None
+
+        if sos_dir:
+            return {'action': 'sosreport', 'sosreport_dir': sos_dir}
+        else:
+            print("  No sosreports found to analyze.")
+            return None
+
+    if choice == 'i':
+        # Use inventory file
+        inv_file = resources['inventory_files'][0] if n_inventory > 0 else resources['hosts_files'][0]
+        return {'action': 'hosts_file', 'hosts_file': inv_file}
+
+    if choice == 'n':
+        # Manual hostname entry
+        try:
+            hosts = input("  Enter hostnames (space-separated): ").strip()
+            if hosts:
+                return {'action': 'hosts', 'hosts': hosts.split()}
+        except (EOFError, KeyboardInterrupt):
+            pass
+        return None
+
+    if choice == 'l':
+        return {'action': 'local'}
+
+    print(f"  Unknown option: {choice}")
+    return None
+
+
+def print_usage_help():
+    """Print usage help with examples."""
+    print("""
+===============================================================
+ SAP HANA Pacemaker Cluster Health Check - Quick Start Guide
+===============================================================
+
+BASIC USAGE:
+  ./cluster_health_check.py                    # Interactive mode
+  ./cluster_health_check.py <hostname>         # Check cluster via hostname
+  ./cluster_health_check.py -s <sosreport_dir> # Analyze sosreports offline
+
+SCANNING FOR RESOURCES (-u):
+  ./cluster_health_check.py -u
+
+  This scans the current directory and subdirectories for:
+  - SOSreport archives (.tar.xz, .tar.gz) - extracts in parallel if needed
+  - SOSreport directories (already extracted)
+  - Ansible inventory files
+  - Hosts files (hosts.txt)
+  - Former health check results
+
+  Then presents interactive options to:
+  - Delete former results and start fresh
+  - Continue with existing configuration
+  - Extract and analyze sosreports
+  - Use found inventory/hosts files
+  - Enter hostnames manually
+
+COMMON WORKFLOWS:
+
+  1. Analyze SOSreports from a support case:
+     # Copy sosreports to a directory
+     mkdir sosreports && cd sosreports
+     cp /path/to/sosreport-*.tar.xz .
+
+     # Scan and analyze
+     ../cluster_health_check.py -u
+     # Or directly:
+     ../cluster_health_check.py -s .
+
+  2. Check a live cluster:
+     ./cluster_health_check.py hana01 hana02
+     # Or from a hosts file:
+     ./cluster_health_check.py -H hosts.txt
+
+  3. Check from a cluster node:
+     ./cluster_health_check.py --local
+     # Or:
+     ./cluster_health_check.py -l
+
+  4. Generate PDF report:
+     ./cluster_health_check.py hana01 --pdf
+
+MORE OPTIONS:
+  ./cluster_health_check.py --help     # Full help
+  ./cluster_health_check.py --guide    # Detailed guide
+  ./cluster_health_check.py -L         # List health checks
+""")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='SAP Pacemaker Cluster Health Check Tool',
@@ -2697,7 +3083,39 @@ Examples:
         help='List all health check steps with descriptions'
     )
 
+    # Usage/scan option
+    parser.add_argument(
+        '--usage', '-u',
+        action='store_true',
+        help='Scan current directory for sosreports, inventory files, and former results; interactive setup'
+    )
+
     args = parser.parse_args()
+
+    # Handle usage/scan action (-u)
+    if args.usage:
+        result = run_usage_scan()
+        if result is None:
+            sys.exit(0)
+
+        # Process the result and run health check
+        if result['action'] == 'local':
+            args.local = True
+        elif result['action'] == 'hosts':
+            # Create temp hosts file
+            import tempfile
+            temp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False)
+            for host in result['hosts']:
+                temp_file.write(f"{host}\n")
+            temp_file.close()
+            args.hosts_file = temp_file.name
+        elif result['action'] == 'hosts_file':
+            args.hosts_file = result['hosts_file']
+        elif result['action'] == 'sosreport':
+            args.sosreport_dir = result['sosreport_dir']
+        elif result['action'] == 'continue':
+            args.config_dir = result.get('config_dir')
+        # Continue to run the health check with the set arguments
 
     # Handle guide action
     if args.guide:

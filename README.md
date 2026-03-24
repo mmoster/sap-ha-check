@@ -2,6 +2,56 @@
 
 A comprehensive health check tool for SAP HANA Pacemaker clusters on RHEL and SUSE Linux Enterprise.
 
+## Quick Start with Resource Scanning (-u)
+
+The fastest way to get started is using the `-u` (usage) option, which scans your current directory for existing resources:
+
+```bash
+./cluster_health_check.py -u
+```
+
+This command will:
+1. **Scan** the current folder and subfolders for:
+   - SOSreport archives (`.tar.xz`, `.tar.gz`) and extracted directories
+   - Ansible inventory files
+   - Hosts files (`hosts.txt`)
+   - Former health check results and reports
+
+2. **Present interactive options**:
+   - Delete former results and start fresh
+   - Continue with existing configuration
+   - Extract compressed sosreports (in parallel) and analyze
+   - Use found inventory/hosts files
+   - Enter hostnames manually
+   - Run locally on a cluster node
+
+### Typical Workflow: Analyzing SOSreports
+
+```bash
+# 1. Create a directory and copy sosreports
+mkdir analysis && cd analysis
+cp /path/to/sosreport-*.tar.xz .
+
+# 2. Run the scan - it will find the archives and offer to extract them
+../cluster_health_check.py -u
+
+# Or directly analyze (auto-extracts compressed files):
+../cluster_health_check.py -s .
+```
+
+### Typical Workflow: Live Cluster Check
+
+```bash
+# Check a cluster by specifying one or more node names
+./cluster_health_check.py hana01 hana02
+
+# Or run locally on a cluster node
+./cluster_health_check.py --local
+
+# Or use a hosts file
+./cluster_health_check.py -H hosts.txt
+```
+
 ## Features
 
 - **Multiple Access Methods**: SSH, Ansible inventory, or SOSreport analysis
@@ -189,7 +239,7 @@ cd wrapper
 ## Usage
 
 ```
-usage: cluster_health_check.py [-h] [--hosts-file HOSTS_FILE]
+usage: cluster_health_check.py [-h] [--usage] [--hosts-file HOSTS_FILE]
                                [--sosreport-dir SOSREPORT_DIR]
                                [--config-dir CONFIG_DIR] [--access-only]
                                [--show-config] [--delete-config] [--force]
@@ -198,6 +248,7 @@ usage: cluster_health_check.py [-h] [--hosts-file HOSTS_FILE]
                                [--skip {access,config,pacemaker,sap,report} ...]
 
 Options:
+  -u, --usage           Scan directory for sosreports/inventory/results (interactive setup)
   -H, --hosts-file      File containing list of hosts (one per line)
   -s, --sosreport-dir   Directory containing SOSreport archives/directories
   -c, --config-dir      Directory to store configuration
