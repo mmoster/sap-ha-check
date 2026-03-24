@@ -2750,7 +2750,7 @@ def run_usage_scan():
     options = []
 
     if has_former:
-        options.append(('d', 'Delete former results and config, start fresh'))
+        options.append(('d', 'Delete former results and config, then run health check'))
         options.append(('c', 'Continue with existing configuration'))
 
     if n_compressed > 0:
@@ -2789,7 +2789,7 @@ def run_usage_scan():
         return None
 
     if choice == 'd':
-        # Delete former results
+        # Delete former results and continue
         print("\n  Deleting former results and config...")
         deleted = 0
         for f in resources['former_results'] + resources['config_files'] + resources['pdf_reports']:
@@ -2799,11 +2799,33 @@ def run_usage_scan():
                 deleted += 1
             except Exception as e:
                 print(f"    Failed to delete {f}: {e}")
-        print(f"  Deleted {deleted} file(s).")
-        print("\n  Run the tool again to start fresh:")
-        print("    ./cluster_health_check.py <hostname>")
-        print("    ./cluster_health_check.py -s <sosreport_dir>")
-        return None
+        print(f"  Deleted {deleted} file(s).\n")
+
+        # Continue with health check - determine best action based on available resources
+        if n_extracted > 0:
+            sos_dir = os.path.dirname(resources['sosreports_extracted'][0])
+            print(f"  Continuing with sosreports in {sos_dir}...")
+            return {'action': 'sosreport', 'sosreport_dir': sos_dir}
+        elif n_compressed > 0:
+            # Extract and analyze
+            extracted = extract_sosreports_parallel(resources['sosreports_compressed'])
+            if extracted:
+                sos_dir = os.path.dirname(extracted[0])
+                print(f"  Continuing with extracted sosreports in {sos_dir}...")
+                return {'action': 'sosreport', 'sosreport_dir': sos_dir}
+        elif has_inventory:
+            inv_file = resources['inventory_files'][0] if n_inventory > 0 else resources['hosts_files'][0]
+            print(f"  Continuing with inventory file {inv_file}...")
+            return {'action': 'hosts_file', 'hosts_file': inv_file}
+        else:
+            # No resources found, ask for hostnames
+            try:
+                hosts = input("  Enter hostnames (space-separated): ").strip()
+                if hosts:
+                    return {'action': 'hosts', 'hosts': hosts.split()}
+            except (EOFError, KeyboardInterrupt):
+                pass
+            return None
 
     if choice == 'c':
         # Continue with existing config
@@ -2887,7 +2909,7 @@ SCANNING FOR RESOURCES (-u):
   - Former health check results
 
   Then presents interactive options to:
-  - Delete former results and start fresh
+  - Delete former results and run health check
   - Continue with existing configuration
   - Extract and analyze sosreports
   - Use found inventory/hosts files
