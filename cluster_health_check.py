@@ -563,7 +563,13 @@ class ClusterHealthCheck:
         print(f"    {status_icon(status['cluster_configured'])} Cluster running{cluster_info}")
         print(f"    {status_icon(status['corosync_running'])} Corosync running (messaging)")
         print(f"    {status_icon(status['pacemaker_running'])} Pacemaker running (resource mgr)")
-        print(f"    {status_icon(status['cluster_enabled'])} Cluster enabled on boot")
+        # Cluster enabled on boot is optional - show warning if not enabled
+        if status['cluster_enabled']:
+            print(f"    {status_icon(True)} Cluster enabled on boot")
+        elif status['cluster_enabled'] is False:
+            print(f"    [~] Cluster enabled on boot (optional)")
+        else:
+            print(f"    [?] Cluster enabled on boot (optional)")
         print(f"    {status_icon(status['cluster_online'])} All nodes online")
         if status['cluster_nodes']:
             print(f"        Online: {', '.join(status['cluster_nodes'])}")
@@ -608,8 +614,7 @@ class ClusterHealthCheck:
             steps_needed.append('cluster_setup')
         if status['cluster_configured'] and not status['corosync_running']:
             steps_needed.append('cluster_start')
-        if status['corosync_running'] and not status['cluster_enabled']:
-            steps_needed.append('cluster_enable')
+        # Note: cluster_enable is optional - cluster works without being enabled on boot
 
         # Phase 3: Fencing & Resources
         if status['cluster_online'] and (not status['stonith_enabled'] or not status['stonith_configured']):
