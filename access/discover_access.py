@@ -946,12 +946,21 @@ class AccessDiscovery:
                     self.config.nodes = {}
                     for hostname, path in sosreports.items():
                         all_hosts[hostname] = {'ansible_info': None, 'sosreport_path': path}
-                    # Skip all other discovery - go straight to access check
+                    # Skip all other discovery - go straight to access check (parallel)
                     print(f"\n=== Checking access to {len(all_hosts)} SOSreport nodes ===")
-                    for hostname, info in all_hosts.items():
-                        node = self.check_node_access(hostname, None, info.get('sosreport_path'))
-                        self.config.nodes[hostname] = asdict(node)
-                        print(f"  {hostname}: SOSreport -> {node.preferred_method or 'none'}")
+                    with ThreadPoolExecutor(max_workers=min(len(all_hosts), self.MAX_WORKERS)) as executor:
+                        futures = {
+                            executor.submit(self.check_node_access, hostname, None, info.get('sosreport_path')): hostname
+                            for hostname, info in all_hosts.items()
+                        }
+                        for future in as_completed(futures):
+                            hostname = futures[future]
+                            try:
+                                node = future.result()
+                                self.config.nodes[hostname] = asdict(node)
+                                print(f"  {hostname}: SOSreport -> {node.preferred_method or 'none'}")
+                            except Exception as e:
+                                print(f"  {hostname}: Error - {e}")
                     self.config.sosreport_directory = self.sosreport_dir
                     self.config.discovery_complete = True
                     self.save_config()
