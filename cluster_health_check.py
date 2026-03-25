@@ -72,6 +72,145 @@ class ClusterHealthCheck:
             timestamp = datetime.now().strftime('%H:%M:%S.%f')[:-3]
             print(f"  [DEBUG {timestamp}] {message}")
 
+    def check_install_status_sosreport(self, node: str, sosreport_path: str) -> dict:
+        """
+        Check installation status from a SOSreport directory.
+        Returns dict with status of each installation step based on captured data.
+        """
+        import re
+        sos_path = Path(sosreport_path)
+
+        status = {
+            # Phase 1: Prerequisites
+            'subscription_registered': None,
+            'repos_enabled': None,
+            'firewall_configured': None,
+            'packages_installed': None,
+            'hacluster_password': None,
+            'pcsd_running': None,
+            'pcsd_enabled': None,
+            # Phase 2: Cluster Creation
+            'nodes_authenticated': None,
+            'corosync_conf_exists': None,
+            'cluster_configured': None,
+            'corosync_running': None,
+            'pacemaker_running': None,
+            'cluster_enabled': None,
+            'cluster_online': None,
+            # Phase 3: Fencing & Resources
+            'stonith_enabled': None,
+            'stonith_configured': None,
+            'hana_installed': None,
+            'hana_resources': None,
+            # Details
+            'missing_packages': [],
+            'missing_repos': [],
+            'node': node,
+            'method': 'sosreport',
+            'cluster_name': None,
+            'cluster_nodes': [],
+            'offline_nodes': [],
+        }
+
+        # Check if corosync.conf exists
+        corosync_conf = sos_path / "etc/corosync/corosync.conf"
+        status['corosync_conf_exists'] = corosync_conf.exists()
+
+        # Extract cluster name from corosync.conf
+        if corosync_conf.exists():
+            try:
+                content = corosync_conf.read_text()
+                match = re.search(r'cluster_name:\s*(\S+)', content)
+                if match:
+                    status['cluster_name'] = match.group(1)
+            except Exception:
+                pass
+
+        # Check packages from installed-rpms
+        installed_rpms = sos_path / "installed-rpms"
+        if installed_rpms.exists():
+            try:
+                content = installed_rpms.read_text()
+                required_packages = ['pacemaker', 'corosync', 'pcs']
+                sap_packages = ['sap-hana-ha', 'resource-agents-sap-hana', 'resource-agents-sap-hana-scaleout']
+
+                missing = []
+                for pkg in required_packages:
+                    if pkg not in content:
+                        missing.append(pkg)
+
+                sap_found = any(pkg in content for pkg in sap_packages)
+                if not sap_found:
+                    missing.append('sap-hana-ha')
+
+                status['missing_packages'] = missing
+                status['packages_installed'] = len(missing) == 0
+            except Exception:
+                pass
+
+        # Check pcs status output (try different filename variants)
+        pcs_status = sos_path / "sos_commands/pacemaker/pcs_status_--full"
+        if not pcs_status.exists():
+            pcs_status = sos_path / "sos_commands/pacemaker/pcs_status"
+        if pcs_status.exists():
+            try:
+                content = pcs_status.read_text()
+                status['cluster_configured'] = 'Cluster name:' in content or 'nodes configured' in content
+
+                # Check for online nodes - handle both formats:
+                # Old format: "Online: [ node1 node2 ]"
+                # New format: "Node nodename (id): online"
+                if 'Online:' in content:
+                    status['cluster_online'] = True
+                    match = re.search(r'Online:\s*\[\s*(.*?)\s*\]', content)
+                    if match:
+                        status['cluster_nodes'] = [n.strip() for n in match.group(1).split() if n.strip()]
+
+                # New pcs status format: "Node nodename (id): online"
+                node_matches = re.findall(r'Node\s+(\S+)\s+\(\d+\):\s+online', content, re.IGNORECASE)
+                if node_matches:
+                    status['cluster_online'] = True
+                    status['cluster_nodes'] = node_matches
+
+                # Check STONITH - look for stonith resources running
+                if 'stonith:' in content.lower() and 'Started' in content:
+                    status['stonith_enabled'] = True
+                elif 'stonith-enabled=true' in content.lower() or 'stonith-enabled: true' in content.lower():
+                    status['stonith_enabled'] = True
+                elif 'stonith-enabled=false' in content.lower() or 'stonith-enabled: false' in content.lower():
+                    status['stonith_enabled'] = False
+
+                # Check HANA resources
+                if 'SAPHana' in content:
+                    status['hana_resources'] = True
+            except Exception:
+                pass
+
+        # Check systemctl output for service status
+        systemctl_output = sos_path / "sos_commands/systemd/systemctl_list-units_--all"
+        if systemctl_output.exists():
+            try:
+                content = systemctl_output.read_text()
+                status['corosync_running'] = 'corosync.service' in content and 'running' in content.lower()
+                status['pacemaker_running'] = 'pacemaker.service' in content and 'running' in content.lower()
+                status['pcsd_running'] = 'pcsd.service' in content and 'running' in content.lower()
+            except Exception:
+                pass
+
+        # Check for HANA installation
+        hana_check = sos_path / "usr/sap"
+        if not hana_check.exists():
+            # Try alternative location in sos data
+            proc_mounts = sos_path / "proc/mounts"
+            if proc_mounts.exists():
+                try:
+                    content = proc_mounts.read_text()
+                    status['hana_installed'] = '/usr/sap/' in content or '/hana/' in content.lower()
+                except Exception:
+                    pass
+
+        return status
+
     def _execute_check_cmd(self, cmd: str, node: str, method: str, user: str = None) -> tuple:
         """Execute a command on a node and return (success, output)."""
         import subprocess
@@ -157,6 +296,13 @@ class ClusterHealthCheck:
             return status
 
         status['node'] = node
+
+        # For sosreport mode, use the sosreport-specific method
+        if method == 'sosreport' and self.access_config:
+            node_info = self.access_config.nodes.get(node, {})
+            sosreport_path = node_info.get('sosreport_path')
+            if sosreport_path:
+                return self.check_install_status_sosreport(node, sosreport_path)
 
         # Check packages FIRST (if installed, subscription/repos don't matter)
         # Note: rpm -q returns exit code 1 if ANY package is missing, but still outputs info
