@@ -374,6 +374,163 @@ class AccessDiscovery:
         print(f"Found {len(sosreports)} SOSreports")
         return sosreports
 
+    def get_cluster_name_from_sosreport(self, sosreport_path: str) -> Optional[str]:
+        """Extract cluster name from a sosreport's corosync.conf or pcs status output."""
+        sos_path = Path(sosreport_path)
+
+        # Try corosync.conf first
+        corosync_conf = sos_path / "etc/corosync/corosync.conf"
+        if corosync_conf.exists():
+            try:
+                content = corosync_conf.read_text()
+                # Look for cluster_name: <name> in totem section
+                match = re.search(r'cluster_name:\s*(\S+)', content)
+                if match:
+                    return match.group(1)
+            except Exception:
+                pass
+
+        # Try pcs status output
+        pcs_status = sos_path / "sos_commands/pacemaker/pcs_status"
+        if pcs_status.exists():
+            try:
+                content = pcs_status.read_text()
+                match = re.search(r'Cluster name:\s*(\S+)', content)
+                if match:
+                    return match.group(1)
+            except Exception:
+                pass
+
+        # Try crm_mon output
+        crm_mon = sos_path / "sos_commands/pacemaker/crm_mon_-1"
+        if crm_mon.exists():
+            try:
+                content = crm_mon.read_text()
+                # Some versions show cluster name in the header
+                match = re.search(r'Cluster\s+(\S+)\s+status', content, re.IGNORECASE)
+                if match:
+                    return match.group(1)
+            except Exception:
+                pass
+
+        return None
+
+    def get_cluster_nodes_from_sosreport(self, sosreport_path: str) -> List[str]:
+        """Extract cluster node list from a sosreport's corosync.conf."""
+        sos_path = Path(sosreport_path)
+        nodes = []
+
+        # Try corosync.conf
+        corosync_conf = sos_path / "etc/corosync/corosync.conf"
+        if corosync_conf.exists():
+            try:
+                content = corosync_conf.read_text()
+                # Look for ring0_addr or name in nodelist section
+                # Pattern: ring0_addr: <hostname/ip> or name: <hostname>
+                ring_matches = re.findall(r'ring0_addr:\s*(\S+)', content)
+                name_matches = re.findall(r'^\s*name:\s*(\S+)', content, re.MULTILINE)
+
+                # Prefer name matches as they're usually hostnames
+                if name_matches:
+                    nodes = name_matches
+                elif ring_matches:
+                    nodes = ring_matches
+            except Exception:
+                pass
+
+        return nodes
+
+    def discover_sosreports_with_clusters(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Discover SOSreports and group them by cluster.
+        Returns dict: {cluster_name: {'nodes': {hostname: sosreport_path}}}
+        """
+        clusters = {}  # cluster_name -> {'nodes': {hostname: path}}
+        unassigned = {}  # hostname -> path (for sosreports without cluster info)
+
+        # First discover all sosreports
+        sosreports = self.discover_sosreports()
+
+        if not sosreports:
+            return clusters
+
+        print(f"\n=== Detecting cluster membership from SOSreports ===")
+
+        for hostname, sos_path in sosreports.items():
+            cluster_name = self.get_cluster_name_from_sosreport(sos_path)
+
+            if cluster_name:
+                if cluster_name not in clusters:
+                    clusters[cluster_name] = {'nodes': {}}
+                clusters[cluster_name]['nodes'][hostname] = sos_path
+                print(f"  {hostname}: cluster '{cluster_name}'")
+            else:
+                unassigned[hostname] = sos_path
+                print(f"  {hostname}: (no cluster info)")
+
+        # If there are unassigned nodes, try to match them to existing clusters
+        # by checking if their hostnames appear in any cluster's nodelist
+        if unassigned and clusters:
+            for cluster_name, cluster_info in clusters.items():
+                # Get expected nodes from first sosreport in this cluster
+                first_sos_path = list(cluster_info['nodes'].values())[0]
+                expected_nodes = self.get_cluster_nodes_from_sosreport(first_sos_path)
+
+                for hostname, sos_path in list(unassigned.items()):
+                    # Check if hostname matches any expected node
+                    for expected in expected_nodes:
+                        if hostname in expected or expected in hostname:
+                            clusters[cluster_name]['nodes'][hostname] = sos_path
+                            del unassigned[hostname]
+                            print(f"  {hostname}: matched to cluster '{cluster_name}' (from nodelist)")
+                            break
+
+        # Put remaining unassigned in 'unknown' cluster
+        if unassigned:
+            clusters['(unknown)'] = {'nodes': unassigned}
+
+        return clusters
+
+    def prompt_cluster_selection(self, clusters: Dict[str, Dict[str, Any]]) -> Optional[str]:
+        """
+        Prompt user to select which cluster to analyze when multiple clusters are found.
+        Returns selected cluster name or None if user cancels.
+        """
+        if len(clusters) <= 1:
+            return list(clusters.keys())[0] if clusters else None
+
+        print("\n" + "=" * 60)
+        print(" Multiple clusters detected in SOSreports")
+        print("=" * 60)
+
+        cluster_list = list(clusters.keys())
+        for i, cluster_name in enumerate(cluster_list, 1):
+            nodes = list(clusters[cluster_name]['nodes'].keys())
+            print(f"\n  [{i}] Cluster: {cluster_name}")
+            print(f"      Nodes ({len(nodes)}): {', '.join(sorted(nodes))}")
+
+        print(f"\n  [a] Analyze all clusters together")
+        print(f"  [q] Quit")
+
+        while True:
+            try:
+                choice = input("\nSelect cluster to analyze [1-{}/a/q]: ".format(len(cluster_list))).strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                return None
+
+            if choice == 'q':
+                return None
+            elif choice == 'a':
+                return '__all__'  # Special value to indicate all clusters
+            elif choice.isdigit():
+                idx = int(choice)
+                if 1 <= idx <= len(cluster_list):
+                    selected = cluster_list[idx - 1]
+                    print(f"\n  Selected: {selected}")
+                    return selected
+
+            print(f"  Invalid choice. Enter 1-{len(cluster_list)}, 'a' for all, or 'q' to quit.")
+
     def discover_cluster_name(self, host: str, user: str = None) -> Optional[str]:
         """Discover cluster name from a node."""
         ssh_user = user or 'root'
@@ -742,24 +899,64 @@ class AccessDiscovery:
 
         # 0. If SOSreport directory specified, discover SOSreports FIRST and use ONLY those nodes
         if self.sosreport_dir:
-            sosreports = self.discover_sosreports()
-            if sosreports:
-                print(f"\n[INFO] SOSreport mode: analyzing only nodes with SOSreports")
-                # Clear old nodes - only analyze SOSreport nodes
-                self.config.nodes = {}
-                for hostname, path in sosreports.items():
-                    all_hosts[hostname] = {'ansible_info': None, 'sosreport_path': path}
-                # Skip all other discovery - go straight to access check
-                print(f"\n=== Checking access to {len(all_hosts)} SOSreport nodes ===")
-                for hostname, info in all_hosts.items():
-                    node = self.check_node_access(hostname, None, info.get('sosreport_path'))
-                    self.config.nodes[hostname] = asdict(node)
-                    print(f"  {hostname}: SOSreport -> {node.preferred_method or 'none'}")
-                self.config.sosreport_directory = self.sosreport_dir
-                self.config.discovery_complete = True
-                self.save_config()
-                self._print_summary()
-                return self.config
+            # Use cluster-aware discovery
+            clusters = self.discover_sosreports_with_clusters()
+
+            if clusters:
+                # Determine which sosreports to use
+                sosreports = {}
+
+                if len(clusters) > 1:
+                    # Multiple clusters detected - prompt for selection
+                    selected_cluster = self.prompt_cluster_selection(clusters)
+
+                    if selected_cluster is None:
+                        print("\n[INFO] Cluster selection cancelled.")
+                        sys.exit(0)
+                    elif selected_cluster == '__all__':
+                        # Use all sosreports
+                        print(f"\n[INFO] Analyzing all {len(clusters)} clusters together")
+                        for cluster_info in clusters.values():
+                            sosreports.update(cluster_info['nodes'])
+                    else:
+                        # Use only selected cluster's sosreports
+                        sosreports = clusters[selected_cluster]['nodes']
+                        print(f"\n[INFO] Analyzing cluster '{selected_cluster}' only")
+                        # Store cluster info
+                        self.config.clusters[selected_cluster] = {
+                            'nodes': list(sosreports.keys()),
+                            'discovered_from': 'sosreport',
+                            'discovered_at': datetime.now().isoformat()
+                        }
+                else:
+                    # Single cluster - use all sosreports
+                    cluster_name = list(clusters.keys())[0]
+                    sosreports = clusters[cluster_name]['nodes']
+                    if cluster_name != '(unknown)':
+                        print(f"\n[INFO] Single cluster detected: {cluster_name}")
+                        self.config.clusters[cluster_name] = {
+                            'nodes': list(sosreports.keys()),
+                            'discovered_from': 'sosreport',
+                            'discovered_at': datetime.now().isoformat()
+                        }
+
+                if sosreports:
+                    print(f"\n[INFO] SOSreport mode: analyzing {len(sosreports)} nodes")
+                    # Clear old nodes - only analyze SOSreport nodes
+                    self.config.nodes = {}
+                    for hostname, path in sosreports.items():
+                        all_hosts[hostname] = {'ansible_info': None, 'sosreport_path': path}
+                    # Skip all other discovery - go straight to access check
+                    print(f"\n=== Checking access to {len(all_hosts)} SOSreport nodes ===")
+                    for hostname, info in all_hosts.items():
+                        node = self.check_node_access(hostname, None, info.get('sosreport_path'))
+                        self.config.nodes[hostname] = asdict(node)
+                        print(f"  {hostname}: SOSreport -> {node.preferred_method or 'none'}")
+                    self.config.sosreport_directory = self.sosreport_dir
+                    self.config.discovery_complete = True
+                    self.save_config()
+                    self._print_summary()
+                    return self.config
 
         # 1. Check if cluster name specified - use saved cluster nodes
         if self.cluster_name:
