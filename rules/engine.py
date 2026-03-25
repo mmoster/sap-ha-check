@@ -204,14 +204,20 @@ class RulesEngine:
 
     def _read_sosreport(self, sos_path: str, node: str, sos_base: str) -> Tuple[bool, str]:
         """Read data from SOSreport directory."""
-        # Build full path
-        node_sos = Path(sos_base) / node
-        if not node_sos.exists():
-            # Try to find matching sosreport directory
-            for item in Path(sos_base).iterdir():
-                if item.is_dir() and node in item.name:
-                    node_sos = item
-                    break
+        sos_base_path = Path(sos_base)
+
+        # If sos_base is a direct sosreport path (contains etc/ dir), use it directly
+        if (sos_base_path / "etc").exists():
+            node_sos = sos_base_path
+        else:
+            # Build full path - sos_base is a directory containing sosreports
+            node_sos = sos_base_path / node
+            if not node_sos.exists():
+                # Try to find matching sosreport directory
+                for item in sos_base_path.iterdir():
+                    if item.is_dir() and node in item.name:
+                        node_sos = item
+                        break
 
         file_path = node_sos / sos_path
         if file_path.exists():
@@ -348,10 +354,13 @@ class RulesEngine:
         actual = parsed.get(key)
 
         if operator == 'exists':
-            if expected:
-                passed = actual is not None
-            else:
+            # 'exists' checks if the key has a non-None value
+            # If value is specified as False, check that key does NOT exist
+            if expected is False:
                 passed = actual is None
+            else:
+                # Default: pass if actual exists (is not None)
+                passed = actual is not None
         elif operator == 'not_exists':
             passed = actual is None
         elif operator == 'eq':
@@ -473,8 +482,10 @@ class RulesEngine:
 
         # Evaluate expectations
         expectations = validation.get('expectations', [])
+        match_mode = validation.get('match_mode', 'all')  # 'all' (default) or 'any'
 
         failed_expectations = []
+        passed_expectations = []
         for exp in expectations:
             passed, message = self._evaluate_expectation(parsed, exp)
             if not passed:
@@ -483,8 +494,20 @@ class RulesEngine:
                     'severity': exp.get('severity', rule.severity),
                     'message': message
                 })
+            else:
+                passed_expectations.append(exp)
 
-        if failed_expectations:
+        # match_mode: any - pass if at least one expectation passes
+        # match_mode: all (default) - fail if any expectation fails
+        check_failed = False
+        if match_mode == 'any':
+            # Pass if ANY expectation passed
+            check_failed = len(passed_expectations) == 0
+        else:
+            # Fail if ANY expectation failed
+            check_failed = len(failed_expectations) > 0
+
+        if check_failed:
             # Use highest severity from failed expectations
             max_severity = rule.severity
             for fe in failed_expectations:
@@ -570,11 +593,12 @@ class RulesEngine:
                     continue
 
                 user = node_info.get('ssh_user') or node_info.get('ansible_user')
-                sos_base = self.access_config.get('sosreport_directory')
+                # Use node's specific sosreport_path if available, otherwise fall back to sosreport_directory
+                sos_path = node_info.get('sosreport_path') or self.access_config.get('sosreport_directory')
 
                 future = executor.submit(
                     self._run_check_on_node,
-                    rule, node_name, method, user, sos_base
+                    rule, node_name, method, user, sos_path
                 )
                 futures[future] = node_name
 

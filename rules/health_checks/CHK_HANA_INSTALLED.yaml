@@ -1,6 +1,6 @@
 # CHK_HANA_INSTALLED - Check if SAP HANA is installed
 check_id: CHK_HANA_INSTALLED
-version: "1.2"
+version: "1.3"
 severity: INFO
 description: Check if SAP HANA database is installed on this node
 enabled: true
@@ -28,20 +28,32 @@ source_definitions:
     else
       echo 'HANA_NOT_FOUND'
     fi
-  sos_path: "sos_commands/sap/sap_discovery"
+  # SOSreport: check ps output for HANA processes (hdbnameserver, hdbdaemon, etc.)
+  # The 'ps' file in sosreport contains full process list
+  sos_path: "ps"
 
 parser:
   type: regex
-  multiline: false
+  multiline: true
   search_patterns:
+    # For live_cmd: look for explicit status
     - name: hana_status
       regex: "(HANA_FOUND|HANA_NOT_FOUND)"
+      group: 1
+    # For sosreport ps file: look for HANA processes
+    - name: hana_process
+      regex: "(hdbnameserver|hdbdaemon|hdbindexserver|hdbcompileserver|hdbpreprocessor)"
       group: 1
 
 validation_logic:
   scope: node
+  # Pass if either explicit HANA_FOUND status OR HANA processes found
   expectations:
     - key: hana_status
       operator: eq
       value: "HANA_FOUND"
       message: "SAP HANA database not installed on this node"
+    - key: hana_process
+      operator: exists
+      message: "No HANA processes found"
+  match_mode: any  # Pass if ANY expectation matches
