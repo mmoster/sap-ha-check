@@ -595,31 +595,36 @@ class ClusterHealthCheck:
         # Determine what steps are needed based on phases
         steps_needed = []
 
-        # Phase 1: Prerequisites
-        if not status['subscription_registered']:
-            steps_needed.append('subscription')
-        if not status['firewall_configured']:
-            steps_needed.append('firewall')
-        if not status['packages_installed']:
-            steps_needed.append('packages')
-        if not status['hacluster_password']:
-            steps_needed.append('hacluster')
-        if not status['pcsd_running'] or not status['pcsd_enabled']:
-            steps_needed.append('pcsd')
+        # If cluster is running, prerequisites must have been completed
+        cluster_running = status['cluster_configured'] or status['pacemaker_running']
 
-        # Phase 2: Cluster Creation
-        if status['pcsd_running'] and not status['nodes_authenticated']:
-            steps_needed.append('authenticate')
-        if status['nodes_authenticated'] and not status['cluster_configured']:
-            steps_needed.append('cluster_setup')
+        # Phase 1: Prerequisites - skip if cluster is already running
+        if not cluster_running:
+            if status['subscription_registered'] is False:
+                steps_needed.append('subscription')
+            if status['firewall_configured'] is False:
+                steps_needed.append('firewall')
+            if status['packages_installed'] is False:
+                steps_needed.append('packages')
+            if status['hacluster_password'] is False:
+                steps_needed.append('hacluster')
+            if status['pcsd_running'] is False:
+                steps_needed.append('pcsd')
+
+        # Phase 2: Cluster Creation - skip auth/setup if cluster already exists
+        if not cluster_running:
+            if status['pcsd_running'] and status['nodes_authenticated'] is False:
+                steps_needed.append('authenticate')
+            if status['nodes_authenticated'] and not status['cluster_configured']:
+                steps_needed.append('cluster_setup')
         if status['cluster_configured'] and not status['corosync_running']:
             steps_needed.append('cluster_start')
         # Note: cluster_enable is optional - cluster works without being enabled on boot
 
         # Phase 3: Fencing & Resources
-        if status['cluster_online'] and (not status['stonith_enabled'] or not status['stonith_configured']):
+        if status['cluster_online'] and status['stonith_enabled'] is False:
             steps_needed.append('stonith')
-        if status['hana_installed'] and not status['hana_resources']:
+        if status['hana_installed'] and status['hana_resources'] is False:
             steps_needed.append('hana')
 
         if not steps_needed:
