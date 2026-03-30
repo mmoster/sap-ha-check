@@ -15,6 +15,7 @@ Workflow:
 
 import os
 import sys
+import re
 import argparse
 import yaml
 from pathlib import Path
@@ -2623,6 +2624,7 @@ USAGE EXAMPLES
     # Check for existing configuration
     existing_nodes = []
     clusters_config = {}
+    nodes_config = {}
     config = {}
     if config_path.exists():
         try:
@@ -2630,19 +2632,77 @@ USAGE EXAMPLES
                 config = yaml.safe_load(f) or {}
             existing_nodes = list(config.get('nodes', {}).keys())
             clusters_config = config.get('clusters', {})
+            nodes_config = config.get('nodes', {})
         except Exception:
             pass
+
+    # Helper function to detect cluster name from SOSreport
+    def get_cluster_name_from_sosreport(sosreport_path: str) -> str:
+        """Extract cluster name from a sosreport's corosync.conf or pcs status output."""
+        sos_path = Path(sosreport_path)
+
+        # Try corosync.conf first
+        corosync_conf = sos_path / "etc/corosync/corosync.conf"
+        if corosync_conf.exists():
+            try:
+                content = corosync_conf.read_text()
+                match = re.search(r'cluster_name:\s*(\S+)', content)
+                if match:
+                    return match.group(1)
+            except Exception:
+                pass
+
+        # Try pcs status output
+        pcs_status = sos_path / "sos_commands/pacemaker/pcs_status"
+        if pcs_status.exists():
+            try:
+                content = pcs_status.read_text()
+                match = re.search(r'Cluster name:\s*(\S+)', content)
+                if match:
+                    return match.group(1)
+            except Exception:
+                pass
+
+        return None
+
+    # Try to detect cluster names from SOSreports for nodes in "(unknown)" cluster
+    # or nodes that have sosreport_path but aren't in any known cluster
+    detected_clusters = {}  # node -> cluster_name
+    for node_name in existing_nodes:
+        node_info = nodes_config.get(node_name, {})
+        sosreport_path = node_info.get('sosreport_path')
+        if sosreport_path and Path(sosreport_path).exists():
+            cluster_name = get_cluster_name_from_sosreport(sosreport_path)
+            if cluster_name:
+                detected_clusters[node_name] = cluster_name
 
     # Group existing nodes by cluster membership
     cluster_node_map = {}  # cluster_name -> list of nodes from existing_nodes
     unassigned_nodes = set(existing_nodes)
 
+    # First, use detected clusters from SOSreports
+    for node_name, cluster_name in detected_clusters.items():
+        if cluster_name not in cluster_node_map:
+            cluster_node_map[cluster_name] = []
+        if node_name not in cluster_node_map[cluster_name]:
+            cluster_node_map[cluster_name].append(node_name)
+        unassigned_nodes.discard(node_name)
+
+    # Then, use clusters from config for remaining nodes
     for cname, cinfo in clusters_config.items():
+        if cname == '(unknown)':
+            continue  # Skip the unknown cluster from config, we'll handle unassigned nodes later
         cluster_nodes = set(cinfo.get('nodes', []))
-        matching_nodes = cluster_nodes & set(existing_nodes)
+        matching_nodes = cluster_nodes & unassigned_nodes
         if matching_nodes:
-            cluster_node_map[cname] = sorted(matching_nodes)
+            if cname not in cluster_node_map:
+                cluster_node_map[cname] = []
+            cluster_node_map[cname].extend(sorted(matching_nodes))
             unassigned_nodes -= matching_nodes
+
+    # Sort node lists
+    for cname in cluster_node_map:
+        cluster_node_map[cname] = sorted(cluster_node_map[cname])
 
     # Add unassigned nodes as "(unknown)" cluster if any
     if unassigned_nodes:
