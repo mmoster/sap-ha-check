@@ -2622,32 +2622,112 @@ USAGE EXAMPLES
 
     # Check for existing configuration
     existing_nodes = []
-    cluster_name = None
+    clusters_config = {}
+    config = {}
     if config_path.exists():
         try:
             with open(config_path, 'r') as f:
                 config = yaml.safe_load(f) or {}
             existing_nodes = list(config.get('nodes', {}).keys())
-            # Find cluster name
-            for cname, cinfo in config.get('clusters', {}).items():
-                if any(n in existing_nodes for n in cinfo.get('nodes', [])):
-                    cluster_name = cname
-                    break
+            clusters_config = config.get('clusters', {})
         except Exception:
             pass
 
+    # Group existing nodes by cluster membership
+    cluster_node_map = {}  # cluster_name -> list of nodes from existing_nodes
+    unassigned_nodes = set(existing_nodes)
+
+    for cname, cinfo in clusters_config.items():
+        cluster_nodes = set(cinfo.get('nodes', []))
+        matching_nodes = cluster_nodes & set(existing_nodes)
+        if matching_nodes:
+            cluster_node_map[cname] = sorted(matching_nodes)
+            unassigned_nodes -= matching_nodes
+
+    # Add unassigned nodes as "(unknown)" cluster if any
+    if unassigned_nodes:
+        cluster_node_map['(unknown)'] = sorted(unassigned_nodes)
+
     print("-" * 63)
     if existing_nodes:
-        print(f"EXISTING CONFIGURATION FOUND")
-        if cluster_name:
-            print(f"  Cluster: {cluster_name}")
-        print(f"  Nodes:   {', '.join(sorted(existing_nodes))}")
-        print()
-        print("Options:")
-        print("  [Enter]     Continue with these nodes")
-        print("  [nodes]     Enter different node names (space-separated)")
-        print("  [d]         Delete reports and start fresh")
-        print("  [q]         Quit")
+        print("EXISTING CONFIGURATION FOUND")
+
+        # Check if we have multiple clusters or need cluster selection
+        if len(cluster_node_map) > 1 or (len(cluster_node_map) == 1 and '(unknown)' in cluster_node_map):
+            # Multiple clusters or unknown cluster - show selection menu
+            print()
+            print("  Detected clusters and their nodes:")
+            cluster_list = sorted([c for c in cluster_node_map.keys() if c != '(unknown)'])
+            if '(unknown)' in cluster_node_map:
+                cluster_list.append('(unknown)')
+
+            for idx, cname in enumerate(cluster_list, 1):
+                nodes_in_cluster = cluster_node_map[cname]
+                print(f"    [{idx}] {cname}")
+                print(f"        Nodes: {', '.join(nodes_in_cluster)}")
+            print()
+            print("Options:")
+            print("  [1-N]       Select a cluster by number")
+            print("  [a]         Continue with all nodes")
+            print("  [nodes]     Enter different node names (space-separated)")
+            print("  [d]         Delete reports and start fresh")
+            print("  [q]         Quit")
+            print("-" * 63)
+
+            try:
+                response = input("\nYour choice: ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                print("\n")
+                return None, False
+
+            if response == 'q':
+                print("Exiting.")
+                return None, False
+
+            if response == 'd':
+                if config_path.exists():
+                    config_path.unlink()
+                    print(f"Deleted: {config_path}")
+                print("Configuration deleted. Run again to start fresh.")
+                return None, False
+
+            if response == 'a' or response == '':
+                return existing_nodes, True
+
+            # Check if user entered a cluster number
+            try:
+                choice = int(response)
+                if 1 <= choice <= len(cluster_list):
+                    selected_cluster = cluster_list[choice - 1]
+                    selected_nodes = cluster_node_map[selected_cluster]
+                    print(f"Selected cluster: {selected_cluster}")
+                    print(f"Nodes: {', '.join(selected_nodes)}")
+                    return selected_nodes, True
+                else:
+                    print(f"Invalid choice. Enter 1-{len(cluster_list)}.")
+                    return None, False
+            except ValueError:
+                pass
+
+            # User entered node names
+            nodes = response.split()
+            if nodes:
+                return nodes, True
+
+            return None, False
+
+        else:
+            # Single known cluster
+            cluster_name = list(cluster_node_map.keys())[0] if cluster_node_map else None
+            if cluster_name:
+                print(f"  Cluster: {cluster_name}")
+            print(f"  Nodes:   {', '.join(sorted(existing_nodes))}")
+            print()
+            print("Options:")
+            print("  [Enter]     Continue with these nodes")
+            print("  [nodes]     Enter different node names (space-separated)")
+            print("  [d]         Delete reports and start fresh")
+            print("  [q]         Quit")
     else:
         print("NO EXISTING CONFIGURATION")
         print()
