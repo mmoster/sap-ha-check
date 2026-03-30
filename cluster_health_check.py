@@ -3693,7 +3693,7 @@ Examples:
         print("  [2] Rerun health check")
         print("  [3] Run on different hosts")
         print("  [4] Show configuration")
-        print("  [5] Save PDF report (with custom filename)")
+        print("  [5] Save PDF report and exit")
         print("  [6] Show suggestions")
         print("  [q] Quit")
         print("-" * 63)
@@ -3822,6 +3822,8 @@ Examples:
 
                         generate_health_check_report(results_dict, summary, cluster_info, str(pdf_file))
                         print(f"\n  PDF report saved: {pdf_file}")
+                        print("  Goodbye!")
+                        break
 
                     except ImportError:
                         print("\n  [ERROR] PDF generation requires fpdf2: pip install fpdf2")
