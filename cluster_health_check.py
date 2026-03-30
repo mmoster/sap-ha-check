@@ -3655,10 +3655,12 @@ Examples:
         print("  [2] Rerun health check")
         print("  [3] Run on different hosts")
         print("  [4] Show configuration")
+        print("  [5] Save PDF report (with custom filename)")
+        print("  [6] Show suggestions")
         print("  [q] Quit")
         print("-" * 63)
         try:
-            choice = input("  Enter choice [1-4/q] (default=1): ").strip().lower()
+            choice = input("  Enter choice [1-6/q] (default=1): ").strip().lower()
             return choice if choice else '1'  # Default to installation status
         except (EOFError, KeyboardInterrupt):
             return 'q'
@@ -3708,6 +3710,104 @@ Examples:
                     # Show configuration
                     from access.discover_access import show_config
                     show_config(health_check.config_dir / 'cluster_access_config.yaml')
+                elif choice == '5' or choice == 'p':
+                    # Save PDF report with custom filename
+                    if not health_check.check_results:
+                        print("\n  [WARN] No health check results available. Run a health check first.")
+                        continue
+                    try:
+                        # Get cluster name for default filename
+                        cluster_name = '(unknown)'
+                        if health_check.access_config and health_check.access_config.clusters:
+                            for cname in health_check.access_config.clusters.keys():
+                                if cname != '(unknown)':
+                                    cluster_name = cname
+                                    break
+                        cluster_name_safe = re.sub(r'[^\w\-]', '_', cluster_name)
+
+                        # Default filename
+                        pdf_timestamp = datetime.now().strftime('%Y%m%d')
+                        pdf_time = datetime.now().strftime('%H%M')
+                        default_name = f"{pdf_timestamp}_health_check_report_{cluster_name_safe}_{pdf_time}.pdf"
+
+                        print(f"\n  Default filename: {default_name}")
+                        custom_name = input("  Enter filename (or press Enter for default): ").strip()
+
+                        if custom_name:
+                            # Ensure .pdf extension
+                            if not custom_name.lower().endswith('.pdf'):
+                                custom_name += '.pdf'
+                            pdf_file = health_check.config_dir / custom_name
+                        else:
+                            pdf_file = health_check.config_dir / default_name
+
+                        # Generate PDF
+                        from report_generator import generate_health_check_report
+
+                        cluster_info = {
+                            'cluster_name': cluster_name,
+                            'nodes': list(health_check.access_config.nodes.keys()) if health_check.access_config else [],
+                            'cluster_type': 'Scale-Up',
+                        }
+
+                        results_dict = [
+                            {
+                                'check_id': r.check_id,
+                                'node': r.node,
+                                'status': r.status.value,
+                                'severity': r.severity.value,
+                                'message': r.message,
+                                'description': r.description
+                            }
+                            for r in health_check.check_results
+                        ]
+
+                        # Calculate summary
+                        from collections import Counter
+                        status_counts = Counter(r.status.value for r in health_check.check_results)
+                        summary = {
+                            'total': len(health_check.check_results),
+                            'passed': status_counts.get('passed', 0),
+                            'failed': status_counts.get('failed', 0),
+                            'skipped': status_counts.get('skipped', 0),
+                            'error': status_counts.get('error', 0),
+                        }
+
+                        generate_health_check_report(results_dict, summary, cluster_info, str(pdf_file))
+                        print(f"\n  PDF report saved: {pdf_file}")
+
+                    except ImportError:
+                        print("\n  [ERROR] PDF generation requires fpdf2: pip install fpdf2")
+                    except (EOFError, KeyboardInterrupt):
+                        print("\n  Cancelled.")
+                    except Exception as e:
+                        print(f"\n  [ERROR] PDF generation failed: {e}")
+                elif choice == '6' or choice == 's':
+                    # Show suggestions
+                    print("\n  Available suggestion topics:")
+                    print("    [1] install   - Full installation guide")
+                    print("    [2] access    - Access discovery help")
+                    print("    [3] config    - Cluster configuration")
+                    print("    [4] pacemaker - Pacemaker/Corosync")
+                    print("    [5] sap       - SAP HANA configuration")
+                    print("    [a] all       - Show all suggestions")
+                    print("    [q] back      - Return to main menu")
+                    try:
+                        topic = input("\n  Select topic: ").strip().lower()
+                        topic_map = {'1': 'install', '2': 'access', '3': 'config', '4': 'pacemaker', '5': 'sap'}
+                        if topic in topic_map:
+                            print_suggestions(topic_map[topic])
+                        elif topic in ['install', 'access', 'config', 'pacemaker', 'sap']:
+                            print_suggestions(topic)
+                        elif topic == 'a' or topic == 'all':
+                            for t in ['install', 'access', 'config', 'pacemaker', 'sap']:
+                                print_suggestions(t)
+                        elif topic == 'q' or topic == 'back' or topic == '':
+                            pass  # Return to main menu
+                        else:
+                            print(f"  Unknown topic: {topic}")
+                    except (EOFError, KeyboardInterrupt):
+                        pass
                 elif choice == 'q' or choice == 'quit' or choice == 'exit':
                     print("\n  Goodbye!")
                     break
