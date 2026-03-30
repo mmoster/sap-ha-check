@@ -1635,34 +1635,65 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
 
             return 2
 
-        # Show installation progress summary for healthy clusters
+        # Check installation progress
+        install_complete = True
+        steps_done = 0
+        steps_total = 7
+        missing_steps = []
+        install_status = {}
         if not needs_install:
             try:
-                status = self.check_install_status()
+                install_status = self.check_install_status()
                 steps_done = sum(1 for v in [
-                    status.get('subscription_registered'),
-                    status.get('repos_enabled'),
-                    status.get('packages_installed'),
-                    status.get('pcsd_running'),
-                    status.get('cluster_configured'),
-                    status.get('stonith_configured'),
-                    status.get('hana_resources')
+                    install_status.get('subscription_registered'),
+                    install_status.get('repos_enabled'),
+                    install_status.get('packages_installed'),
+                    install_status.get('pcsd_running'),
+                    install_status.get('cluster_configured'),
+                    install_status.get('stonith_configured'),
+                    install_status.get('hana_resources')
                 ] if v)
-                steps_total = 7
-                if steps_done < steps_total:
-                    print(f"\n[INFO] Installation progress: {steps_done}/{steps_total} steps complete.")
-                    print(f"       Run ./cluster_health_check.py -i to see remaining steps.")
+                install_complete = (steps_done >= steps_total)
+
+                # Build list of missing steps
+                if not install_status.get('subscription_registered'):
+                    missing_steps.append("subscription")
+                if not install_status.get('repos_enabled'):
+                    missing_steps.append("repos")
+                if not install_status.get('packages_installed'):
+                    missing_steps.append("packages")
+                if not install_status.get('pcsd_running'):
+                    missing_steps.append("pcsd")
+                if not install_status.get('cluster_configured'):
+                    missing_steps.append("cluster")
+                if not install_status.get('stonith_configured'):
+                    missing_steps.append("stonith")
+                if not install_status.get('hana_resources'):
+                    missing_steps.append("hana_resources")
             except Exception:
                 pass
 
+        # Determine overall status
         if failed or has_failures:
-            print("\n[WARNING] Some health checks FAILED. Review report for details.")
+            if not install_complete:
+                print(f"\n[WARNING] Installation incomplete ({steps_done}/{steps_total} steps) and health checks FAILED.")
+                if missing_steps:
+                    print(f"          Missing: {', '.join(missing_steps)}")
+                print(f"          Run ./cluster_health_check.py -i to see remaining steps.")
+            else:
+                print("\n[WARNING] Some health checks FAILED. Review report for details.")
             return 1
+        elif not install_complete:
+            print(f"\n[INCOMPLETE] Installation in progress: {steps_done}/{steps_total} steps complete.")
+            if missing_steps:
+                print(f"             Missing: {', '.join(missing_steps)}")
+            print(f"             Run ./cluster_health_check.py -i to see remaining steps.")
+            return 2
         elif has_skipped:
             print("\n[INFO] Some checks were skipped (commands not available).")
             return 0
         else:
-            print("\n[OK] All health checks passed!")
+            print("\n[OK] All health checks passed! Cluster is fully configured.")
             return 0
 
     def _print_next_steps(self, results: dict):
