@@ -374,6 +374,42 @@ class AccessDiscovery:
         print(f"Found {len(sosreports)} SOSreports")
         return sosreports
 
+    def scan_sosreports_recursive(self, base_dir: str = ".") -> Dict[str, str]:
+        """
+        Recursively scan base_dir and subdirectories for SOSreport directories.
+        Returns dict mapping hostname -> sosreport_path.
+        """
+        sosreports = {}
+        base_path = Path(base_dir).resolve()
+
+        # Walk through all subdirectories
+        for root, dirs, files in os.walk(base_path):
+            # Skip hidden directories and common non-sosreport dirs
+            dirs[:] = [d for d in dirs if not d.startswith('.') and d not in ['__pycache__', 'venv', '.git']]
+
+            for d in dirs:
+                if d.startswith('sosreport-'):
+                    dir_path = os.path.join(root, d)
+                    # Extract hostname from directory name
+                    parts = d.split('-')
+                    if len(parts) >= 2:
+                        hostname = parts[1]
+                        if hostname not in sosreports:
+                            sosreports[hostname] = dir_path
+
+                    # Also try reading etc/hostname for accurate hostname
+                    hostname_file = os.path.join(dir_path, 'etc/hostname')
+                    if os.path.exists(hostname_file):
+                        try:
+                            with open(hostname_file, 'r') as f:
+                                hostname = f.read().strip().split('.')[0]
+                            if hostname and hostname not in sosreports:
+                                sosreports[hostname] = dir_path
+                        except Exception:
+                            pass
+
+        return sosreports
+
     def get_cluster_name_from_sosreport(self, sosreport_path: str) -> Optional[str]:
         """Extract cluster name from a sosreport's corosync.conf or pcs status output."""
         sos_path = Path(sosreport_path)
@@ -1079,6 +1115,17 @@ class AccessDiscovery:
                           f"-> {node.preferred_method or 'none'}")
                 except Exception as e:
                     print(f"  {hostname}: Error - {e}")
+
+        # Scan for SOSreports in subdirectories and update nodes without sosreport_path
+        local_sosreports = self.scan_sosreports_recursive(str(self.config_dir))
+        if local_sosreports:
+            updated_count = 0
+            for hostname, node_info in self.config.nodes.items():
+                if not node_info.get('sosreport_path') and hostname in local_sosreports:
+                    node_info['sosreport_path'] = local_sosreports[hostname]
+                    updated_count += 1
+            if updated_count > 0:
+                print(f"\n  [INFO] Found {updated_count} matching SOSreport(s) in subdirectories")
 
         self.config.discovery_complete = True
         self.save_config()
