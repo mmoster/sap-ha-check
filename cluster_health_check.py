@@ -3796,12 +3796,21 @@ Examples:
                         # Calculate summary
                         from collections import Counter
                         status_counts = Counter(r.status.value for r in health_check.check_results)
+
+                        # Count critical and warning failures
+                        critical_failures = [r for r in health_check.check_results
+                                           if r.status == CheckStatus.FAILED and r.severity == Severity.CRITICAL]
+                        warnings = [r for r in health_check.check_results
+                                  if r.status == CheckStatus.FAILED and r.severity == Severity.WARNING]
+
                         summary = {
                             'total': len(health_check.check_results),
-                            'passed': status_counts.get('passed', 0),
-                            'failed': status_counts.get('failed', 0),
-                            'skipped': status_counts.get('skipped', 0),
-                            'error': status_counts.get('error', 0),
+                            'passed': status_counts.get('PASSED', 0),
+                            'failed': status_counts.get('FAILED', 0),
+                            'skipped': status_counts.get('SKIPPED', 0),
+                            'error': status_counts.get('ERROR', 0),
+                            'critical_count': len(critical_failures),
+                            'warning_count': len(warnings),
                         }
 
                         generate_health_check_report(results_dict, summary, cluster_info, str(pdf_file))
