@@ -3820,7 +3820,13 @@ Examples:
                             'warning_count': len(warnings),
                         }
 
-                        generate_health_check_report(results_dict, summary, cluster_info, str(pdf_file))
+                        # Get installation status
+                        try:
+                            install_status = health_check.check_install_status()
+                        except Exception:
+                            install_status = None
+
+                        generate_health_check_report(results_dict, summary, cluster_info, str(pdf_file), install_status)
                         print(f"\n  PDF report saved: {pdf_file}")
                         print("  Goodbye!")
                         break

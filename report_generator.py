@@ -291,6 +291,16 @@ def generate_health_check_report(
             missing_steps.append("cluster")
 
     # Determine overall status considering both checks and installation
+    status_descriptions = {
+        "CRITICAL - INCOMPLETE": "Critical issues found and installation incomplete",
+        "FAILED - INCOMPLETE": "Failed checks and installation incomplete",
+        "CRITICAL": "Critical issues found, installation complete",
+        "NEEDS ATTENTION": "Failed checks found, installation complete",
+        "INCOMPLETE": "No failures, but installation incomplete",
+        "WARNING": "Warnings only, no critical issues",
+        "HEALTHY": "All checks passed, cluster fully configured",
+    }
+
     if critical > 0 and not install_complete:
         overall_status = "CRITICAL - INCOMPLETE"
     elif critical > 0:
@@ -310,7 +320,13 @@ def generate_health_check_report(
     pdf.set_font('Helvetica', 'B', 12)
     pdf.cell(40, 8, "Overall Status: ")
     pdf.status_badge(overall_status)
-    pdf.ln(10)
+    pdf.ln(6)
+    # Add status description in smaller font
+    pdf.set_font('Helvetica', 'I', 9)
+    pdf.set_text_color(*RedHatColors.GRAY)
+    pdf.cell(0, 5, status_descriptions.get(overall_status, ""), ln=True)
+    pdf.set_text_color(*RedHatColors.BLACK)
+    pdf.ln(4)
 
     pdf.info_table({
         "Cluster Name": cluster_name,
