@@ -104,6 +104,8 @@ class HealthCheckPDF(FPDF):
             'ERROR': RedHatColors.RED,
             'OK': RedHatColors.GREEN,
             'CRITICAL': RedHatColors.RED,
+            'CRITICAL - INCOMPLETE': RedHatColors.RED,
+            'FAILED - INCOMPLETE': RedHatColors.ORANGE,
             'INCOMPLETE': RedHatColors.ORANGE,
             'NEEDS ATTENTION': RedHatColors.YELLOW,
             'HEALTHY': RedHatColors.GREEN,
@@ -289,10 +291,12 @@ def generate_health_check_report(
             missing_steps.append("cluster")
 
     # Determine overall status considering both checks and installation
-    if critical > 0:
+    if critical > 0 and not install_complete:
+        overall_status = "CRITICAL - INCOMPLETE"
+    elif critical > 0:
         overall_status = "CRITICAL"
     elif failed > 0 and not install_complete:
-        overall_status = "INCOMPLETE"
+        overall_status = "FAILED - INCOMPLETE"
     elif failed > 0:
         overall_status = "NEEDS ATTENTION"
     elif not install_complete:
