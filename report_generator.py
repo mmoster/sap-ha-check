@@ -27,6 +27,7 @@ class RedHatColors:
     WHITE = (255, 255, 255)
     GREEN = (63, 156, 53)       # Success green
     YELLOW = (236, 178, 0)      # Warning yellow
+    ORANGE = (255, 140, 0)      # Incomplete/in-progress orange
     BLUE = (0, 102, 204)        # Link blue
 
 
@@ -103,6 +104,9 @@ class HealthCheckPDF(FPDF):
             'ERROR': RedHatColors.RED,
             'OK': RedHatColors.GREEN,
             'CRITICAL': RedHatColors.RED,
+            'INCOMPLETE': RedHatColors.ORANGE,
+            'NEEDS ATTENTION': RedHatColors.YELLOW,
+            'HEALTHY': RedHatColors.GREEN,
         }
 
         color = colors.get(status.upper(), RedHatColors.GRAY)
@@ -259,10 +263,40 @@ def generate_health_check_report(
     warnings = summary.get('warning_count', 0)
     critical = summary.get('critical_count', 0)
 
+    # Check installation completeness
+    install_complete = True
+    steps_done = 0
+    steps_total = 7
+    missing_steps = []
+    if install_status:
+        steps_done = sum(1 for v in [
+            install_status.get('subscription_registered'),
+            install_status.get('repos_enabled'),
+            install_status.get('packages_installed'),
+            install_status.get('pcsd_running'),
+            install_status.get('cluster_configured'),
+            install_status.get('stonith_configured'),
+            install_status.get('hana_resources')
+        ] if v)
+        install_complete = (steps_done >= steps_total)
+
+        # Build list of missing steps
+        if not install_status.get('stonith_configured'):
+            missing_steps.append("stonith")
+        if not install_status.get('hana_resources'):
+            missing_steps.append("hana_resources")
+        if not install_status.get('cluster_configured'):
+            missing_steps.append("cluster")
+
+    # Determine overall status considering both checks and installation
     if critical > 0:
         overall_status = "CRITICAL"
+    elif failed > 0 and not install_complete:
+        overall_status = "INCOMPLETE"
     elif failed > 0:
         overall_status = "NEEDS ATTENTION"
+    elif not install_complete:
+        overall_status = "INCOMPLETE"
     elif warnings > 0:
         overall_status = "WARNING"
     else:

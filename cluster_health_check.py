@@ -1305,6 +1305,12 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                     for r in self.check_results
                 ]
 
+                # Get installation status for PDF
+                try:
+                    install_status = self.check_install_status()
+                except Exception:
+                    install_status = None
+
                 # PDF filename format: YYYYMMDD_health_check_report_clustername_HHMM.pdf
                 pdf_timestamp = datetime.now().strftime('%Y%m%d')
                 pdf_time = datetime.now().strftime('%H%M')
@@ -1313,7 +1319,8 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                     results_dict,
                     report_data['summary'],
                     cluster_info,
-                    str(pdf_file)
+                    str(pdf_file),
+                    install_status
                 )
                 print(f"  PDF report: {pdf_file}")
             except ImportError:
