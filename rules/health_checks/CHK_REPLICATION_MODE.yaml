@@ -1,8 +1,18 @@
 # CHK_REPLICATION_MODE - Verify replication mode is synchronous
+#
+# Allowed modes for HA clusters:
+#   - sync: Most secure. Primary waits until secondary has persisted log data to disk.
+#           Zero data loss guaranteed, but higher latency.
+#   - syncmem: Faster. Primary waits until secondary has received log data in memory.
+#              Very low risk of data loss, better performance than sync.
+#
+# Not allowed:
+#   - async: Data loss possible on failover. Not supported for HA clusters.
+#
 check_id: CHK_REPLICATION_MODE
-version: "1.0"
+version: "1.1"
 severity: WARNING
-description: Verify HANA replication mode is sync or syncmem
+description: Verify HANA replication mode is sync or syncmem (async not allowed for HA)
 enabled: true
 
 source_definitions:
@@ -14,16 +24,24 @@ parser:
   multiline: true
   search_patterns:
     - name: sync_mode
-      regex: "(sync|syncmem)"
+      regex: "\\bsync\\b"
+      group: 0
+    - name: syncmem_mode
+      regex: "\\bsyncmem\\b"
       group: 0
     - name: async_mode
-      regex: "(async)"
+      regex: "\\basync\\b"
       group: 0
 
 validation_logic:
   scope: cluster  # SR mode is cluster-wide
+  match_mode: all
   expectations:
     - key: async_mode
       operator: not_exists
       value: true
-      message: "Replication mode is async - data loss possible on failover"
+      severity: CRITICAL
+      message: "Replication mode is ASYNC - NOT SUPPORTED for HA! Data loss possible on failover. Use sync or syncmem instead."
+    - key: syncmem_mode
+      operator: info_if_exists
+      pass_message: "Replication mode is syncmem (faster). Primary waits until secondary receives log data in memory. For maximum security, consider sync mode where primary waits until secondary persists to disk."

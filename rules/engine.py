@@ -344,14 +344,27 @@ class RulesEngine:
             node=node
         )
 
-    def _evaluate_expectation(self, parsed: Dict, expectation: Dict) -> Tuple[bool, str]:
-        """Evaluate a single expectation against parsed data."""
+    def _evaluate_expectation(self, parsed: Dict, expectation: Dict) -> Tuple[bool, str, str]:
+        """Evaluate a single expectation against parsed data.
+
+        Returns: (passed, fail_message, pass_message)
+
+        Special operators:
+        - info_if_exists: Always passes, but shows pass_message if key exists (informational)
+        """
         key = expectation.get('key')
         operator = expectation.get('operator')
         expected = expectation.get('value')
         message = expectation.get('message', f"Check failed for {key}")
+        pass_message = expectation.get('pass_message')  # Optional message shown when expectation passes
 
         actual = parsed.get(key)
+
+        # Handle info_if_exists: always passes, shows message if key exists
+        if operator == 'info_if_exists':
+            if actual is not None and pass_message:
+                return True, message, pass_message
+            return True, message, None
 
         if operator == 'exists':
             # 'exists' checks if the key has a non-None value
@@ -389,7 +402,7 @@ class RulesEngine:
             passed = False
             message = f"Unknown operator: {operator}"
 
-        return passed, message
+        return passed, message, pass_message if passed else None
 
     def _check_command_available(self, cmd: str, node: str, method: str, user: str = None) -> tuple:
         """
@@ -486,8 +499,9 @@ class RulesEngine:
 
         failed_expectations = []
         passed_expectations = []
+        info_messages = []  # Collect informational messages from passing expectations
         for exp in expectations:
-            passed, message = self._evaluate_expectation(parsed, exp)
+            passed, message, pass_msg = self._evaluate_expectation(parsed, exp)
             if not passed:
                 failed_expectations.append({
                     'key': exp.get('key'),
@@ -496,6 +510,8 @@ class RulesEngine:
                 })
             else:
                 passed_expectations.append(exp)
+                if pass_msg:
+                    info_messages.append(pass_msg)
 
         # match_mode: any - pass if at least one expectation passes
         # match_mode: all (default) - fail if any expectation fails
@@ -531,13 +547,18 @@ class RulesEngine:
                 node=node
             )
 
+        # Build result message - include info messages if any
+        result_message = "All checks passed"
+        if info_messages:
+            result_message = "; ".join(info_messages)
+
         return CheckResult(
             check_id=rule.check_id,
             description=rule.description,
             status=CheckStatus.PASSED,
             severity=Severity[rule.severity],
-            message="All checks passed",
-            details={'parsed': parsed},
+            message=result_message,
+            details={'parsed': parsed, 'info_messages': info_messages},
             node=node
         )
 
