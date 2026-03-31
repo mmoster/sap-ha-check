@@ -16,7 +16,7 @@ description: Verify HANA replication mode is sync or syncmem (async not allowed 
 enabled: true
 
 source_definitions:
-  live_cmd: "crm_mon -A1 2>/dev/null | grep -iE 'sync|async|srmode' || timeout 10 SAPHanaSR-showAttr 2>/dev/null | grep -iE 'srmode|op_mode'"
+  live_cmd: "SAPHanaSR-showAttr 2>/dev/null | grep -iE 'syncmem|sync|async' || crm_mon -A1 2>/dev/null | grep -iE 'syncmem|sync|async'"
   sos_path: "sos_commands/sap/SAPHanaSR-showAttr"
 
 parser:
