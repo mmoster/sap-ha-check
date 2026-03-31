@@ -7,7 +7,7 @@ enabled: true
 optional: true  # Fencing optional in non-strict mode (lab/test environments)
 
 source_definitions:
-  live_cmd: "pcs property show stonith-enabled 2>/dev/null; echo '---'; pcs status 2>/dev/null | grep -iE 'stonith|fence'"
+  live_cmd: "pcs property 2>/dev/null | grep -E 'stonith|cluster-name'; echo '---'; pcs status 2>/dev/null | grep -iE 'stonith|fence' || true"
   sos_path: "sos_commands/pacemaker/crm_mon_-1"
 
 parser:
@@ -15,10 +15,10 @@ parser:
   multiline: true
   search_patterns:
     - name: stonith_enabled
-      regex: "stonith-enabled:\\s*true"
+      regex: "stonith-enabled[=:]\\s*true"
       group: 0
     - name: stonith_disabled
-      regex: "stonith-enabled:\\s*false"
+      regex: "stonith-enabled[=:]\\s*false"
       group: 0
     - name: stonith_resource
       regex: "(stonith:|fence_)"
@@ -33,7 +33,8 @@ validation_logic:
     - key: stonith_disabled
       operator: not_exists
       value: true
-      message: "STONITH is disabled - split-brain protection not active"
+      severity: WARNING
+      message: "STONITH is disabled (stonith-enabled=false) - FOR TESTING ONLY, NOT FOR PRODUCTION! Split-brain protection is not active."
     - key: stonith_resource
       operator: exists
       value: true
