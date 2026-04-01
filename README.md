@@ -73,6 +73,26 @@ Requirements:
 - For live checks: SSH access or Ansible configured
 - For offline analysis: SOSreport directories
 
+## Running on a Cluster Node
+
+If you are logged into one of your SAP HANA cluster nodes, you can run the health check directly:
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/mmoster/sap_hana_healthcheck.git
+cd sap_hana_healthcheck
+
+# 2. Run locally on this node
+./cluster_health_check.py --local
+
+# Or use interactive mode (auto-detects local cluster)
+./cluster_health_check.py -u
+```
+
+The `--local` flag executes all commands directly on the current node without SSH. This is the simplest way to check your cluster health when you have direct access to a cluster node.
+
+**Note**: Running locally will discover other cluster nodes from the Pacemaker configuration and attempt to check them via SSH. If you only want to check the current node, the tool will still provide valuable insights about cluster-wide status from the local node's perspective.
+
 ## Specifying Target Nodes
 
 **Important**: By default, the tool auto-discovers hosts from Ansible inventory. On an Ansible master server with hundreds of hosts, this may include many systems that are not part of your SAP cluster. You should explicitly specify your target nodes using one of the methods below.
