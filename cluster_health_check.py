@@ -2767,6 +2767,7 @@ USAGE EXAMPLES
             print("Options:")
             print("  [1-N]       Select a cluster by number")
             print("  [a]         Continue with all nodes")
+            print("  [l]         Run in local mode (on this cluster node)")
             print("  [nodes]     Enter different node names (space-separated)")
             print("  [d]         Delete reports and start fresh")
             print("  [q]         Quit")
@@ -2788,6 +2789,9 @@ USAGE EXAMPLES
                     print(f"Deleted: {config_path}")
                 print("Configuration deleted. Run again to start fresh.")
                 return None, False
+
+            if response == 'l':
+                return ['local'], True
 
             if response == 'a' or response == '':
                 return existing_nodes, True
@@ -2823,6 +2827,7 @@ USAGE EXAMPLES
             print()
             print("Options:")
             print("  [Enter]     Continue with these nodes")
+            print("  [l]         Run in local mode (on this cluster node)")
             print("  [nodes]     Enter different node names (space-separated)")
             print("  [d]         Delete reports and start fresh")
             print("  [q]         Quit")
@@ -3400,6 +3405,13 @@ Examples:
         help='Generate PDF report (default: enabled, this flag is kept for compatibility)'
     )
 
+    # No-PDF option to skip PDF generation
+    parser.add_argument(
+        '--no-pdf',
+        action='store_true',
+        help='Skip PDF report generation (useful if fpdf2 is not installed)'
+    )
+
     # Local mode option
     parser.add_argument(
         '--local', '-l',
@@ -3662,6 +3674,7 @@ Examples:
 
     # Create health check instance
     # PDF generation is enabled by default, can be disabled with --no-pdf
+    generate_pdf = not args.no_pdf
     health_check = ClusterHealthCheck(
         config_dir=str(config_dir),
         sosreport_dir=args.sosreport_dir,
@@ -3673,7 +3686,7 @@ Examples:
         cluster_name=args.cluster,
         local_mode=local_mode,
         strict_mode=args.strict,
-        generate_pdf=True  # Always generate PDF
+        generate_pdf=generate_pdf
     )
 
     def cleanup_temp_file():

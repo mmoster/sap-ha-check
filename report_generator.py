@@ -10,11 +10,18 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 
+# fpdf2 is optional - PDF generation will be skipped if not available
+FPDF_AVAILABLE = False
 try:
     from fpdf import FPDF
+    FPDF_AVAILABLE = True
 except ImportError:
-    print("Error: fpdf2 is required. Install with: pip install fpdf2")
-    sys.exit(1)
+    FPDF = None  # Will be checked before use
+
+
+def is_pdf_available() -> bool:
+    """Check if PDF generation is available (fpdf2 installed)."""
+    return FPDF_AVAILABLE
 
 
 class RedHatColors:
@@ -245,7 +252,13 @@ def generate_health_check_report(
 
     Returns:
         Path to generated PDF file
+
+    Raises:
+        ImportError: If fpdf2 is not installed
     """
+    if not FPDF_AVAILABLE:
+        raise ImportError("PDF generation requires fpdf2. Install with: pip install fpdf2")
+
     cluster_name = cluster_info.get('cluster_name', 'Unknown Cluster')
     nodes = cluster_info.get('nodes', [])
 

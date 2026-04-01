@@ -70,8 +70,11 @@ cd sap_hana_healthcheck
 Requirements:
 - Python 3.6+ (tested with 3.6, 3.8, 3.14)
 - PyYAML (`pip install pyyaml`)
+- fpdf2 (optional, for PDF reports): `pip install fpdf2`
 - For live checks: SSH access or Ansible configured
 - For offline analysis: SOSreport directories
+
+**Note**: PDF report generation requires fpdf2. If not installed, health checks will still run and generate YAML reports. Use `--no-pdf` to skip PDF generation explicitly.
 
 ## Running on a Cluster Node
 
