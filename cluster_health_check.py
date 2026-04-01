@@ -1324,7 +1324,9 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                 )
                 print(f"  PDF report: {pdf_file}")
             except ImportError:
-                print("  [WARN] PDF generation requires fpdf2: pip install fpdf2")
+                print("  [WARN] PDF generation skipped - fpdf2 not installed")
+                print("         Install with: pip install fpdf2")
+                print("         Or run with --no-pdf to suppress this warning")
             except Exception as e:
                 print(f"  [WARN] PDF generation failed: {e}")
 
@@ -3845,7 +3847,9 @@ Examples:
                         break
 
                     except ImportError:
-                        print("\n  [ERROR] PDF generation requires fpdf2: pip install fpdf2")
+                        print("\n  [ERROR] PDF generation requires fpdf2")
+                        print("         Install with: pip install fpdf2")
+                        print("         Or run with --no-pdf to skip PDF generation")
                     except (EOFError, KeyboardInterrupt):
                         print("\n  Cancelled.")
                     except Exception as e:
