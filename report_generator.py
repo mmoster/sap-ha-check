@@ -16,7 +16,11 @@ try:
     from fpdf import FPDF
     FPDF_AVAILABLE = True
 except ImportError:
-    FPDF = None  # Will be checked before use
+    # Create a dummy base class so the module can be imported
+    class FPDF:
+        """Dummy FPDF class when fpdf2 is not installed."""
+        def __init__(self, *args, **kwargs):
+            raise ImportError("PDF generation requires fpdf2. Install with: pip install fpdf2")
 
 
 def is_pdf_available() -> bool:
