@@ -3797,7 +3797,13 @@ Examples:
                 skip_steps=args.skip
             )
 
-            # Interactive menu loop
+            # If cluster is healthy (exit_code == 0), exit directly
+            if exit_code == 0:
+                print("\n  Goodbye!")
+                cleanup_temp_file()
+                sys.exit(0)
+
+            # Interactive menu loop (only shown when there are issues)
             while True:
                 choice = show_interactive_menu()
 
