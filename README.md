@@ -56,7 +56,7 @@ cp /path/to/sosreport-*.tar.xz .
 
 - **Multiple Access Methods**: SSH, Ansible inventory, or SOSreport analysis
 - **Multithreaded Execution**: Parallel node connectivity checks and rule execution
-- **19 Built-in Health Checks**: Covering cluster configuration, Pacemaker/Corosync, and SAP-specific validations
+- **20 Built-in Health Checks**: Covering cluster configuration, Pacemaker/Corosync, and SAP-specific validations
 - **Incremental Investigation**: YAML-based configuration persists between runs
 - **Detailed Reporting**: YAML reports with timestamps for audit trails
 
@@ -296,11 +296,12 @@ Options:
 | 4. SAP-Specific | HANA SR status, replication mode, HA/DR hooks, systemd |
 | 5. Report Generation | Summary and detailed YAML report |
 
-## Included Health Checks (19 Rules)
+## Included Health Checks (20 Rules)
 
 ### Cluster Configuration
 | Check ID | Severity | Description |
 |----------|----------|-------------|
+| CHK_CLUSTER_READY | WARNING | Check if cluster is fully started (not in transition) |
 | CHK_NODE_STATUS | CRITICAL | Verify all cluster nodes are online |
 | CHK_CLUSTER_QUORUM | CRITICAL | Verify cluster has quorum |
 | CHK_QUORUM_CONFIG | CRITICAL | Validate quorum configuration |

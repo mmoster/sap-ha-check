@@ -1,0 +1,92 @@
+# CHK_CLUSTER_READY - Check if cluster is fully started and stable
+#
+# This check detects if the cluster is still in a starting/transition state.
+# If detected, other health checks may report incorrect results.
+#
+# Indicators of a starting cluster:
+#   - Pacemaker service started recently (< 5 minutes)
+#   - Resources in transition states (Starting/Stopping/Pending)
+#   - No Designated Controller (DC) established
+#   - Nodes still joining the cluster
+#
+check_id: CHK_CLUSTER_READY
+version: "1.0"
+severity: WARNING
+description: Check if cluster is fully started and stable (not in transition)
+enabled: true
+
+source_definitions:
+  live_cmd: |
+    echo "=== PACEMAKER_AGE ==="
+    if command -v systemctl >/dev/null 2>&1; then
+      # Get pacemaker start time in seconds since epoch
+      START_TIME=$(systemctl show pacemaker --property=ActiveEnterTimestampMonotonic 2>/dev/null | cut -d= -f2)
+      UPTIME_US=$(cat /proc/uptime 2>/dev/null | awk '{print int($1 * 1000000)}')
+      if [ -n "$START_TIME" ] && [ -n "$UPTIME_US" ] && [ "$START_TIME" -gt 0 ]; then
+        # Calculate seconds since pacemaker started
+        AGE_US=$((UPTIME_US - START_TIME))
+        AGE_SEC=$((AGE_US / 1000000))
+        echo "pacemaker_age_seconds=$AGE_SEC"
+      else
+        echo "pacemaker_age_seconds=unknown"
+      fi
+    else
+      echo "pacemaker_age_seconds=unknown"
+    fi
+    echo "=== CLUSTER_STATUS ==="
+    crm_mon -1 2>/dev/null || pcs status 2>/dev/null
+    echo "=== TRANSITIONS ==="
+    crm_mon -1 2>/dev/null | grep -iE 'Starting|Stopping|Pending|PENDING|unmanaged' || echo "no_transitions"
+  sos_path: "sos_commands/pacemaker/crm_mon_-1"
+
+parser:
+  type: regex
+  multiline: true
+  search_patterns:
+    - name: pacemaker_age
+      regex: "pacemaker_age_seconds=(\\d+)"
+      group: 1
+    - name: has_dc
+      regex: "Current DC:\\s*(\\S+)"
+      group: 1
+    - name: no_dc
+      regex: "(No DC|OFFLINE|no quorum)"
+      group: 0
+    - name: resources_starting
+      regex: "(Starting|Pending|PENDING)"
+      group: 0
+    - name: resources_stopping
+      regex: "(Stopping)"
+      group: 0
+    - name: unmanaged_resources
+      regex: "(unmanaged)"
+      group: 0
+    - name: no_transitions
+      regex: "no_transitions"
+      group: 0
+
+validation_logic:
+  scope: cluster
+  match_mode: all
+  expectations:
+    - key: no_dc
+      operator: not_exists
+      severity: CRITICAL
+      message: "Cluster has no DC (Designated Controller) - cluster may still be forming. Wait for cluster to fully start and re-run the health check."
+    - key: pacemaker_age
+      operator: gt
+      value: 300
+      severity: WARNING
+      message: "Pacemaker started less than 5 minutes ago - cluster may still be stabilizing. Consider waiting a few minutes and re-running the health check for accurate results."
+    - key: resources_starting
+      operator: not_exists
+      severity: WARNING
+      message: "Resources are still starting - cluster not fully ready. Wait a few minutes and re-run the health check for accurate results."
+    - key: resources_stopping
+      operator: not_exists
+      severity: WARNING
+      message: "Resources are stopping - cluster in transition. Wait for operations to complete and re-run the health check."
+    - key: unmanaged_resources
+      operator: not_exists
+      severity: WARNING
+      message: "Unmanaged resources detected - some resources may not be under cluster control."
