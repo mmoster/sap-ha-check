@@ -3479,6 +3479,13 @@ Examples:
         help='Skip PDF report generation (useful if fpdf2 is not installed)'
     )
 
+    # No-update-check option
+    parser.add_argument(
+        '--no-update-check',
+        action='store_true',
+        help='Skip checking for software updates'
+    )
+
     # Local mode option
     parser.add_argument(
         '--local', '-l',
@@ -3530,6 +3537,84 @@ Examples:
     )
 
     args = parser.parse_args()
+
+    # Check for software updates
+    def check_for_updates():
+        """Check if a newer version is available via git and offer to update."""
+        try:
+            import subprocess
+
+            # Check if we're in a git repository
+            result = subprocess.run(
+                ['git', 'rev-parse', '--git-dir'],
+                cwd=SCRIPT_DIR,
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode != 0:
+                return  # Not a git repo
+
+            # Fetch latest from remote (quietly)
+            subprocess.run(
+                ['git', 'fetch', '--quiet'],
+                cwd=SCRIPT_DIR,
+                capture_output=True,
+                timeout=30
+            )
+
+            # Get local and remote HEAD
+            local_head = subprocess.run(
+                ['git', 'rev-parse', 'HEAD'],
+                cwd=SCRIPT_DIR,
+                capture_output=True,
+                text=True,
+                timeout=5
+            ).stdout.strip()
+
+            remote_head = subprocess.run(
+                ['git', 'rev-parse', '@{u}'],
+                cwd=SCRIPT_DIR,
+                capture_output=True,
+                text=True,
+                timeout=5
+            ).stdout.strip()
+
+            if local_head != remote_head:
+                # Check how many commits behind
+                behind_count = subprocess.run(
+                    ['git', 'rev-list', '--count', f'{local_head}..{remote_head}'],
+                    cwd=SCRIPT_DIR,
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                ).stdout.strip()
+
+                print(f"\n[INFO] A newer version is available ({behind_count} commit(s) behind)")
+                try:
+                    response = input("  Update to latest version? [y/N]: ").strip().lower()
+                    if response == 'y' or response == 'yes':
+                        print("  Updating...")
+                        result = subprocess.run(
+                            ['git', 'pull'],
+                            cwd=SCRIPT_DIR,
+                            capture_output=True,
+                            text=True,
+                            timeout=60
+                        )
+                        if result.returncode == 0:
+                            print("  Updated successfully. Please restart the health check.")
+                            sys.exit(0)
+                        else:
+                            print(f"  [WARN] Update failed: {result.stderr.strip()}")
+                except (EOFError, KeyboardInterrupt):
+                    print("\n  Skipping update.")
+        except Exception:
+            pass  # Silently ignore any errors in update check
+
+    # Check for updates (skip if running non-interactively or with certain flags)
+    if sys.stdin.isatty() and not any([args.show_config, args.list_rules, args.guide, args.install, args.no_update_check]):
+        check_for_updates()
 
     # Handle usage/scan action (-u)
     if args.usage:
