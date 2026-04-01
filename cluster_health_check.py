@@ -1544,7 +1544,10 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                     except Exception as e:
                         print(f"\n  [WARN] PDF generation failed: {e}")
 
-        # Show all steps with status and results
+                # Cluster is healthy - exit early without showing extra output
+                return True
+
+        # Show all steps with status and results (only when there are issues)
         print("\nSteps completed:")
         step_names = {
             'access': 'Access Discovery',
