@@ -977,13 +977,39 @@ class AccessDiscovery:
                         }
 
                 if sosreports:
-                    print(f"\n[INFO] SOSreport mode: analyzing {len(sosreports)} nodes")
-                    # Clear old nodes - only analyze SOSreport nodes
+                    print(f"\n[INFO] SOSreport mode: {len(sosreports)} SOSreport(s) found")
+
+                    # Extract all expected cluster nodes from corosync.conf
+                    expected_nodes = set()
+                    for hostname, sos_path in sosreports.items():
+                        nodes_in_cluster = self.get_cluster_nodes_from_sosreport(sos_path)
+                        if nodes_in_cluster:
+                            expected_nodes.update(nodes_in_cluster)
+
+                    # Add the SOSreport hostnames too (in case extraction failed)
+                    expected_nodes.update(sosreports.keys())
+
+                    # Find nodes we don't have SOSreports for
+                    missing_sosreports = expected_nodes - set(sosreports.keys())
+
+                    if missing_sosreports:
+                        print(f"\n[INFO] Cluster has {len(expected_nodes)} nodes, but only {len(sosreports)} SOSreport(s)")
+                        print(f"       Missing SOSreports for: {', '.join(sorted(missing_sosreports))}")
+                        print(f"       Attempting SSH access to get live data...")
+
+                    # Clear old nodes
                     self.config.nodes = {}
+
+                    # Add nodes with SOSreports
                     for hostname, path in sosreports.items():
                         all_hosts[hostname] = {'ansible_info': None, 'sosreport_path': path}
-                    # Skip all other discovery - go straight to access check (parallel)
-                    print(f"\n=== Checking access to {len(all_hosts)} SOSreport nodes ===")
+
+                    # Add nodes without SOSreports (will try SSH)
+                    for hostname in missing_sosreports:
+                        all_hosts[hostname] = {'ansible_info': None, 'sosreport_path': None}
+
+                    # Check access to all nodes (parallel)
+                    print(f"\n=== Checking access to {len(all_hosts)} cluster node(s) ===")
                     with ThreadPoolExecutor(max_workers=min(len(all_hosts), self.MAX_WORKERS)) as executor:
                         futures = {
                             executor.submit(self.check_node_access, hostname, None, info.get('sosreport_path')): hostname
@@ -994,9 +1020,17 @@ class AccessDiscovery:
                             try:
                                 node = future.result()
                                 self.config.nodes[hostname] = asdict(node)
-                                print(f"  {hostname}: SOSreport -> {node.preferred_method or 'none'}")
+                                if node.sosreport_path and node.ssh_reachable:
+                                    print(f"  {hostname}: SOSreport + SSH({node.ssh_user}) -> ssh (live)")
+                                elif node.sosreport_path:
+                                    print(f"  {hostname}: SOSreport -> sosreport")
+                                elif node.ssh_reachable:
+                                    print(f"  {hostname}: SSH({node.ssh_user}) -> ssh (live)")
+                                else:
+                                    print(f"  {hostname}: NO ACCESS")
                             except Exception as e:
                                 print(f"  {hostname}: Error - {e}")
+
                     self.config.sosreport_directory = self.sosreport_dir
                     self.config.discovery_complete = True
                     self.save_config()
