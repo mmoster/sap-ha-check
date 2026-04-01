@@ -1545,7 +1545,7 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                         print(f"\n  [WARN] PDF generation failed: {e}")
 
                 # Cluster is healthy - exit early without showing extra output
-                return True
+                return 0
 
         # Show all steps with status and results (only when there are issues)
         print("\nSteps completed:")
