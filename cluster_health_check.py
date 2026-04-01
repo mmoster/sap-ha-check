@@ -1477,6 +1477,77 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                         print(f"  - {r.check_id}: {r.message[:50]}...")
                 print("-" * 63)
 
+            else:
+                # All checks passed - show healthy banner
+                print()
+                print("=" * 63)
+                print("  ╔═══════════════════════════════════════════════════════╗")
+                print("  ║                                                       ║")
+                print("  ║            ✓  CLUSTER IS HEALTHY  ✓                   ║")
+                print("  ║                                                       ║")
+                print("  ║     All health checks passed successfully.            ║")
+                print("  ║     Your SAP HANA cluster is properly configured.     ║")
+                print("  ║                                                       ║")
+                print("  ╚═══════════════════════════════════════════════════════╝")
+                print("=" * 63)
+
+                # Auto-generate PDF report on success
+                if self.generate_pdf:
+                    try:
+                        from report_generator import generate_health_check_report, is_pdf_available
+                        if is_pdf_available():
+                            # Get cluster name
+                            cluster_name = self.cluster_name or 'unknown'
+                            if self.access_config and hasattr(self.access_config, 'clusters'):
+                                clusters = self.access_config.clusters or {}
+                                if clusters:
+                                    cluster_name = list(clusters.keys())[0]
+                            cluster_name_safe = re.sub(r'[^\w\-]', '_', cluster_name)
+
+                            # Prepare report data
+                            cluster_info = {
+                                'cluster_name': cluster_name,
+                                'nodes': list(self.access_config.nodes.keys()) if self.access_config else [],
+                                'cluster_type': 'Scale-Up',
+                            }
+                            results_dict = [
+                                {
+                                    'check_id': r.check_id,
+                                    'node': r.node,
+                                    'status': r.status.value,
+                                    'severity': r.severity.value,
+                                    'message': r.message,
+                                    'description': r.description
+                                }
+                                for r in self.check_results
+                            ]
+                            summary = {
+                                'total': len(self.check_results),
+                                'passed': len(passed),
+                                'failed': 0,
+                                'skipped': len(skipped),
+                                'error': len(errors),
+                                'critical_count': 0,
+                                'warning_count': 0,
+                            }
+
+                            # Generate PDF with default name
+                            pdf_timestamp = datetime.now().strftime('%Y%m%d')
+                            pdf_time = datetime.now().strftime('%H%M')
+                            pdf_file = self.config_dir / f"{pdf_timestamp}_health_check_report_{cluster_name_safe}_{pdf_time}.pdf"
+
+                            try:
+                                install_status = self.check_install_status()
+                            except Exception:
+                                install_status = None
+
+                            generate_health_check_report(results_dict, summary, cluster_info, str(pdf_file), install_status)
+                            print(f"\n  PDF report saved: {pdf_file}")
+                    except ImportError:
+                        pass  # fpdf2 not installed, skip silently on success
+                    except Exception as e:
+                        print(f"\n  [WARN] PDF generation failed: {e}")
+
         # Show all steps with status and results
         print("\nSteps completed:")
         step_names = {
