@@ -78,7 +78,6 @@ class ClusterHealthCheck:
         Check installation status from a SOSreport directory.
         Returns dict with status of each installation step based on captured data.
         """
-        import re
         sos_path = Path(sosreport_path)
 
         status = {
@@ -413,7 +412,6 @@ class ClusterHealthCheck:
         )
         status['cluster_configured'] = success and 'Cluster' in output
         if success:
-            import re
             # Try to extract cluster name
             match = re.search(r'Cluster name:\s*(\S+)', output)
             if match:
@@ -448,7 +446,6 @@ class ClusterHealthCheck:
         if success:
             status['cluster_online'] = 'Online:' in output and output.strip() != ''
             # Extract online nodes - handles both "Online: [ node1 node2 ]" and "Online: node1 node2"
-            import re
             # Try bracket format first
             match = re.search(r'Online:\s*\[\s*(.*?)\s*\]', output)
             if match:
@@ -1445,7 +1442,6 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                     packages_missing = True
                 if "command '" in msg.lower() and "not found" in msg.lower():
                     # Extract command name
-                    import re
                     match = re.search(r"command '(\w+)'", msg.lower())
                     if match:
                         cmd = match.group(1)
@@ -1643,7 +1639,6 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                 if 'pacemaker package not found' in msg.lower() or 'corosync package not found' in msg.lower():
                     needs_install = True
                 elif "command '" in msg.lower() and "not found" in msg.lower():
-                    import re
                     match = re.search(r"command '(\w+)'", msg.lower())
                     if match and match.group(1) in essential_commands:
                         needs_install = True
@@ -1818,7 +1813,6 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                 if 'pacemaker package not found' in msg.lower() or 'corosync package not found' in msg.lower():
                     packages_missing = True
                 if "command '" in msg.lower() and "not found" in msg.lower():
-                    import re
                     match = re.search(r"command '(\w+)'", msg.lower())
                     if match and match.group(1) in essential_commands:
                         essential_cmd_missing = True
