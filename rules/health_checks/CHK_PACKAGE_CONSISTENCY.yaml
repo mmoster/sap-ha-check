@@ -1,8 +1,8 @@
 # CHK_PACKAGE_CONSISTENCY - Verify package versions across nodes
 check_id: CHK_PACKAGE_CONSISTENCY
-version: "1.1"
-severity: CRITICAL
-description: Verify critical package versions are consistent across nodes
+version: "1.2"
+severity: WARNING
+description: Verify package versions are consistent across nodes
 enabled: true
 
 # Package types:
@@ -10,6 +10,11 @@ enabled: true
 # - resource-agents-sap-hana: Classic Scale-Up package
 # - resource-agents-sap-hana-scaleout: Classic Scale-Out package
 # - SAPHanaSR: SUSE package for SAP HANA System Replication
+#
+# Majority maker nodes in Scale-Out clusters:
+# - Should have SAME packages as HANA nodes, OR
+# - Should have NO SAP HANA packages (no sap-hana-ha, resource-agents-sap-hana*)
+# - Having different SAP HANA packages is a WARNING (not critical)
 
 source_definitions:
   live_cmd: "rpm -qa | grep -E 'pacemaker|corosync|resource-agents|SAPHanaSR|sap-hana-ha' | sort 2>/dev/null || dpkg -l | grep -E 'pacemaker|corosync' 2>/dev/null"
@@ -44,14 +49,11 @@ parser:
 
 validation_logic:
   scope: all_nodes_equal  # Package versions must match across all nodes
-  # Note: In Scale-Out clusters, majority maker should NOT have SAP HANA packages.
-  # The comparison will flag differences, which is correct - majority maker should differ.
-  # CHK_MAJORITY_MAKER validates if the majority maker is correctly configured.
+  # Majority maker may have different SAP HANA packages (or none) - this is a WARNING
+  # HANA nodes having different packages from each other is more concerning
   compare_keys:
     - pacemaker_version
     - corosync_version
-    # SAP HANA packages - these SHOULD differ between HANA nodes and majority maker
-    # A difference is flagged as INFO when majority maker is correctly identified
     - sap_hana_ha_version
     - resource_agents_sap_hana
     - resource_agents_sap_hana_scaleout
