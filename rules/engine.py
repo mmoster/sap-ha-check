@@ -279,12 +279,19 @@ class RulesEngine:
         )
 
     def _detect_cluster_type(self, rule: RuleDefinition, parsed: Dict, node: str) -> CheckResult:
-        """Detect SAP HANA HA cluster configuration type."""
+        """Detect SAP HANA HA cluster configuration type.
+
+        Detection is based on resource agent type, NOT node count:
+        - SAPHanaController_* → Scale-Out (multi-node per site)
+        - SAPHana_* → Scale-Up (single HANA instance per site)
+
+        A Scale-Up cluster with majority maker has 3+ nodes but is still Scale-Up!
+        """
         # Extract parsed values
         node_count_str = parsed.get('node_count')
         node_list = parsed.get('node_list')
-        saphana_resource = parsed.get('saphana_resource')
-        saphana_controller = parsed.get('saphana_controller')
+        saphana_resource = parsed.get('saphana_resource')  # SAPHana_* = Scale-Up
+        saphana_controller = parsed.get('saphana_controller')  # SAPHanaController_* = Scale-Out
         majority_maker = parsed.get('majority_maker')
 
         # Count nodes
@@ -293,14 +300,16 @@ class RulesEngine:
         except (ValueError, TypeError):
             node_count = 0
 
-        # Count HANA instances (look for multiple SAPHana resources or SAPHanaController)
-        has_controller = saphana_controller is not None
+        # Detect based on resource agent type (the definitive indicator)
+        has_saphana = saphana_resource is not None  # Scale-Up uses SAPHana resource
+        has_controller = saphana_controller is not None  # Scale-Out uses SAPHanaController
         has_majority_maker = majority_maker is not None
 
         # Determine cluster type
         cluster_type = "Unknown"
         details = {
             'node_count': node_count,
+            'has_saphana_resource': has_saphana,
             'has_saphana_controller': has_controller,
             'has_majority_maker': has_majority_maker,
             'parsed': parsed
@@ -310,27 +319,28 @@ class RulesEngine:
             cluster_type = "Not detected"
             message = "Could not detect cluster configuration (cluster may not be running)"
         elif has_controller:
-            # SAPHanaController is used for Scale-Out
-            cluster_type = "Scale-Out"
-            if has_majority_maker:
-                message = f"Scale-Out configuration ({node_count} nodes with majority maker)"
-            else:
-                message = f"Scale-Out configuration ({node_count} nodes, SAPHanaController detected)"
-        elif node_count > 2:
-            # More than 2 nodes without controller - likely Scale-Out with majority maker
+            # SAPHanaController is the definitive indicator for Scale-Out
             cluster_type = "Scale-Out"
             if has_majority_maker:
                 message = f"Scale-Out configuration ({node_count} nodes with majority maker)"
             else:
                 message = f"Scale-Out configuration ({node_count} nodes)"
-        elif node_count == 2:
-            # 2 nodes - Scale-Up
+        elif has_saphana:
+            # SAPHana resource (not SAPHanaController) = Scale-Up
+            # This is true even with 3+ nodes (majority maker adds a node)
             cluster_type = "Scale-Up"
-            message = f"Scale-Up configuration (2 nodes, standard HA)"
-        else:
+            if has_majority_maker or node_count > 2:
+                message = f"Scale-Up configuration ({node_count} nodes with majority maker)"
+            else:
+                message = f"Scale-Up configuration ({node_count} nodes, standard HA)"
+        elif node_count == 1:
             # 1 node - single node (no HA)
             cluster_type = "Single Node"
             message = "Single node configuration (no HA)"
+        else:
+            # No HANA resources detected but cluster exists
+            cluster_type = "Unknown"
+            message = f"Cluster detected ({node_count} nodes) but no SAP HANA resources found"
 
         details['cluster_type'] = cluster_type
 

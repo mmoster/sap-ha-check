@@ -1,12 +1,18 @@
 # CHK_PACKAGE_CONSISTENCY - Verify package versions across nodes
 check_id: CHK_PACKAGE_CONSISTENCY
-version: "1.0"
+version: "1.1"
 severity: CRITICAL
 description: Verify critical package versions are consistent across nodes
 enabled: true
 
+# Package types:
+# - sap-hana-ha: Modern ANGI package (RHEL 9+), supports both Scale-Up and Scale-Out
+# - resource-agents-sap-hana: Classic Scale-Up package
+# - resource-agents-sap-hana-scaleout: Classic Scale-Out package
+# - SAPHanaSR: SUSE package for SAP HANA System Replication
+
 source_definitions:
-  live_cmd: "rpm -qa | grep -E 'pacemaker|corosync|resource-agents|SAPHanaSR' | sort 2>/dev/null || dpkg -l | grep -E 'pacemaker|corosync' 2>/dev/null"
+  live_cmd: "rpm -qa | grep -E 'pacemaker|corosync|resource-agents|SAPHanaSR|sap-hana-ha' | sort 2>/dev/null || dpkg -l | grep -E 'pacemaker|corosync' 2>/dev/null"
   sos_path: "sos_commands/rpm/package-data"
 
 parser:
@@ -19,6 +25,19 @@ parser:
     - name: corosync_version
       regex: "corosync-[\\d\\.-]+"
       group: 0
+    # Modern ANGI package (RHEL 9+, unified Scale-Up/Scale-Out)
+    - name: sap_hana_ha_version
+      regex: "sap-hana-ha-[\\d\\.-]+"
+      group: 0
+    # Classic Scale-Up package
+    - name: resource_agents_sap_hana
+      regex: "resource-agents-sap-hana-[\\d][\\d\\.-]+"
+      group: 0
+    # Classic Scale-Out package
+    - name: resource_agents_sap_hana_scaleout
+      regex: "resource-agents-sap-hana-scaleout-[\\d\\.-]+"
+      group: 0
+    # SUSE SAPHanaSR package
     - name: saphanasr_version
       regex: "SAPHanaSR[\\d\\.-]*"
       group: 0
@@ -28,6 +47,9 @@ validation_logic:
   compare_keys:
     - pacemaker_version
     - corosync_version
+    - sap_hana_ha_version
+    - resource_agents_sap_hana
+    - resource_agents_sap_hana_scaleout
     - saphanasr_version
   expectations:
     - key: pacemaker_version
