@@ -3606,8 +3606,9 @@ Examples:
                             timeout=60
                         )
                         if result.returncode == 0:
-                            print("  Updated successfully. Please restart the health check.")
-                            sys.exit(0)
+                            print("  Updated successfully. Restarting health check...\n")
+                            # Restart the script with the same arguments
+                            os.execv(sys.executable, [sys.executable] + sys.argv + ['--no-update-check'])
                         else:
                             print(f"  [WARN] Update failed: {result.stderr.strip()}")
                 except (EOFError, KeyboardInterrupt):
