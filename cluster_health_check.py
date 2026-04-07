@@ -46,10 +46,6 @@ from lib import (
     print_suggestions,
     interactive_startup,
     run_usage_scan,
-    print_usage_help,
-    scan_for_resources,
-    extract_sosreports_parallel,
-    check_for_updates,
 )
 
 
@@ -540,7 +536,7 @@ class ClusterHealthCheck:
             return
 
         if method == 'local':
-            print(f"  Checking: LOCAL execution (this machine)")
+            print("  Checking: LOCAL execution (this machine)")
         else:
             print(f"  Checking: {node} via {method.upper()} (user={user})")
         status = self.check_install_status(node, method, user)
@@ -578,9 +574,9 @@ class ClusterHealthCheck:
         if status['cluster_enabled']:
             print(f"    {status_icon(True)} Cluster enabled on boot")
         elif status['cluster_enabled'] is False:
-            print(f"    [~] Cluster enabled on boot (optional)")
+            print("    [~] Cluster enabled on boot (optional)")
         else:
-            print(f"    [?] Cluster enabled on boot (optional)")
+            print("    [?] Cluster enabled on boot (optional)")
         print(f"    {status_icon(status['cluster_online'])} All nodes online")
         if status['cluster_nodes']:
             print(f"        Online: {', '.join(status['cluster_nodes'])}")
@@ -1096,7 +1092,6 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
             self.check_results.extend(install_results)
 
             # Track which nodes have HANA (Scale-Out clusters may have majority makers without HANA)
-            nodes_checked = [r.node for r in install_results]
             nodes_with_hana = [r.node for r in install_results if r.status == CheckStatus.PASSED]
             nodes_without_hana = [r.node for r in install_results if r.status != CheckStatus.PASSED]
 
@@ -1358,7 +1353,7 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
         # Show what source is being used
         config_file = self.config_dir / AccessDiscovery.CONFIG_FILE
         if self.local_mode:
-            print(f"Mode: LOCAL (running on cluster node)")
+            print("Mode: LOCAL (running on cluster node)")
         elif self.sosreport_dir:
             print(f"Source: SOSreports from {self.sosreport_dir}")
         elif self.hosts_file:
@@ -1366,9 +1361,9 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
         elif self.cluster_name:
             print(f"Source: Saved cluster '{self.cluster_name}'")
         elif config_file.exists():
-            print(f"Source: Existing config (use -f to rediscover, -D to reset)")
+            print("Source: Existing config (use -f to rediscover, -D to reset)")
         else:
-            print(f"Source: Ansible inventory (auto-discovery)")
+            print("Source: Ansible inventory (auto-discovery)")
 
         print("-" * 63)
         print("To use different nodes:  ./cluster_health_check.py <node1> <node2>")
@@ -1440,7 +1435,7 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
             skipped = [r for r in all_results if hasattr(r, 'status') and str(r.status) == 'CheckStatus.SKIPPED']
             errors = [r for r in all_results if hasattr(r, 'status') and str(r.status) == 'CheckStatus.ERROR']
 
-            print(f"\nHealth Check Results:")
+            print("\nHealth Check Results:")
             print(f"  PASSED:  {len(passed):3d}  FAILED: {len(failed_checks):3d}  SKIPPED: {len(skipped):3d}  ERROR: {len(errors):3d}")
 
             # Check for installation issues
@@ -1609,9 +1604,12 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                     print(f"  [{passed}/{total}] {name}: PASSED")
                 else:
                     details = []
-                    if failed: details.append(f"{failed} failed")
-                    if skipped: details.append(f"{skipped} skipped")
-                    if errors: details.append(f"{errors} errors")
+                    if failed:
+                        details.append(f"{failed} failed")
+                    if skipped:
+                        details.append(f"{skipped} skipped")
+                    if errors:
+                        details.append(f"{errors} errors")
                     detail_str = f" ({', '.join(details)})" if details else ""
                     print(f"  [{passed}/{total}] {name}{detail_str}")
             elif step == 'report':
@@ -1661,7 +1659,7 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
             # Show hint about --suggest
             first_failed = failed[0]
             print(f"\n  Get help: ./cluster_health_check.py --suggest {first_failed}")
-            print(f"  Or auto:  ./cluster_health_check.py --suggest")
+            print("  Or auto:  ./cluster_health_check.py --suggest")
 
         # Show next steps
         self._print_next_steps(results)
@@ -1772,7 +1770,7 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                 print(f"\n[WARNING] Installation incomplete ({steps_done}/{steps_total} steps) and health checks FAILED.")
                 if missing_steps:
                     print(f"          Missing: {', '.join(missing_steps)}")
-                print(f"          Run ./cluster_health_check.py -i to see remaining steps.")
+                print("          Run ./cluster_health_check.py -i to see remaining steps.")
             else:
                 print("\n[WARNING] Some health checks FAILED. Review report for details.")
             return 1
@@ -1780,7 +1778,7 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
             print(f"\n[INCOMPLETE] Installation in progress: {steps_done}/{steps_total} steps complete.")
             if missing_steps:
                 print(f"             Missing: {', '.join(missing_steps)}")
-            print(f"             Run ./cluster_health_check.py -i to see remaining steps.")
+            print("             Run ./cluster_health_check.py -i to see remaining steps.")
             return 2
         elif has_skipped:
             print("\n[INFO] Some checks were skipped (commands not available).")
@@ -1855,7 +1853,7 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                     cluster_not_running = True
 
             if packages_missing or essential_cmd_missing:
-                print(f"""
+                print("""
   INSTALLATION REQUIRED: Cluster packages not installed!
     Run: ./cluster_health_check.py --suggest install
 
@@ -2293,8 +2291,7 @@ Examples:
 
             # Check for package/command issues in the last report
             packages_missing = False
-            report_file = config_dir / f"health_check_report_{status.get('timestamp', '').replace(':', '').replace('-', '').split('.')[0]}.yaml"
-            # Try to find most recent report
+            # Find most recent report
             import glob
             reports = sorted(glob.glob(str(config_dir / "health_check_report_*.yaml")), reverse=True)
             if reports:
@@ -2516,15 +2513,14 @@ Examples:
                     try:
                         new_hosts = input("  Enter hostnames (space-separated): ").strip()
                         if new_hosts:
-                            print(f"\n  To check different hosts, run:")
+                            print("\n  To check different hosts, run:")
                             print(f"    ./cluster_health_check.py {new_hosts}")
-                            print(f"\n  Or with force rediscovery:")
+                            print("\n  Or with force rediscovery:")
                             print(f"    ./cluster_health_check.py -f {new_hosts}")
                     except (EOFError, KeyboardInterrupt):
                         pass
                 elif choice == '4' or choice == 'c':
-                    # Show configuration
-                    from access.discover_access import show_config
+                    # Show configuration (show_config imported at module level)
                     show_config(health_check.config_dir / 'cluster_access_config.yaml')
                 elif choice == '5' or choice == 'p':
                     # Save PDF report with custom filename

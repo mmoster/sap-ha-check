@@ -128,7 +128,7 @@ class AccessDiscovery:
                 # Clear old nodes if hosts file specified (fresh discovery for those hosts)
                 if self.hosts_file:
                     if self.debug:
-                        print(f"  [DEBUG] Clearing old nodes for fresh cluster discovery")
+                        print("  [DEBUG] Clearing old nodes for fresh cluster discovery")
                     config.nodes = {}
                 return config
         if self.force_rediscover:
@@ -490,7 +490,7 @@ class AccessDiscovery:
         if not sosreports:
             return clusters
 
-        print(f"\n=== Detecting cluster membership from SOSreports ===")
+        print("\n=== Detecting cluster membership from SOSreports ===")
 
         for hostname, sos_path in sosreports.items():
             cluster_name = self.get_cluster_name_from_sosreport(sos_path)
@@ -545,8 +545,8 @@ class AccessDiscovery:
             print(f"\n  [{i}] Cluster: {cluster_name}")
             print(f"      Nodes ({len(nodes)}): {', '.join(sorted(nodes))}")
 
-        print(f"\n  [a] Analyze all clusters together")
-        print(f"  [q] Quit")
+        print("\n  [a] Analyze all clusters together")
+        print("  [q] Quit")
 
         while True:
             try:
@@ -626,7 +626,7 @@ class AccessDiscovery:
         cluster_nodes = []
         cluster_name = None
 
-        print(f"\n=== Discovering Cluster (local mode) ===")
+        print("\n=== Discovering Cluster (local mode) ===")
 
         # Get local hostname
         self.local_hostname = self.get_local_hostname()
@@ -685,7 +685,7 @@ class AccessDiscovery:
                 continue
 
         if not cluster_nodes:
-            print(f"  Could not discover cluster nodes locally")
+            print("  Could not discover cluster nodes locally")
             print(f"  Using {self.local_hostname} as only node")
             cluster_nodes = [self.local_hostname]
 
@@ -717,7 +717,7 @@ class AccessDiscovery:
             print(f"  Cluster name: {cluster_name}")
         else:
             if self.debug:
-                print(f"  [DEBUG] Could not determine cluster name")
+                print("  [DEBUG] Could not determine cluster name")
 
         # Commands to try for discovering cluster nodes (RHEL)
         discovery_commands = [
@@ -993,7 +993,7 @@ class AccessDiscovery:
                     if missing_sosreports:
                         print(f"\n[INFO] Cluster has {len(expected_nodes)} nodes, but only {len(sosreports)} SOSreport(s)")
                         print(f"       Missing SOSreports for: {', '.join(sorted(missing_sosreports))}")
-                        print(f"       Attempting SSH access to get live data...")
+                        print("       Attempting SSH access to get live data...")
 
                     # Clear old nodes
                     self.config.nodes = {}
@@ -1048,20 +1048,20 @@ class AccessDiscovery:
             else:
                 print(f"\n[WARNING] Cluster '{self.cluster_name}' not found in config")
                 print(f"  Known clusters: {', '.join(self.config.clusters.keys()) or '(none)'}")
-                print(f"  Run with a node name first to discover the cluster")
+                print("  Run with a node name first to discover the cluster")
 
         # 2. Get hosts from file/command line
         if not file_hosts:
             file_hosts = self.get_hosts_from_file()
             if file_hosts:
                 # Hosts specified on command line - clear old nodes, only check these
-                print(f"\n[INFO] Host mode: analyzing only specified hosts")
+                print("\n[INFO] Host mode: analyzing only specified hosts")
                 self.config.nodes = {}
 
         # 3. If hosts specified, try to discover cluster members from first reachable host
         if file_hosts and not self.cluster_name:
             if self.debug:
-                print(f"  [DEBUG] Hosts specified, attempting cluster auto-discovery")
+                print("  [DEBUG] Hosts specified, attempting cluster auto-discovery")
 
             # Try to discover cluster nodes from the first specified host
             for seed_host in file_hosts:
@@ -1270,7 +1270,7 @@ def show_config(config_path: Path):
             print(f"\n  Cluster: {name}")
             print(f"    Nodes: {', '.join(nodes)}")
             print(f"    Discovered from: {discovered_from}")
-            print(f"\n    To check this cluster:")
+            print("\n    To check this cluster:")
             print(f"      ./cluster_health_check.py -C {name}")
     else:
         print("\n[INFO] No clusters discovered yet")
@@ -1303,11 +1303,11 @@ def show_config(config_path: Path):
 
     # Show other config
     if config.get('sosreport_directory'):
-        print(f"\n--- SOSreport Directory ---")
+        print("\n--- SOSreport Directory ---")
         print(f"  {config['sosreport_directory']}")
 
     if config.get('ansible_inventory_path'):
-        print(f"\n--- Ansible Inventory ---")
+        print("\n--- Ansible Inventory ---")
         print(f"  Path: {config['ansible_inventory_path']}")
         print(f"  Source: {config.get('ansible_inventory_source', 'unknown')}")
 

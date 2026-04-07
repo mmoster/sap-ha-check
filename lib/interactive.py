@@ -430,7 +430,7 @@ def run_usage_scan():
         if extracted:
             sos_dir = os.path.dirname(extracted[0])
             print(f"\n  Extracted {len(extracted)} sosreport(s).")
-            print(f"  Run health check with:")
+            print("  Run health check with:")
             print(f"    ./cluster_health_check.py -s {sos_dir}")
             return {'action': 'sosreport', 'sosreport_dir': sos_dir}
         else:

@@ -290,7 +290,6 @@ class RulesEngine:
         """
         # Extract parsed values
         node_count_str = parsed.get('node_count')
-        node_list = parsed.get('node_list')
         saphana_resource = parsed.get('saphana_resource')  # SAPHana_* = Scale-Up
         saphana_controller = parsed.get('saphana_controller')  # SAPHanaController_* = Scale-Out
         majority_maker = parsed.get('majority_maker')
@@ -332,7 +331,7 @@ class RulesEngine:
             # SAPHana resource = Scale-Up (exactly 2 nodes, no majority maker)
             cluster_type = "Scale-Up"
             if node_count == 2 and not has_majority_maker:
-                message = f"Scale-Up configuration (2 nodes, standard HA)"
+                message = "Scale-Up configuration (2 nodes, standard HA)"
             elif has_majority_maker:
                 # Scale-Up should NOT have majority maker
                 message = f"Scale-Up with {node_count} nodes - WARNING: majority maker detected but Scale-Up should be 2 nodes only"
