@@ -2,63 +2,46 @@
 
 A comprehensive health check tool for SAP HANA Pacemaker clusters on RHEL and SUSE Linux Enterprise.
 
-## Quick Start with Resource Scanning (-u)
+## Quick Start
 
-The fastest way to get started is using the `-u` (usage) option, which scans your current directory for existing resources:
+### On a Cluster Node (Recommended)
 
 ```bash
+# Clone and run locally
+git clone https://github.com/mmoster/sap_hana_healthcheck.git
+cd sap_hana_healthcheck
+./cluster_health_check.py --local
+```
+
+### Remote Check
+
+```bash
+# Check specific nodes
+./cluster_health_check.py hana01 hana02
+
+# Use a hosts file
+./cluster_health_check.py -H hosts.txt
+
+# Analyze SOSreports offline
+./cluster_health_check.py -s /path/to/sosreports/
+```
+
+### Interactive Mode
+
+```bash
+# Scan directory for sosreports/inventory/results
 ./cluster_health_check.py -u
 ```
 
-This command will:
-1. **Scan** the current folder and subfolders for:
-   - SOSreport archives (`.tar.xz`, `.tar.gz`) and extracted directories
-   - Ansible inventory files
-   - Hosts files (`hosts.txt`)
-   - Former health check results and reports
-
-2. **Present interactive options**:
-   - Delete former results and start fresh
-   - Continue with existing configuration
-   - Extract compressed sosreports (in parallel) and analyze
-   - Use found inventory/hosts files
-   - Enter hostnames manually
-   - Run locally on a cluster node
-
-### Typical Workflow: Analyzing SOSreports
-
-```bash
-# 1. Create a directory and copy sosreports
-mkdir analysis && cd analysis
-cp /path/to/sosreport-*.tar.xz .
-
-# 2. Run the scan - it will find the archives and offer to extract them
-../cluster_health_check.py -u
-
-# Or directly analyze (auto-extracts compressed files):
-../cluster_health_check.py -s .
-```
-
-### Typical Workflow: Live Cluster Check
-
-```bash
-# Check a cluster by specifying one or more node names
-./cluster_health_check.py hana01 hana02
-
-# Or run locally on a cluster node
-./cluster_health_check.py --local
-
-# Or use a hosts file
-./cluster_health_check.py -H hosts.txt
-```
+This scans for SOSreport archives, hosts files, and existing reports, then presents interactive options.
 
 ## Features
 
 - **Multiple Access Methods**: SSH, Ansible inventory, or SOSreport analysis
 - **Multithreaded Execution**: Parallel node connectivity checks and rule execution
-- **20 Built-in Health Checks**: Covering cluster configuration, Pacemaker/Corosync, and SAP-specific validations
-- **Incremental Investigation**: YAML-based configuration persists between runs
-- **Detailed Reporting**: YAML reports with timestamps for audit trails
+- **22 Built-in Health Checks**: Cluster configuration, Pacemaker/Corosync, and SAP-specific validations
+- **Automatic Cluster Discovery**: Discovers all nodes from Pacemaker configuration
+- **PDF Reports**: Auto-generated PDF reports (requires fpdf2)
 
 ## Installation
 
@@ -68,222 +51,27 @@ cd sap_hana_healthcheck
 ```
 
 Requirements:
-- Python 3.6+ (tested with 3.6, 3.8, 3.14)
+- Python 3.6+
 - PyYAML (`pip install pyyaml`)
 - fpdf2 (optional, for PDF reports): `pip install fpdf2`
-- For live checks: SSH access or Ansible configured
-- For offline analysis: SOSreport directories
-
-**Note**: PDF report generation requires fpdf2. If not installed, health checks will still run and generate YAML reports. Use `--no-pdf` to skip PDF generation explicitly.
-
-## Running on a Cluster Node
-
-If you are logged into one of your SAP HANA cluster nodes, you can run the health check directly:
-
-```bash
-# 1. Clone the repository
-git clone https://github.com/mmoster/sap_hana_healthcheck.git
-cd sap_hana_healthcheck
-
-# 2. Run locally on this node
-./cluster_health_check.py --local
-
-# Or use interactive mode (auto-detects local cluster)
-./cluster_health_check.py -u
-```
-
-The `--local` flag executes all commands directly on the current node without SSH. This is the simplest way to check your cluster health when you have direct access to a cluster node.
-
-**Note**: Running locally will discover other cluster nodes from the Pacemaker configuration and attempt to check them via SSH. If you only want to check the current node, the tool will still provide valuable insights about cluster-wide status from the local node's perspective.
-
-## Specifying Target Nodes
-
-**Important**: By default, the tool auto-discovers hosts from Ansible inventory. On an Ansible master server with hundreds of hosts, this may include many systems that are not part of your SAP cluster. You should explicitly specify your target nodes using one of the methods below.
-
-### Method 1: Custom Hosts File (Recommended)
-
-Create a simple text file containing only your SAP cluster nodes (one hostname per line):
-
-```bash
-# Create hosts file with your cluster nodes
-cat > my_cluster.txt << EOF
-hana01
-hana02
-hana03
-EOF
-
-# Run health check with custom hosts file
-cd wrapper
-./cluster_health_check.py --hosts-file my_cluster.txt
-```
-
-This completely bypasses Ansible inventory discovery and only checks the specified nodes.
-
-### Method 2: Deploy with Explicit Hosts
-
-When using the deploy script, specify hosts directly on the command line:
-
-```bash
-# Deploy with specific hosts - only these will be checked
-./deploy.sh /opt/sap_cluster_check hana01 hana02
-
-# The hosts are written to hosts.txt in the target directory
-cd /opt/sap_cluster_check
-./run_discovery.sh
-```
-
-### Method 3: Edit hosts.txt After Deployment
-
-Deploy first, then manually edit the hosts file:
-
-```bash
-# Deploy without hosts
-./deploy.sh /opt/sap_cluster_check
-
-# Edit hosts.txt to add your nodes
-cat > /opt/sap_cluster_check/hosts.txt << EOF
-hana01
-hana02
-EOF
-
-# Run discovery
-cd /opt/sap_cluster_check
-./run_discovery.sh
-```
-
-### Method 4: Environment Variable
-
-Set the `ANSIBLE_INVENTORY` environment variable to point to a custom inventory file containing only your cluster nodes:
-
-```bash
-export ANSIBLE_INVENTORY=/path/to/my_sap_cluster_inventory
-cd wrapper
-./cluster_health_check.py
-```
-
-### Method 5: Single Host Discovery
-
-To check only a single host (useful for testing):
-
-```bash
-cd /opt/sap_cluster_check
-./run_discovery.sh --host hana01
-```
-
-### Hosts File Format
-
-The hosts file is a simple text file with one hostname or IP address per line:
-
-```
-# Comments start with #
-hana01.example.com
-hana02.example.com
-192.168.1.100
-
-# Empty lines are ignored
-hana03
-```
-
-### Verifying Your Configuration
-
-Before running the full health check, verify which nodes will be discovered:
-
-```bash
-# Show current configuration
-cd wrapper
-./cluster_health_check.py --show-config
-
-# Run only access discovery to test connectivity
-./cluster_health_check.py --access-only
-
-# Force rediscovery if you changed the hosts file
-./cluster_health_check.py --force --access-only
-```
-
-### Debug Mode
-
-Use `--debug` or `-d` to see detailed information about config files being used and step progress:
-
-```bash
-# Run with debug output
-cd wrapper
-./cluster_health_check.py --debug
-
-# For discovery runner
-cd /opt/sap_cluster_check
-./run_discovery.sh --debug
-```
-
-Debug mode shows:
-- Config directory and file paths
-- Rules path and loaded rule count
-- Hosts file location
-- Current step being executed
-- Individual check execution progress with timestamps
-
-## Quick Start
-
-### Option 1: Deploy Discovery Tool (empfohlen für Tests)
-
-```bash
-# Deploy in ein beliebiges Verzeichnis
-./deploy.sh /pfad/zum/ziel hana01 hana02
-
-# Oder ohne Hosts (später in hosts.txt eintragen)
-./deploy.sh /tmp/my_discovery
-
-# Im Zielverzeichnis arbeiten
-cd /tmp/my_discovery
-./run_discovery.sh --list-rules
-./run_discovery.sh
-```
-
-### Option 2: Full Health Check
-
-```bash
-cd wrapper
-
-# Run full health check (auto-discovers Ansible inventory)
-./cluster_health_check.py
-
-# Access discovery only
-./cluster_health_check.py --access-only
-
-# Use custom hosts file
-./cluster_health_check.py --hosts-file /path/to/hosts.txt
-
-# Analyze SOSreports offline
-./cluster_health_check.py --sosreport-dir /path/to/sosreports/
-
-# List available health checks
-./cluster_health_check.py --list-rules
-```
 
 ## Usage
 
 ```
-usage: cluster_health_check.py [-h] [--usage] [--hosts-file HOSTS_FILE]
-                               [--sosreport-dir SOSREPORT_DIR]
-                               [--config-dir CONFIG_DIR] [--access-only]
-                               [--show-config] [--delete-config] [--force]
-                               [--workers WORKERS] [--rules-path RULES_PATH]
-                               [--list-rules]
-                               [--skip {access,config,pacemaker,sap,report} ...]
+./cluster_health_check.py [OPTIONS] [NODES...]
 
 Options:
-  -u, --usage           Scan directory for sosreports/inventory/results (interactive setup)
+  -u, --usage           Interactive mode - scan directory for resources
   -H, --hosts-file      File containing list of hosts (one per line)
   -s, --sosreport-dir   Directory containing SOSreport archives/directories
-  -c, --config-dir      Directory to store configuration
-  -a, --access-only     Only run access discovery step
-  -S, --show-config     Display current configuration and exit
-  -D, --delete-config   Delete configuration file to restart investigation
+  --local               Run locally on this cluster node
   -f, --force           Force rediscovery (ignore existing config)
-  -w, --workers         Number of parallel workers (default: 10)
-  -r, --rules-path      Path to CHK_*.yaml rules directory
-  -L, --list-rules      List available health check rules and exit
-  -d, --debug           Enable debug mode (show config files and step progress)
-  --skip                Skip specific steps (access, config, pacemaker, sap, report)
+  -D, --delete-reports  Delete reports and restart
+  -S, --show-config     Display current configuration
+  -L, --list-rules      List available health check rules
+  -d, --debug           Enable debug mode
+  --no-pdf              Skip PDF report generation
+  --no-update-check     Skip software update check
 ```
 
 ## Health Check Steps
@@ -294,21 +82,22 @@ Options:
 | 2. Cluster Configuration | Node status, quorum, clone config, package consistency |
 | 3. Pacemaker/Corosync | STONITH, resources, fencing, master/slave roles |
 | 4. SAP-Specific | HANA SR status, replication mode, HA/DR hooks, systemd |
-| 5. Report Generation | Summary and detailed YAML report |
+| 5. Report Generation | Summary YAML and PDF reports |
 
-## Included Health Checks (20 Rules)
+## Included Health Checks
 
 ### Cluster Configuration
 | Check ID | Severity | Description |
 |----------|----------|-------------|
 | CHK_CLUSTER_READY | WARNING | Check if cluster is fully started (not in transition) |
+| CHK_CLUSTER_TYPE | INFO | Detect Scale-Up vs Scale-Out configuration |
 | CHK_NODE_STATUS | CRITICAL | Verify all cluster nodes are online |
 | CHK_CLUSTER_QUORUM | CRITICAL | Verify cluster has quorum |
 | CHK_QUORUM_CONFIG | CRITICAL | Validate quorum configuration |
 | CHK_CLONE_CONFIG | CRITICAL | Validate clone resource configuration |
 | CHK_SETUP_VALIDATION | CRITICAL | Validate against SAP HANA HA best practices |
 | CHK_CIB_TIME_SYNC | WARNING | Verify CIB updates are synchronized |
-| CHK_PACKAGE_CONSISTENCY | CRITICAL | Verify package versions across nodes |
+| CHK_PACKAGE_CONSISTENCY | WARNING | Verify package versions across nodes |
 
 ### Pacemaker/Corosync
 | Check ID | Severity | Description |
@@ -323,183 +112,60 @@ Options:
 ### SAP-Specific
 | Check ID | Severity | Description |
 |----------|----------|-------------|
+| CHK_HANA_INSTALLED | INFO | Check if SAP HANA is installed on this node |
 | CHK_HANA_SR_STATUS | CRITICAL | Verify HANA System Replication status |
-| CHK_REPLICATION_MODE | WARNING | Verify replication mode is synchronous |
+| CHK_REPLICATION_MODE | WARNING | Verify replication mode is sync or syncmem |
 | CHK_HADR_HOOKS | CRITICAL | Validate HA/DR provider hooks |
 | CHK_HANA_AUTOSTART | WARNING | Validate HANA autostart is disabled |
 | CHK_SYSTEMD_SAP | WARNING | Validate SAP Host Agent and systemd |
 | CHK_SITE_ROLES | CRITICAL | Verify site roles consistency |
 
-## Access Discovery
+## Cluster Types and Packages
 
-The tool automatically discovers cluster nodes from multiple sources:
+### Scale-Up (2 nodes, no majority maker)
+- Package: `sap-hana-ha` (ANGI, RHEL 9+) or `resource-agents-sap-hana` (classic)
+- Resource agent: `SAPHana`
 
-1. **Ansible Inventory** (checked in order):
-   - `$ANSIBLE_INVENTORY` environment variable
-   - `./ansible.cfg` → `inventory =` setting
-   - `~/.ansible.cfg` → `inventory =` setting
-   - `/etc/ansible/ansible.cfg` → `inventory =` setting
-   - `/etc/ansible/hosts` (default)
+### Scale-Out (4+ HANA nodes + 1 majority maker)
+- HANA nodes: `sap-hana-ha` (ANGI) or `resource-agents-sap-hana-scaleout` (classic)
+- Majority maker: Same packages as HANA nodes, or no SAP HANA packages
+- Resource agent: `SAPHanaController`
 
-2. **Hosts File**: Simple text file with one hostname per line
+## Example Output
 
-3. **SOSreport**: Extracts hostnames from sosreport directories
+```
+Health Check Results:
+  PASSED:   26  FAILED:   0  SKIPPED:   0  ERROR:   0
+
+  ╔═══════════════════════════════════════════════════════╗
+  ║            ✓  CLUSTER IS HEALTHY  ✓                   ║
+  ╚═══════════════════════════════════════════════════════╝
+
+  PDF report saved: health_check_report_cluster2_1507.pdf
+```
 
 ## Configuration
 
 Results are stored in `cluster_access_config.yaml`:
 
 ```yaml
-ansible_inventory_source: default
-ansible_inventory_path: /etc/ansible/hosts
+clusters:
+  my_cluster:
+    nodes:
+    - hana01
+    - hana02
 nodes:
-  node1.example.com:
-    hostname: node1.example.com
+  hana01:
+    hostname: hana01
     ssh_reachable: true
-    ssh_user: root
     preferred_method: ssh
-  node2.example.com:
-    hostname: node2.example.com
-    ansible_reachable: true
-    preferred_method: ansible
 ```
 
-Delete this file (`--delete-config`) to restart the investigation from scratch.
+Delete with `-D` to restart the investigation from scratch.
 
-## Output
+## Extending Health Checks
 
-Reports are saved as YAML files with timestamps:
-
-```
-health_check_report_20260305_113455.yaml
-```
-
-Example output:
-```
-===============================================================
- STEP 5: Health Check Report
-===============================================================
-
-  Total Checks Run:    19
-  Passed:              15
-  Failed:              3
-    - Critical:        1
-    - Warning:         2
-  Skipped:             1
-  Errors:              0
-
-  CRITICAL FAILURES:
-    [CRIT] CHK_STONITH_CONFIG (node1)
-           No STONITH resources configured - split-brain risk!
-```
-
-## Standalone Discovery Framework
-
-Das Discovery-Framework ermöglicht das Sammeln von Systeminformationen via SSH basierend auf YAML-Regeln.
-
-### Deployment
-
-```bash
-# Deploy mit Hosts
-./deploy.sh /opt/cluster_discovery hana01 hana02 hana03
-
-# Deploy ohne Hosts
-./deploy.sh /tmp/discovery
-echo "hana04" >> /tmp/discovery/hosts.txt
-```
-
-### Verwendung
-
-```bash
-cd /opt/cluster_discovery
-
-# Verfügbare Regeln anzeigen
-./run_discovery.sh --list-rules
-
-# Alle Discoveries ausführen
-./run_discovery.sh
-
-# Nur bestimmte Gruppen
-./run_discovery.sh --groups system_info network
-
-# Nur bestimmten Host
-./run_discovery.sh --host hana01
-
-# Ergebnisse direkt anzeigen
-./run_discovery.sh --show-data
-```
-
-### Discovery-Gruppen
-
-| Gruppe | Beschreibung |
-|--------|--------------|
-| `system_info` | Hostname, OS, Kernel, Uptime, Architektur |
-| `cluster_basics` | Pacemaker/Corosync Version, Cluster-Name, Nodes, Quorum |
-| `sap_hana` | SID, Instanz, Version, SR-Status, Topologie |
-| `resources` | Cluster-Ressourcen, STONITH, Constraints |
-| `network` | Corosync-Ringe, IPs, /etc/hosts, Firewall |
-
-### Eigene Discovery-Regeln erstellen
-
-Neue YAML-Datei in `discovery_rules/` erstellen:
-
-```yaml
-group: storage
-description: Storage-Informationen
-enabled: true
-
-discoveries:
-  - id: DISC_DISK_USAGE
-    description: Festplattennutzung
-    live_cmd: "df -h"
-    parser:
-      type: lines
-    store_as: disk_usage
-
-  - id: DISC_MOUNTS
-    description: Gemountete Filesysteme
-    live_cmd: "mount | grep -E '^/dev'"
-    parser:
-      type: lines
-    store_as: mounts
-```
-
-### Parser-Typen
-
-| Typ | Beschreibung |
-|-----|--------------|
-| `raw` | Ausgabe als String |
-| `lines` | Ausgabe als Liste von Zeilen |
-| `key_value` | Key=Value Paare als Dictionary |
-| `regex` | Regex-Patterns extrahieren |
-
-## Project Structure
-
-```
-sap_hana_healthcheck/
-├── README.md
-├── deploy.sh                       # Deployment-Script
-├── .gitignore
-├── wrapper/
-│   ├── cluster_health_check.py     # Main entry point
-│   ├── cluster_access_config.yaml  # Generated config
-│   ├── access/
-│   │   └── discover_access.py      # Access discovery module
-│   └── rules/
-│       ├── __init__.py
-│       └── engine.py               # Rules engine
-└── tests/
-    └── hana04_discovery/
-        ├── discovery_runner.py     # Standalone discovery runner
-        ├── run_discovery.sh        # Wrapper script
-        ├── hosts.txt               # Target hosts
-        └── discovery_rules/        # YAML rule definitions
-            ├── 00_system_info.yaml
-            ├── 01_cluster_basics.yaml
-            ├── 02_sap_hana.yaml
-            ├── 03_resources.yaml
-            └── 04_network.yaml
-```
+See [docs/EXTENDING_HEALTH_CHECKS.md](docs/EXTENDING_HEALTH_CHECKS.md) for details on creating custom health check rules.
 
 ## License
 
