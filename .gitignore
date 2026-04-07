@@ -36,3 +36,8 @@ last_run_status.yaml
 .DS_Store
 Thumbs.db
 *.src.rpm
+
+# Claude/Skills configuration
+.agents/
+.claude/
+skills-lock.json
