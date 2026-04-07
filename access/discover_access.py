@@ -721,9 +721,9 @@ class AccessDiscovery:
 
         # Commands to try for discovering cluster nodes
         discovery_commands = [
-            # crm_node (SUSE/generic)
+            # crm_node (generic Pacemaker command)
             "crm_node -l | awk '{print $2}'",
-            # pcs status (RHEL)
+            # pcs status (RHEL primary method)
             "pcs status nodes | grep -E 'Online|Standby|Offline' | tr ' ' '\\n' | grep -v -E '^$|Online|Standby|Offline|:'",
             # corosync-cmapctl
             "corosync-cmapctl -b nodelist.node | grep 'ring0_addr' | cut -d= -f2 | tr -d ' '",

@@ -865,7 +865,7 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
         print("""
 ╔═══════════════════════════════════════════════════════════════╗
 ║       SAP Pacemaker Cluster Health Check Tool                 ║
-║       RHEL / SUSE Linux Enterprise                            ║
+║       Red Hat Enterprise Linux (RHEL 8/9/10)                  ║
 ╠───────────────────────────────────────────────────────────────╣
 ║  -h help | -i install guide | -G usage guide | --suggest tips ║
 ╚═══════════════════════════════════════════════════════════════╝
@@ -1444,9 +1444,9 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
             print(f"  PASSED:  {len(passed):3d}  FAILED: {len(failed_checks):3d}  SKIPPED: {len(skipped):3d}  ERROR: {len(errors):3d}")
 
             # Check for installation issues
-            # Essential commands - crm is SUSE-specific, pcs is RHEL-specific
+            # Essential commands for RHEL clusters
             essential_commands = ['pacemaker', 'corosync', 'pcs', 'crm_mon']
-            optional_commands = ['crm', 'crmsh']  # SUSE-specific, not needed on RHEL
+            optional_commands = ['crm', 'crmsh']  # Optional, not required on RHEL
             packages_missing = False
             commands_missing = []
             for r in all_results:
@@ -1641,7 +1641,6 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
         has_skipped = False
         needs_install = False
         # Essential commands - if these are missing, installation is needed
-        # Note: 'crm' is SUSE-specific, 'pcs' is RHEL-specific - only one needed
         essential_commands = ['pacemaker', 'corosync', 'pcs', 'crm_mon']
         if self.check_results:
             for r in self.check_results:
@@ -1824,7 +1823,6 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                       str(r.status) == 'CheckStatus.SKIPPED']
 
             # Check for essential package/command not found issues
-            # crm is SUSE-specific, pcs is RHEL-specific - only one needed
             essential_commands = ['pacemaker', 'corosync', 'pcs', 'crm_mon']
             packages_missing = False
             essential_cmd_missing = False

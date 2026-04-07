@@ -5,11 +5,10 @@ severity: WARNING
 description: Verify package versions are consistent across nodes
 enabled: true
 
-# Package types:
+# Package types (RHEL):
 # - sap-hana-ha: Modern ANGI package (RHEL 9+), supports both Scale-Up and Scale-Out
-# - resource-agents-sap-hana: Classic Scale-Up package
-# - resource-agents-sap-hana-scaleout: Classic Scale-Out package
-# - SAPHanaSR: SUSE package for SAP HANA System Replication
+# - resource-agents-sap-hana: Classic Scale-Up package (RHEL 8/9)
+# - resource-agents-sap-hana-scaleout: Classic Scale-Out package (RHEL 8/9)
 #
 # Majority maker nodes in Scale-Out clusters:
 # - Should have SAME packages as HANA nodes, OR
@@ -42,7 +41,7 @@ parser:
     - name: resource_agents_sap_hana_scaleout
       regex: "resource-agents-sap-hana-scaleout-[\\d\\.-]+"
       group: 0
-    # SUSE SAPHanaSR package
+    # SAPHanaSR package (legacy detection)
     - name: saphanasr_version
       regex: "SAPHanaSR[\\d\\.-]*"
       group: 0

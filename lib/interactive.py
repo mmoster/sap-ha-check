@@ -28,7 +28,7 @@ def interactive_startup(config_path: Path) -> tuple:
     print("""
 ╔═══════════════════════════════════════════════════════════════╗
 ║       SAP Pacemaker Cluster Health Check Tool                 ║
-║       RHEL / SUSE Linux Enterprise                            ║
+║       Red Hat Enterprise Linux (RHEL 8/9/10)                  ║
 ╠───────────────────────────────────────────────────────────────╣
 ║  -h help | -i install guide | -G usage guide | --suggest tips ║
 ╚═══════════════════════════════════════════════════════════════╝

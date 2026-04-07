@@ -1,6 +1,6 @@
 # SAP HANA Pacemaker Cluster Health Check
 
-A comprehensive health check tool for SAP HANA Pacemaker clusters on RHEL and SUSE Linux Enterprise.
+A comprehensive health check tool for SAP HANA Pacemaker clusters on Red Hat Enterprise Linux (RHEL 8/9/10).
 
 ## Quick Start
 

@@ -54,14 +54,8 @@ check_dependencies() {
         echo ""
         echo "Fehlende Pakete installieren:"
         echo ""
-        echo "  RHEL/CentOS/Fedora:"
+        echo "  RHEL 8/9/10:"
         echo "    sudo dnf install python3 python3-pyyaml openssh-clients"
-        echo ""
-        echo "  SUSE/SLES:"
-        echo "    sudo zypper install python3 python3-PyYAML openssh"
-        echo ""
-        echo "  Ubuntu/Debian:"
-        echo "    sudo apt install python3 python3-yaml openssh-client"
         echo ""
         return 1
     fi

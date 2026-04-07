@@ -7,7 +7,7 @@ enabled: true
 
 source_definitions:
   # Check for HA/DR hooks - supports various provider names
-  # HanaSR/SAPHanaSR: SUSE/Red Hat standard hook
+  # SAPHanaSR: Standard hook for RHEL (sap-hana-ha package)
   # ChkSrv/susChkSrv: Additional check hook
   # susTkOver: Takeover hook
   live_cmd: "grep -riE 'ha_dr_provider|provider.*=.*(HanaSR|SAPHanaSR|ChkSrv|susTkOver|susChkSrv)' /hana/shared/*/global/hdb/custom/config/global.ini 2>/dev/null || grep -riE 'ha_dr_provider|provider' /usr/sap/*/SYS/global/hdb/custom/config/global.ini 2>/dev/null"

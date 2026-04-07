@@ -28,10 +28,8 @@ cd "$TARGET_DIR"
 # Prüfe Python3
 if ! command -v python3 &> /dev/null; then
     echo "[ERROR] Python3 nicht gefunden!"
-    echo "Installation:"
-    echo "  RHEL/CentOS: dnf install python3 python3-pyyaml"
-    echo "  SUSE:        zypper install python3 python3-PyYAML"
-    echo "  Ubuntu:      apt install python3 python3-yaml"
+    echo "Installation (RHEL 8/9/10):"
+    echo "  dnf install python3 python3-pyyaml"
     exit 1
 fi
 
