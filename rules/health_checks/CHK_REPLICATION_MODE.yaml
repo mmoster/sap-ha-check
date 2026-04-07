@@ -10,9 +10,12 @@
 #   - async: Data loss possible on failover. Not supported for HA clusters.
 #
 # Command availability:
-#   - SAPHanaSR-showAttr: Available with sap-hana-ha (ANGI) package
-#   - crm_mon -A1: Available with resource-agents-sap-hana (classic) package
-#   Both commands can show the replication mode from cluster attributes.
+#   - SAPHanaSR-showAttr: Available with Scale-Out packages:
+#       - sap-hana-ha (ANGI, modern)
+#       - resource-agents-sap-hana-scaleout (classic Scale-Out)
+#   - crm_mon -A1: Available with all packages, shows cluster attributes
+#       - Used as fallback for resource-agents-sap-hana (classic Scale-Up)
+#         which does NOT include SAPHanaSR-showAttr
 #
 check_id: CHK_REPLICATION_MODE
 version: "1.2"
