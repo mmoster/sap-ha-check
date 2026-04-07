@@ -428,23 +428,43 @@ class RulesEngine:
         - Simple commands: 'SAPHanaSR-showAttr'
         - Pipelines: 'cmd1 | grep foo'
         - Fallbacks: 'cmd1 || cmd2' (if cmd1 not available, check cmd2)
+        - Multi-line scripts with comments
+        - Shell constructs (if/for/while)
         """
-        builtins = ['grep', 'cat', 'echo', 'awk', 'sed', 'head', 'tail', 'cut', 'tr', 'sort', 'timeout', 'if', 'for', 'while']
+        builtins = ['grep', 'cat', 'echo', 'awk', 'sed', 'head', 'tail', 'cut', 'tr', 'sort', 'timeout',
+                    'if', 'for', 'while', 'then', 'else', 'fi', 'do', 'done', 'case', 'esac', 'ls', 'test', '[']
 
         def extract_cmd_name(cmd_part: str) -> str:
             """Extract the primary command name from a command string."""
-            # Remove leading whitespace and handle redirections
+            # Remove leading whitespace
             cmd_part = cmd_part.strip()
-            # Split on pipe to get first command in pipeline
-            first_part = cmd_part.split('|')[0].split(';')[0].split('&&')[0].strip()
-            # Get the command name (first word)
-            return first_part.split()[0] if first_part else ''
+
+            # Skip empty parts and comments
+            if not cmd_part or cmd_part.startswith('#'):
+                return ''
+
+            # For multi-line commands, find first non-comment, non-empty line
+            lines = cmd_part.split('\n')
+            for line in lines:
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    # Split on pipe to get first command in pipeline
+                    first_part = line.split('|')[0].split(';')[0].split('&&')[0].strip()
+                    # Get the command name (first word)
+                    cmd_name = first_part.split()[0] if first_part else ''
+                    if cmd_name and not cmd_name.startswith('#'):
+                        return cmd_name
+            return ''
 
         # Split on '||' to handle fallback commands
         fallback_parts = cmd.split('||')
 
         for part in fallback_parts:
             cmd_name = extract_cmd_name(part)
+
+            # Skip empty command names
+            if not cmd_name:
+                continue
 
             # Skip check for built-in commands and common utilities
             if cmd_name in builtins or cmd_name.startswith('/'):
@@ -457,8 +477,11 @@ class RulesEngine:
             if success and 'OK' in output:
                 return True, f"{cmd_name} available"
 
-        # No command in the fallback chain was found
-        all_cmds = [extract_cmd_name(p) for p in fallback_parts]
+        # If we get here, either all commands were builtins (which is fine) or none were found
+        all_cmds = [extract_cmd_name(p) for p in fallback_parts if extract_cmd_name(p)]
+        if not all_cmds:
+            # All commands were builtins/shell constructs
+            return True, "shell script"
         return False, f"Commands not found on {node}: {', '.join(all_cmds)}"
 
     def _run_check_on_node(self, rule: RuleDefinition, node: str,
