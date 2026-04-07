@@ -44,9 +44,14 @@ parser:
 
 validation_logic:
   scope: all_nodes_equal  # Package versions must match across all nodes
+  # Note: In Scale-Out clusters, majority maker should NOT have SAP HANA packages.
+  # The comparison will flag differences, which is correct - majority maker should differ.
+  # CHK_MAJORITY_MAKER validates if the majority maker is correctly configured.
   compare_keys:
     - pacemaker_version
     - corosync_version
+    # SAP HANA packages - these SHOULD differ between HANA nodes and majority maker
+    # A difference is flagged as INFO when majority maker is correctly identified
     - sap_hana_ha_version
     - resource_agents_sap_hana
     - resource_agents_sap_hana_scaleout

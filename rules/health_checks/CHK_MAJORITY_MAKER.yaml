@@ -1,44 +1,68 @@
-# CHK_MAJORITY_MAKER - Validate majority maker constraints
+# CHK_MAJORITY_MAKER - Validate majority maker configuration for Scale-Out clusters
 check_id: CHK_MAJORITY_MAKER
-version: "1.0"
+version: "2.0"
 severity: CRITICAL
-description: Validate majority maker configuration for 2-node clusters
+description: Validate majority maker configuration for Scale-Out clusters
 enabled: true
 
+# Scale-Out configuration:
+# - 2+ HANA nodes per site (4+ total HANA nodes)
+# - 1 majority maker (tie-breaker) node
+#
+# Majority maker requirements:
+# - Should NOT have sap-hana-ha or resource-agents-sap-hana-scaleout installed
+# - If packages ARE installed, must have:
+#   1. Location constraints preventing SAP HANA resources on majority maker
+#   2. resource-discovery=never to avoid orphaned resource messages
+
 source_definitions:
-  # Check for qdevice/SBD configuration - supports both pcs (RHEL) and crm (SUSE)
   live_cmd: |
-    # Try pcs first (RHEL)
-    if command -v pcs >/dev/null 2>&1; then
-      pcs quorum config 2>/dev/null
-      pcs stonith status 2>/dev/null | grep -i sbd
-      pcs property show 2>/dev/null | grep -iE 'stonith|quorum'
-    # Try crm (SUSE)
-    elif command -v crm >/dev/null 2>&1; then
-      crm configure show 2>/dev/null | grep -iE 'qdevice|majority|SBD'
-    fi
-    # Also check corosync.conf directly
-    grep -iE 'qdevice|two_node|sbd' /etc/corosync/corosync.conf 2>/dev/null || echo "NO_QDEVICE"
-  sos_path: "sos_commands/pacemaker/crm_configure_show"
+    echo "=== CLUSTER_NODES ==="
+    crm_node -l 2>/dev/null || pcs status nodes 2>/dev/null
+    echo "=== MAJORITY_MAKER ==="
+    # Check for majority maker in various places
+    crm_node -l 2>/dev/null | grep -iE 'majority|mm-' || echo "none"
+    pcs status nodes 2>/dev/null | grep -iE 'majority|mm-' || true
+    echo "=== HANA_PACKAGES ==="
+    rpm -qa 2>/dev/null | grep -E 'sap-hana-ha|resource-agents-sap-hana' || echo "none"
+    echo "=== LOCATION_CONSTRAINTS ==="
+    pcs constraint location show 2>/dev/null | grep -iE 'SAPHana|Controller' || \
+      crm configure show 2>/dev/null | grep -E 'location.*SAPHana' || echo "none"
+    echo "=== RESOURCE_DISCOVERY ==="
+    pcs constraint location show --full 2>/dev/null | grep -i 'resource-discovery' || \
+      crm configure show 2>/dev/null | grep -i 'resource-discovery' || echo "none"
+  sos_path: "sos_commands/pacemaker/pcs_constraint_--full"
 
 parser:
   type: regex
   multiline: true
   search_patterns:
-    - name: qdevice
-      regex: "(qdevice|Qdevice|quorum device)"
+    - name: majority_maker_node
+      regex: "\\d+\\s+(\\S*(?:majority|mm-)\\S*)\\s+member"
+      group: 1
+    - name: has_sap_hana_ha
+      regex: "(sap-hana-ha-[\\d\\.-]+)"
+      group: 1
+    - name: has_resource_agents_scaleout
+      regex: "(resource-agents-sap-hana-scaleout-[\\d\\.-]+)"
+      group: 1
+    - name: location_constraint
+      regex: "(location.*SAPHana.*-INFINITY|Disabled on:.*|score:-INFINITY.*SAPHana)"
       group: 0
-    - name: majority_maker
-      regex: "(majority|tie-breaker|SBD|sbd)"
-      group: 0
-    - name: two_node_cluster
-      regex: "(two_node.*1|two_node: 1)"
-      group: 0
-    - name: no_qdevice
-      regex: "NO_QDEVICE"
+    - name: resource_discovery_never
+      regex: "(resource-discovery=never|resource-discovery:.*never)"
       group: 0
 
 validation_logic:
   scope: cluster  # Majority maker config is cluster-wide
-  expectations: []
-  # Informational - for 2-node clusters, qdevice or SBD is recommended but optional
+  match_mode: any  # At least one check should pass
+  expectations:
+    # Ideal: majority maker has no SAP HANA packages
+    - key: has_sap_hana_ha
+      operator: not_exists
+      value: true
+      message: "Majority maker has sap-hana-ha package - verify location constraints prevent HANA resources"
+    - key: has_resource_agents_scaleout
+      operator: not_exists
+      value: true
+      message: "Majority maker has resource-agents-sap-hana-scaleout - verify location constraints prevent HANA resources"

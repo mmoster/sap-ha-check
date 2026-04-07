@@ -281,11 +281,12 @@ class RulesEngine:
     def _detect_cluster_type(self, rule: RuleDefinition, parsed: Dict, node: str) -> CheckResult:
         """Detect SAP HANA HA cluster configuration type.
 
-        Detection is based on resource agent type, NOT node count:
-        - SAPHanaController_* → Scale-Out (multi-node per site)
-        - SAPHana_* → Scale-Up (single HANA instance per site)
+        Configuration types:
+        - Scale-Up: Exactly 2 nodes, NO majority maker, uses SAPHana resource
+        - Scale-Out: 4+ HANA nodes (2+ per site) + 1 majority maker, uses SAPHanaController
 
-        A Scale-Up cluster with majority maker has 3+ nodes but is still Scale-Up!
+        Majority maker node should NOT have sap-hana-ha or resource-agents-sap-hana-scaleout.
+        If it does, location constraints and resource-discovery=never must be configured.
         """
         # Extract parsed values
         node_count_str = parsed.get('node_count')
@@ -303,7 +304,7 @@ class RulesEngine:
         # Detect based on resource agent type (the definitive indicator)
         has_saphana = saphana_resource is not None  # Scale-Up uses SAPHana resource
         has_controller = saphana_controller is not None  # Scale-Out uses SAPHanaController
-        has_majority_maker = majority_maker is not None
+        has_majority_maker = majority_maker is not None and majority_maker != 'none'
 
         # Determine cluster type
         cluster_type = "Unknown"
@@ -319,20 +320,24 @@ class RulesEngine:
             cluster_type = "Not detected"
             message = "Could not detect cluster configuration (cluster may not be running)"
         elif has_controller:
-            # SAPHanaController is the definitive indicator for Scale-Out
+            # SAPHanaController = Scale-Out (2+ HANA nodes per site + majority maker)
             cluster_type = "Scale-Out"
             if has_majority_maker:
-                message = f"Scale-Out configuration ({node_count} nodes with majority maker)"
+                # Expected: 4+ HANA nodes + 1 majority maker = 5+ total
+                hana_nodes = node_count - 1  # Subtract majority maker
+                message = f"Scale-Out configuration ({hana_nodes} HANA nodes + majority maker)"
             else:
-                message = f"Scale-Out configuration ({node_count} nodes)"
+                message = f"Scale-Out configuration ({node_count} nodes) - WARNING: no majority maker detected"
         elif has_saphana:
-            # SAPHana resource (not SAPHanaController) = Scale-Up
-            # This is true even with 3+ nodes (majority maker adds a node)
+            # SAPHana resource = Scale-Up (exactly 2 nodes, no majority maker)
             cluster_type = "Scale-Up"
-            if has_majority_maker or node_count > 2:
-                message = f"Scale-Up configuration ({node_count} nodes with majority maker)"
+            if node_count == 2 and not has_majority_maker:
+                message = f"Scale-Up configuration (2 nodes, standard HA)"
+            elif has_majority_maker:
+                # Scale-Up should NOT have majority maker
+                message = f"Scale-Up with {node_count} nodes - WARNING: majority maker detected but Scale-Up should be 2 nodes only"
             else:
-                message = f"Scale-Up configuration ({node_count} nodes, standard HA)"
+                message = f"Scale-Up configuration ({node_count} nodes) - WARNING: expected 2 nodes"
         elif node_count == 1:
             # 1 node - single node (no HA)
             cluster_type = "Single Node"
