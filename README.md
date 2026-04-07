@@ -169,7 +169,7 @@ See [docs/EXTENDING_HEALTH_CHECKS.md](docs/EXTENDING_HEALTH_CHECKS.md) for detai
 
 ## License
 
-MIT License
+Apache License 2.0 - See [LICENSE](LICENSE) for details.
 
 ## Contributing
 
