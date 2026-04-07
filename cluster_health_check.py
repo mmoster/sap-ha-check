@@ -2905,8 +2905,8 @@ USAGE EXAMPLES
         print("NO EXISTING CONFIGURATION")
         print()
         print("Options:")
+        print("  [Enter]     Run in local mode (on this cluster node)  [default]")
         print("  [nodes]     Enter node names to check (space-separated)")
-        print("  [l]         Run in local mode (on this cluster node)")
         print("  [q]         Quit")
     print("-" * 63)
 
@@ -2931,12 +2931,12 @@ USAGE EXAMPLES
         return ['local'], True
 
     if response == '':
-        # Continue with existing nodes
+        # Continue with existing nodes, or default to local mode if none
         if existing_nodes:
             return existing_nodes, True
         else:
-            print("No nodes configured. Please specify node names.")
-            return None, False
+            # No existing config - default to local mode
+            return ['local'], True
 
     # User entered node names
     nodes = response.split()
