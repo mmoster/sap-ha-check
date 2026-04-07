@@ -421,30 +421,45 @@ class RulesEngine:
 
     def _check_command_available(self, cmd: str, node: str, method: str, user: str = None) -> tuple:
         """
-        Quick check if the primary command in a pipeline is available.
+        Quick check if any command in a pipeline/fallback chain is available.
         Returns (available: bool, reason: str)
+
+        Handles:
+        - Simple commands: 'SAPHanaSR-showAttr'
+        - Pipelines: 'cmd1 | grep foo'
+        - Fallbacks: 'cmd1 || cmd2' (if cmd1 not available, check cmd2)
         """
-        # Extract first command from pipeline
-        first_cmd = cmd.split('|')[0].split(';')[0].split('&&')[0].strip()
+        builtins = ['grep', 'cat', 'echo', 'awk', 'sed', 'head', 'tail', 'cut', 'tr', 'sort', 'timeout', 'if', 'for', 'while']
 
-        # Skip check for built-in commands and common utilities
-        builtins = ['grep', 'cat', 'echo', 'awk', 'sed', 'head', 'tail', 'cut', 'tr', 'sort', 'timeout']
-        cmd_name = first_cmd.split()[0] if first_cmd else ''
+        def extract_cmd_name(cmd_part: str) -> str:
+            """Extract the primary command name from a command string."""
+            # Remove leading whitespace and handle redirections
+            cmd_part = cmd_part.strip()
+            # Split on pipe to get first command in pipeline
+            first_part = cmd_part.split('|')[0].split(';')[0].split('&&')[0].strip()
+            # Get the command name (first word)
+            return first_part.split()[0] if first_part else ''
 
-        if cmd_name in builtins or cmd_name.startswith('/'):
-            return True, "builtin/path"
+        # Split on '||' to handle fallback commands
+        fallback_parts = cmd.split('||')
 
-        # Check if command exists (locally or on remote node)
-        check_cmd = f"command -v {cmd_name} >/dev/null 2>&1 && echo 'OK' || echo 'MISSING'"
-        success, output = self._execute_command(check_cmd, node, method, user)
+        for part in fallback_parts:
+            cmd_name = extract_cmd_name(part)
 
-        if success and 'OK' in output:
-            return True, "available"
-        elif 'MISSING' in output:
-            return False, f"Command '{cmd_name}' not found on {node}"
-        else:
-            # If check failed, assume command might be available
-            return True, "unknown"
+            # Skip check for built-in commands and common utilities
+            if cmd_name in builtins or cmd_name.startswith('/'):
+                return True, "builtin/path"
+
+            # Check if command exists (locally or on remote node)
+            check_cmd = f"command -v {cmd_name} >/dev/null 2>&1 && echo 'OK' || echo 'MISSING'"
+            success, output = self._execute_command(check_cmd, node, method, user)
+
+            if success and 'OK' in output:
+                return True, f"{cmd_name} available"
+
+        # No command in the fallback chain was found
+        all_cmds = [extract_cmd_name(p) for p in fallback_parts]
+        return False, f"Commands not found on {node}: {', '.join(all_cmds)}"
 
     def _run_check_on_node(self, rule: RuleDefinition, node: str,
                           method: str, user: str = None,
