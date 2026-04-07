@@ -1693,6 +1693,10 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                 elif response == 'd':
                     from access.discover_access import delete_config
                     delete_config(self.config_dir / AccessDiscovery.CONFIG_FILE)
+                    print("  Restarting health check...\n")
+                    # Restart without -D flag
+                    new_argv = [arg for arg in sys.argv if arg not in ['-D', '--delete-reports']]
+                    os.execv(sys.executable, [sys.executable] + new_argv)
                 elif response == 'q':
                     break
                 else:
@@ -3810,7 +3814,10 @@ Examples:
     # Handle delete-config action
     if args.delete_reports:
         delete_config(config_path)
-        sys.exit(0)
+        print("  Restarting health check...\n")
+        # Restart without -D flag to prevent loop
+        new_argv = [arg for arg in sys.argv if arg not in ['-D', '--delete-reports']]
+        os.execv(sys.executable, [sys.executable] + new_argv)
 
     # Handle list-rules action
     if args.list_rules:
