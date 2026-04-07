@@ -20,17 +20,14 @@ source_definitions:
     echo "=== CLUSTER_NODES ==="
     crm_node -l 2>/dev/null || pcs status nodes 2>/dev/null
     echo "=== MAJORITY_MAKER ==="
-    # Check for majority maker in various places
     crm_node -l 2>/dev/null | grep -iE 'majority|mm-' || echo "none"
     pcs status nodes 2>/dev/null | grep -iE 'majority|mm-' || true
     echo "=== HANA_PACKAGES ==="
     rpm -qa 2>/dev/null | grep -E 'sap-hana-ha|resource-agents-sap-hana' || echo "none"
     echo "=== LOCATION_CONSTRAINTS ==="
-    pcs constraint location show 2>/dev/null | grep -iE 'SAPHana|Controller' || \
-      crm configure show 2>/dev/null | grep -E 'location.*SAPHana' || echo "none"
+    pcs constraint location show 2>/dev/null | grep -iE 'SAPHana|Controller' || echo "none"
     echo "=== RESOURCE_DISCOVERY ==="
-    pcs constraint location show --full 2>/dev/null | grep -i 'resource-discovery' || \
-      crm configure show 2>/dev/null | grep -i 'resource-discovery' || echo "none"
+    pcs constraint location show --full 2>/dev/null | grep -i 'resource-discovery' || echo "none"
   sos_path: "sos_commands/pacemaker/pcs_constraint_--full"
 
 parser:

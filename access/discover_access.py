@@ -658,10 +658,10 @@ class AccessDiscovery:
 
         # Discover cluster nodes locally
         discovery_commands = [
+            # Pacemaker commands (work on RHEL)
             "crm_node -l | awk '{print $2}'",
             "pcs status nodes | grep -E 'Online|Standby|Offline' | tr ' ' '\\n' | grep -v -E '^$|Online|Standby|Offline|:'",
             "corosync-cmapctl -b nodelist.node | grep 'ring0_addr' | cut -d= -f2 | tr -d ' '",
-            "crm status | grep -E '^Node' | awk '{print $2}'",
         ]
 
         for cmd in discovery_commands:
@@ -719,16 +719,14 @@ class AccessDiscovery:
             if self.debug:
                 print(f"  [DEBUG] Could not determine cluster name")
 
-        # Commands to try for discovering cluster nodes
+        # Commands to try for discovering cluster nodes (RHEL)
         discovery_commands = [
-            # crm_node (generic Pacemaker command)
+            # crm_node (Pacemaker command)
             "crm_node -l | awk '{print $2}'",
             # pcs status (RHEL primary method)
             "pcs status nodes | grep -E 'Online|Standby|Offline' | tr ' ' '\\n' | grep -v -E '^$|Online|Standby|Offline|:'",
             # corosync-cmapctl
             "corosync-cmapctl -b nodelist.node | grep 'ring0_addr' | cut -d= -f2 | tr -d ' '",
-            # crm status (fallback)
-            "crm status | grep -E '^Node' | awk '{print $2}'",
         ]
 
         for cmd in discovery_commands:

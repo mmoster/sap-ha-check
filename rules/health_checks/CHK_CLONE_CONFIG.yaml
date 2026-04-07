@@ -7,15 +7,8 @@ enabled: true
 
 source_definitions:
   # Check clone/promotable resource config using pcs (RHEL)
-  live_cmd: |
-    if command -v pcs >/dev/null 2>&1; then
-      pcs resource config 2>/dev/null | grep -iE 'clone|promotable|SAPHana' || echo "NO_CLONE_CONFIG"
-    elif command -v crm >/dev/null 2>&1; then
-      crm configure show 2>/dev/null | grep -A10 'clone\|ms\|promotable'
-    else
-      echo "NO_CLUSTER_TOOLS"
-    fi
-  sos_path: "sos_commands/pacemaker/crm_configure_show"
+  live_cmd: "pcs resource config 2>/dev/null | grep -iE 'clone|promotable|SAPHana' || echo 'NO_CLONE_CONFIG'"
+  sos_path: "sos_commands/pacemaker/pcs_config"
 
 parser:
   type: regex

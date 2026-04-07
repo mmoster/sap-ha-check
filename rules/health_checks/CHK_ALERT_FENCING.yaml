@@ -9,18 +9,12 @@ optional: true  # Alerts optional in non-strict mode
 source_definitions:
   # Check for alert and fencing configuration using pcs (RHEL)
   live_cmd: |
-    if command -v pcs >/dev/null 2>&1; then
-      echo "=== ALERTS ==="
-      pcs alert config 2>/dev/null || echo "NO_ALERTS"
-      echo "=== FENCING ==="
-      pcs stonith status 2>/dev/null
-      pcs stonith config 2>/dev/null | head -20
-    elif command -v crm >/dev/null 2>&1; then
-      crm configure show 2>/dev/null | grep -E 'alert|fence'
-    else
-      echo "NO_CLUSTER_TOOLS"
-    fi
-  sos_path: "sos_commands/pacemaker/crm_configure_show"
+    echo "=== ALERTS ==="
+    pcs alert config 2>/dev/null || echo "NO_ALERTS"
+    echo "=== FENCING ==="
+    pcs stonith status 2>/dev/null
+    pcs stonith config 2>/dev/null | head -20
+  sos_path: "sos_commands/pacemaker/pcs_config"
 
 parser:
   type: regex

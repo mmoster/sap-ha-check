@@ -1446,7 +1446,6 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
             # Check for installation issues
             # Essential commands for RHEL clusters
             essential_commands = ['pacemaker', 'corosync', 'pcs', 'crm_mon']
-            optional_commands = ['crm', 'crmsh']  # Optional, not required on RHEL
             packages_missing = False
             commands_missing = []
             for r in all_results:

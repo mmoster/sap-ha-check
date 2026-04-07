@@ -309,7 +309,6 @@ COMMANDS TO CHECK
 
   # Configuration
   pcs config show
-  crm configure show
 
 DOCUMENTATION
 -------------
