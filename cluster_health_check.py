@@ -36,7 +36,7 @@ SCRIPT_DIR = Path(__file__).parent.resolve()
 sys.path.insert(0, str(SCRIPT_DIR / "access"))
 sys.path.insert(0, str(SCRIPT_DIR / "rules"))
 
-from discover_access import AccessDiscovery, show_config, delete_config  # noqa: E402
+from discover_access import AccessDiscovery, show_config, delete_config, export_ansible_vars  # noqa: E402
 from engine import RulesEngine, CheckResult, CheckStatus, Severity  # noqa: E402
 
 # Import lib modules
@@ -2026,6 +2026,12 @@ Examples:
         help='Delete report files (keeps node access config)'
     )
     parser.add_argument(
+        '--export-ansible', '-E',
+        nargs='+',
+        metavar=('CLUSTER', 'OUTPUT_FILE'),
+        help='Export cluster config as Ansible group_vars YAML. Usage: --export-ansible CLUSTER [output.yml]'
+    )
+    parser.add_argument(
         '--force', '-f',
         action='store_true',
         help='Force rediscovery (ignore existing config)'
@@ -2221,7 +2227,7 @@ Examples:
             pass  # Silently ignore any errors in update check
 
     # Check for updates (skip if running non-interactively or with certain flags)
-    if sys.stdin.isatty() and not any([args.show_config, args.list_rules, args.guide, args.install, args.no_update_check]):
+    if sys.stdin.isatty() and not any([args.show_config, args.list_rules, args.guide, args.install, args.no_update_check, args.export_ansible]):
         check_for_updates()
 
     # Handle usage/scan action (-u)
@@ -2367,6 +2373,13 @@ Examples:
     config_dir = Path(args.config_dir) if args.config_dir else SCRIPT_DIR
     config_path = config_dir / AccessDiscovery.CONFIG_FILE
 
+    # Handle export-ansible action (before interactive mode)
+    if args.export_ansible:
+        cluster_name = args.export_ansible[0]
+        output_file = args.export_ansible[1] if len(args.export_ansible) > 1 else None
+        success = export_ansible_vars(config_path, cluster_name, output_file)
+        sys.exit(0 if success else 1)
+
     # Interactive mode: if no arguments provided, show intro and ask user
     local_mode = args.local
     interactive_hosts = None
@@ -2375,7 +2388,8 @@ Examples:
                           not args.sosreport_dir and not args.cluster and
                           not args.local and not args.access_only and
                           not args.show_config and not args.delete_reports and
-                          not args.list_rules and not args.force)
+                          not args.list_rules and not args.force and
+                          not args.export_ansible)
 
     if no_input_specified:
         # Run interactive startup

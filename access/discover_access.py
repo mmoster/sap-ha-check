@@ -1556,8 +1556,12 @@ def show_config(config_path: Path, cluster_or_node: str = None):
                 inst = info.get('instance_number', '??')
                 resource_type = info.get('resource_type', 'SAPHana')
 
-                print("\n    SAP HANA Configuration:")
+                print("\n    SAP HANA HA Configuration (Ansible-compatible):")
                 print("    " + "-" * 40)
+
+                # Cluster name and nodes
+                print(f"      cluster_name: {name}")
+                print(f"      cluster_nodes: [{', '.join(cluster_nodes)}]")
 
                 # Core Parameters
                 print(f"      hana_sid: {sid}")
@@ -1712,6 +1716,154 @@ def show_config(config_path: Path, cluster_or_node: str = None):
     print("  Force rediscover: ./cluster_health_check.py -f hana01")
     print("  Delete config:    ./cluster_health_check.py -D")
     print("  Show guide:       ./cluster_health_check.py --guide")
+
+    return True
+
+
+def export_ansible_vars(config_path: Path, cluster_name: str, output_file: str = None):
+    """
+    Export cluster configuration as Ansible group_vars YAML file.
+
+    Args:
+        config_path: Path to the configuration file
+        cluster_name: Name of the cluster to export
+        output_file: Optional output file path. If not provided, prints to stdout.
+    """
+    if not config_path.exists():
+        print(f"No configuration file found at {config_path}")
+        return False
+
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
+
+    clusters = config.get('clusters', {})
+
+    if cluster_name not in clusters:
+        print(f"Cluster '{cluster_name}' not found in configuration.")
+        print(f"Available clusters: {', '.join(clusters.keys())}")
+        return False
+
+    info = clusters[cluster_name]
+    cluster_nodes = info.get('nodes', [])
+    sid = info.get('sid', '')
+
+    if not sid:
+        print(f"No SAP HANA configuration found for cluster '{cluster_name}'.")
+        print("Run discovery with: ./cluster_health_check.py -f <node>")
+        return False
+
+    # Build Ansible vars dictionary
+    ansible_vars = {
+        '# SAP HANA HA Pacemaker Configuration': None,
+        f'# Cluster: {cluster_name}': None,
+        f'# Generated from: {config_path}': None,
+        '': None,
+        '# Core SAP HANA Parameters': None,
+        'sap_hana_ha_pacemaker_hana_sid': sid,
+        'sap_hana_ha_pacemaker_hana_instance_number': f'"{info.get("instance_number", "00")}"',
+    }
+
+    # Cluster name
+    ansible_vars['sap_hana_ha_pacemaker_cluster_name'] = cluster_name
+
+    # Node information
+    if len(cluster_nodes) >= 2:
+        ansible_vars['\n# Cluster Node Information'] = None
+        node1_fqdn = info.get('node1_fqdn', cluster_nodes[0])
+        node1_ip = info.get('node1_ip', '')
+        node2_fqdn = info.get('node2_fqdn', cluster_nodes[1])
+        node2_ip = info.get('node2_ip', '')
+
+        ansible_vars['sap_hana_ha_pacemaker_node1_fqdn'] = node1_fqdn
+        if node1_ip:
+            ansible_vars['sap_hana_ha_pacemaker_node1_ip'] = node1_ip
+        ansible_vars['sap_hana_ha_pacemaker_node2_fqdn'] = node2_fqdn
+        if node2_ip:
+            ansible_vars['sap_hana_ha_pacemaker_node2_ip'] = node2_ip
+
+    # Virtual IP
+    vip = info.get('virtual_ip', '')
+    if vip:
+        ansible_vars['\n# Virtual IP Configuration'] = None
+        ansible_vars['sap_hana_ha_pacemaker_vip'] = vip
+        secondary_vip = info.get('secondary_vip', '')
+        if secondary_vip:
+            ansible_vars['sap_hana_ha_pacemaker_secondary_vip'] = secondary_vip
+            ansible_vars['sap_hana_ha_pacemaker_secondary_read'] = 'true'
+
+    # Cluster password placeholder
+    ansible_vars['\n# Pacemaker & HA Service Setup'] = None
+    ansible_vars['sap_hana_ha_pacemaker_hacluster_password'] = '"{{ vault_hacluster_password }}"  # Store in Ansible Vault'
+
+    # System Replication
+    repl_mode = info.get('replication_mode', '')
+    op_mode = info.get('operation_mode', '')
+    site1 = info.get('site1_name', '')
+    site2 = info.get('site2_name', '')
+    if repl_mode or op_mode or site1:
+        ansible_vars['\n# SAP HANA System Replication'] = None
+        if repl_mode:
+            ansible_vars['sap_hana_ha_pacemaker_replication_mode'] = repl_mode
+        if op_mode:
+            ansible_vars['sap_hana_ha_pacemaker_operation_mode'] = op_mode
+        if site1:
+            ansible_vars['sap_hana_ha_pacemaker_site1_name'] = site1
+        if site2:
+            ansible_vars['sap_hana_ha_pacemaker_site2_name'] = site2
+
+    # Cluster Properties
+    auto_reg = info.get('automated_register')
+    prefer_takeover = info.get('prefer_site_takeover')
+    stickiness = info.get('resource_stickiness')
+    migration = info.get('migration_threshold')
+    if auto_reg is not None or prefer_takeover is not None or stickiness or migration:
+        ansible_vars['\n# Cluster Properties'] = None
+        if auto_reg is not None:
+            ansible_vars['sap_hana_ha_pacemaker_automated_register'] = str(auto_reg).lower()
+        if prefer_takeover is not None:
+            ansible_vars['sap_hana_ha_pacemaker_prefer_site_takeover'] = str(prefer_takeover).lower()
+        if stickiness:
+            ansible_vars['sap_hana_ha_pacemaker_resource_stickiness'] = stickiness
+        if migration:
+            ansible_vars['sap_hana_ha_pacemaker_migration_threshold'] = migration
+
+    # STONITH
+    stonith = info.get('stonith_device', '')
+    stonith_type = info.get('stonith_type', '')
+    if stonith:
+        ansible_vars['\n# STONITH/Fencing Configuration'] = None
+        ansible_vars['sap_hana_ha_pacemaker_stonith_device'] = stonith
+        if stonith_type:
+            ansible_vars['sap_hana_ha_pacemaker_stonith_type'] = stonith_type
+        ansible_vars['# Add fencing credentials as needed:'] = None
+        ansible_vars['# sap_hana_ha_pacemaker_fence_user'] = '"{{ vault_fence_user }}"'
+        ansible_vars['# sap_hana_ha_pacemaker_fence_password'] = '"{{ vault_fence_password }}"'
+
+    # Format output
+    output_lines = ['---']
+    for key, value in ansible_vars.items():
+        if key.startswith('#') or key.startswith('\n#'):
+            output_lines.append(key.lstrip('\n'))
+        elif key == '':
+            output_lines.append('')
+        elif value is None:
+            continue
+        else:
+            output_lines.append(f'{key}: {value}')
+
+    yaml_content = '\n'.join(output_lines)
+
+    if output_file:
+        output_path = Path(output_file)
+        with open(output_path, 'w') as f:
+            f.write(yaml_content + '\n')
+        print(f"Ansible vars exported to: {output_path}")
+        print("\nUsage:")
+        print(f"  1. Move to your Ansible inventory: group_vars/{cluster_name}.yml")
+        print("  2. Store passwords in Ansible Vault")
+        print("  3. Run playbook: ansible-playbook -i inventory sap_hana_ha.yml --ask-vault-pass")
+    else:
+        print(yaml_content)
 
     return True
 
