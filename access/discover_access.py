@@ -773,7 +773,7 @@ class AccessDiscovery:
 
     def check_ssh_access(self, hostname: str, user: str = None) -> tuple:
         """Check SSH access to a host. Returns (reachable, user)."""
-        users_to_try = [user] if user else [os.environ.get('USER', 'root'), 'root']
+        users_to_try = [user] if user else ['root', os.environ.get('USER', 'root')]
 
         for try_user in users_to_try:
             if try_user is None:
