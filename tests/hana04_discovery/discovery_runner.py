@@ -14,7 +14,6 @@ import subprocess
 import re
 from pathlib import Path
 from datetime import datetime
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Any, Optional, Tuple
 
 # Python 3.6 compatibility for dataclasses
@@ -52,7 +51,7 @@ SCRIPT_DIR = Path(__file__).parent.resolve()
 WRAPPER_DIR = SCRIPT_DIR.parent.parent / "wrapper"
 sys.path.insert(0, str(WRAPPER_DIR / "access"))
 
-from discover_access import AccessDiscovery
+from discover_access import AccessDiscovery  # noqa: E402
 
 
 @dataclass
@@ -153,7 +152,7 @@ class DiscoveryRunner:
         try:
             full_cmd = [
                 "ssh", "-o", "BatchMode=yes",
-                "-o", f"ConnectTimeout=10",
+                "-o", "ConnectTimeout=10",
                 "-o", "StrictHostKeyChecking=no",
                 f"{ssh_user}@{host}",
                 cmd
@@ -183,7 +182,7 @@ class DiscoveryRunner:
         elif parser_type == 'lines':
             lines = output.strip().split('\n')
             if parser_config.get('filter_empty', False):
-                lines = [l for l in lines if l.strip()]
+                lines = [line for line in lines if line.strip()]
             return lines
 
         elif parser_type == 'key_value':
@@ -299,7 +298,7 @@ class DiscoveryRunner:
         groups_to_run = groups or list(self.rules.keys())
 
         print(f"\n{'='*60}")
-        print(f" Running Discoveries")
+        print(" Running Discoveries")
         print(f"{'='*60}")
         print(f" Hosts: {len(hosts)}")
         print(f" Groups: {', '.join(groups_to_run)}")
@@ -388,7 +387,7 @@ class DiscoveryRunner:
     def print_summary(self):
         """Gibt eine Zusammenfassung aus"""
         print(f"\n{'='*60}")
-        print(f" Discovery Summary")
+        print(" Discovery Summary")
         print(f"{'='*60}")
 
         for hostname, data in self.results.items():

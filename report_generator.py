@@ -4,11 +4,8 @@ PDF Report Generator for SAP HANA Cluster Health Check
 Following Red Hat Documentation Style Guidelines
 """
 
-import os
-import sys
 from datetime import datetime
-from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Dict, List
 
 # fpdf2 is optional - PDF generation will be skipped if not available
 FPDF_AVAILABLE = False

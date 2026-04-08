@@ -36,11 +36,11 @@ SCRIPT_DIR = Path(__file__).parent.resolve()
 sys.path.insert(0, str(SCRIPT_DIR / "access"))
 sys.path.insert(0, str(SCRIPT_DIR / "rules"))
 
-from discover_access import AccessDiscovery, show_config, delete_config
-from engine import RulesEngine, CheckResult, CheckStatus, Severity
+from discover_access import AccessDiscovery, show_config, delete_config  # noqa: E402
+from engine import RulesEngine, CheckResult, CheckStatus, Severity  # noqa: E402
 
 # Import lib modules
-from lib import (
+from lib import (  # noqa: E402
     print_guide,
     print_steps,
     print_suggestions,
@@ -1440,7 +1440,7 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
 
             # Check for installation issues
             # Essential commands for RHEL clusters
-            essential_commands = ['pacemaker', 'corosync', 'pcs', 'crm_mon']
+            essential_commands = ['pacemaker', 'corosync', 'pcs', 'crm_mon']  # noqa: F841
             packages_missing = False
             commands_missing = []
             for r in all_results:

@@ -1377,7 +1377,7 @@ def show_config(config_path: Path, cluster_or_node: str = None):
     print("\n--- Quick Commands ---")
     if cluster_name:
         print(f"  Check cluster:    ./cluster_health_check.py -C {cluster_name}")
-        print(f"  Show all config:  ./cluster_health_check.py --show-config")
+        print("  Show all config:  ./cluster_health_check.py --show-config")
     elif clusters:
         first_cluster = list(clusters.keys())[0]
         print(f"  Check cluster:    ./cluster_health_check.py -C {first_cluster}")
