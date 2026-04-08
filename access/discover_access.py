@@ -602,20 +602,32 @@ class AccessDiscovery:
 
         return None
 
-    def discover_hana_info(self, host: str, user: str = None) -> dict:
-        """Discover SAP HANA SID, instance number, resource names, and cluster configuration."""
+    def discover_hana_info(self, host: str, user: str = None, cluster_nodes: list = None) -> dict:
+        """
+        Discover SAP HANA cluster configuration parameters.
+
+        Returns Ansible-compatible parameters for sap_hana_ha_pacemaker role:
+        - Core: sid, instance_number
+        - Nodes: node1_fqdn, node1_ip, node2_fqdn, node2_ip
+        - VIP: virtual_ip, secondary_vip
+        - Cluster: cluster_name, secondary_read
+        - Resources: resource_name, topology_resource, vip_resource
+        - STONITH: stonith_device, stonith_type
+        - Replication: replication_mode, operation_mode, sites
+        """
         ssh_user = user or 'root'
         sudo_prefix = "sudo " if ssh_user != 'root' else ""
         hana_info = {}
 
-        def run_ssh_cmd(cmd: str) -> str:
+        def run_ssh_cmd(cmd: str, target_host: str = None) -> str:
             """Helper to run SSH command and return output."""
+            target = target_host or host
             try:
                 ssh_cmd = [
                     "ssh", "-o", "BatchMode=yes",
                     "-o", f"ConnectTimeout={self.SSH_TIMEOUT}",
                     "-o", "StrictHostKeyChecking=no",
-                    f"{ssh_user}@{host}",
+                    f"{ssh_user}@{target}",
                     f"{sudo_prefix}{cmd}"
                 ]
                 result = subprocess.run(ssh_cmd, stdin=subprocess.DEVNULL,
@@ -627,15 +639,17 @@ class AccessDiscovery:
                 pass
             return ""
 
-        # Commands to discover SAP HANA resources
+        import re
+
+        # === Core SAP HANA Parameters ===
+        # Discover SID and instance from resource names
         resource_commands = [
-            ("pcs resource status 2>/dev/null | grep -oE 'SAPHana_[A-Z0-9]+_[0-9]+' | head -1", "SAPHana"),
-            ("pcs resource status 2>/dev/null | grep -oE 'SAPHanaController_[A-Z0-9]+_[0-9]+' | head -1", "SAPHanaController"),
-            ("crm resource status 2>/dev/null | grep -oE 'SAPHana_[A-Z0-9]+_[0-9]+' | head -1", "SAPHana"),
+            "pcs resource status 2>/dev/null | grep -oE 'SAPHana_[A-Z0-9]+_[0-9]+' | head -1",
+            "pcs resource status 2>/dev/null | grep -oE 'SAPHanaController_[A-Z0-9]+_[0-9]+' | head -1",
+            "crm resource status 2>/dev/null | grep -oE 'SAPHana_[A-Z0-9]+_[0-9]+' | head -1",
         ]
 
-        import re
-        for cmd, _ in resource_commands:
+        for cmd in resource_commands:
             output = run_ssh_cmd(cmd)
             if output:
                 match = re.match(r'(SAPHana(?:Controller)?)_([A-Z0-9]+)_(\d+)', output)
@@ -651,21 +665,99 @@ class AccessDiscovery:
         if topo_output:
             hana_info['topology_resource'] = topo_output
 
-        # Get Virtual IP resource and address
-        vip_output = run_ssh_cmd("pcs resource config 2>/dev/null | grep -A5 'IPaddr2' | grep -oE 'ip=[0-9.]+' | cut -d= -f2 | head -1")
+        # === Cluster Node Information ===
+        nodes = cluster_nodes or []
+        if len(nodes) >= 2:
+            # Get FQDN for node1
+            node1_fqdn = run_ssh_cmd("hostname -f 2>/dev/null || hostname", nodes[0])
+            if node1_fqdn:
+                hana_info['node1_fqdn'] = node1_fqdn
+            hana_info['node1_hostname'] = nodes[0]
+
+            # Get IP for node1
+            node1_ip = run_ssh_cmd("hostname -i 2>/dev/null | awk '{print $1}'", nodes[0])
+            if node1_ip:
+                hana_info['node1_ip'] = node1_ip
+
+            # Get FQDN for node2
+            node2_fqdn = run_ssh_cmd("hostname -f 2>/dev/null || hostname", nodes[1])
+            if node2_fqdn:
+                hana_info['node2_fqdn'] = node2_fqdn
+            hana_info['node2_hostname'] = nodes[1]
+
+            # Get IP for node2
+            node2_ip = run_ssh_cmd("hostname -i 2>/dev/null | awk '{print $1}'", nodes[1])
+            if node2_ip:
+                hana_info['node2_ip'] = node2_ip
+
+        # === Virtual IP Configuration ===
+        # Get all VIP resources and addresses
+        vip_output = run_ssh_cmd("pcs resource config 2>/dev/null | grep -B2 -A5 'IPaddr2' | grep -oE 'ip=[0-9.]+' | cut -d= -f2")
         if vip_output:
-            hana_info['virtual_ip'] = vip_output
+            vips = [v.strip() for v in vip_output.split('\n') if v.strip()]
+            if vips:
+                hana_info['virtual_ip'] = vips[0]
+                if len(vips) > 1:
+                    hana_info['secondary_vip'] = vips[1]
 
-        # Get VIP resource name
-        vip_name = run_ssh_cmd("pcs resource status 2>/dev/null | grep -oE 'vip[-_][A-Za-z0-9_]+|rsc_ip_[A-Za-z0-9_]+' | head -1")
-        if vip_name:
-            hana_info['vip_resource'] = vip_name
+        # Get VIP resource names
+        vip_names = run_ssh_cmd("pcs resource status 2>/dev/null | grep -oE 'vip[-_][A-Za-z0-9_]+|rsc_ip_[A-Za-z0-9_]+|ip[-_][A-Za-z0-9_]+'")
+        if vip_names:
+            vip_list = [v.strip() for v in vip_names.split('\n') if v.strip()]
+            if vip_list:
+                hana_info['vip_resource'] = vip_list[0]
+                if len(vip_list) > 1:
+                    hana_info['secondary_vip_resource'] = vip_list[1]
 
-        # Get STONITH/fencing device
-        stonith_output = run_ssh_cmd("pcs stonith status 2>/dev/null | grep -oE '^[[:space:]]*\\*[[:space:]]+[A-Za-z0-9_-]+' | awk '{print $2}' | head -1")
-        if stonith_output:
-            hana_info['stonith_device'] = stonith_output
+        # Check if secondary read is enabled (look for second VIP or AUTOMATED_REGISTER)
+        auto_reg = run_ssh_cmd("pcs resource config 2>/dev/null | grep -i 'AUTOMATED_REGISTER' | grep -oE 'true|false' | head -1")
+        if auto_reg:
+            hana_info['automated_register'] = auto_reg.lower() == 'true'
 
+        # Check for secondary read (multiple VIPs or specific config)
+        hana_info['secondary_read'] = 'secondary_vip' in hana_info
+
+        # === STONITH/Fencing Configuration ===
+        # Get STONITH device name and type
+        stonith_name = run_ssh_cmd("pcs stonith status 2>/dev/null | grep -oE '^[[:space:]]*\\*[[:space:]]+[A-Za-z0-9_-]+' | awk '{print $2}' | head -1")
+        if stonith_name:
+            hana_info['stonith_device'] = stonith_name
+
+        # Get STONITH device type (agent)
+        stonith_type = run_ssh_cmd(f"pcs stonith config {stonith_name} 2>/dev/null | grep -oE 'stonith:[a-z_]+' | head -1" if stonith_name else "echo ''")
+        if stonith_type:
+            hana_info['stonith_type'] = stonith_type.replace('stonith:', '')
+
+        # Get fence device parameters (for VMware, Azure, etc.)
+        if stonith_name:
+            fence_params = run_ssh_cmd(f"pcs stonith config {stonith_name} 2>/dev/null | grep -E 'ipaddr|login|passwd|ssl|pcmk_host' | head -5")
+            if fence_params:
+                params = {}
+                for line in fence_params.split('\n'):
+                    if '=' in line or ':' in line:
+                        # Parse key=value or key: value
+                        parts = re.split(r'[=:]', line.strip(), 1)
+                        if len(parts) == 2:
+                            key = parts[0].strip()
+                            val = parts[1].strip()
+                            # Don't store passwords
+                            if 'pass' not in key.lower():
+                                params[key] = val
+                if params:
+                    hana_info['stonith_params'] = params
+
+        # === Cluster Properties ===
+        # Get resource-stickiness
+        stickiness = run_ssh_cmd("pcs property show 2>/dev/null | grep -i 'resource-stickiness' | grep -oE '[0-9]+' | head -1")
+        if stickiness:
+            hana_info['resource_stickiness'] = int(stickiness)
+
+        # Get migration-threshold
+        migration = run_ssh_cmd("pcs resource config 2>/dev/null | grep -i 'migration-threshold' | grep -oE '[0-9]+' | head -1")
+        if migration:
+            hana_info['migration_threshold'] = int(migration)
+
+        # === SAP HANA System Replication ===
         # Get replication mode from SAPHanaSR
         repl_mode = run_ssh_cmd("SAPHanaSR-showAttr 2>/dev/null | grep -oE 'sync|syncmem|async' | head -1")
         if repl_mode:
@@ -676,12 +768,42 @@ class AccessDiscovery:
         if op_mode:
             hana_info['operation_mode'] = op_mode
 
-        # Get site names from SAPHanaSR
-        sites_output = run_ssh_cmd("SAPHanaSR-showAttr 2>/dev/null | grep -E 'site' | grep -oE 'DC[0-9]+|site[0-9]+|SITE[0-9]+|[A-Z]+[0-9]*' | sort -u | head -2")
+        # Get site names from SAPHanaSR or crm_attribute
+        sites_output = run_ssh_cmd("SAPHanaSR-showAttr 2>/dev/null | awk '/^Host/ {next} /^-/ {next} {print $4}' | sort -u | head -2")
+        if not sites_output:
+            # Try alternative: get from pcs resource config
+            sid = hana_info.get('sid', '')
+            if sid:
+                sites_output = run_ssh_cmd("pcs resource config 2>/dev/null | grep -oE 'PREFER_SITE_TAKEOVER|site=[A-Za-z0-9]+' | grep -oE '[A-Z][A-Z0-9]+' | sort -u | head -2")
         if sites_output:
-            sites = [s.strip() for s in sites_output.split('\n') if s.strip()]
+            # Filter out non-site values and extract clean site names
+            sites = []
+            for s in sites_output.split('\n'):
+                s = s.strip()
+                # Extract just the site name (e.g., DC1, DC2, SITE1, etc.)
+                if s and s not in ['', '-', 'true', 'false', 'PREFER', 'SITE', 'TAKEOVER']:
+                    # If it contains 'value=', extract just the value
+                    if 'value=' in s:
+                        s = s.split('value=')[-1].strip()
+                    if s and len(s) <= 20:  # Reasonable site name length
+                        sites.append(s)
+            sites = list(dict.fromkeys(sites))  # Remove duplicates while preserving order
             if sites:
                 hana_info['sites'] = sites
+                if len(sites) >= 1:
+                    hana_info['site1_name'] = sites[0]
+                if len(sites) >= 2:
+                    hana_info['site2_name'] = sites[1]
+
+        # Get PREFER_SITE_TAKEOVER
+        prefer_takeover = run_ssh_cmd("pcs resource config 2>/dev/null | grep -i 'PREFER_SITE_TAKEOVER' | grep -oE 'true|false' | head -1")
+        if prefer_takeover:
+            hana_info['prefer_site_takeover'] = prefer_takeover.lower() == 'true'
+
+        # Get DUPLICATE_PRIMARY_TIMEOUT
+        dup_timeout = run_ssh_cmd("pcs resource config 2>/dev/null | grep -i 'DUPLICATE_PRIMARY_TIMEOUT' | grep -oE '[0-9]+' | head -1")
+        if dup_timeout:
+            hana_info['duplicate_primary_timeout'] = int(dup_timeout)
 
         return hana_info
 
@@ -848,13 +970,16 @@ class AccessDiscovery:
             print(f"  Using {seed_host} as only node")
             cluster_nodes = [seed_host]
 
-        # Discover SAP HANA info
-        hana_info = self.discover_hana_info(seed_host, ssh_user)
+        # Discover SAP HANA info (pass cluster_nodes for node IP/FQDN discovery)
+        hana_info = self.discover_hana_info(seed_host, ssh_user, cluster_nodes)
         if hana_info:
             sid = hana_info.get('sid', '')
             inst = hana_info.get('instance_number', '')
+            vip = hana_info.get('virtual_ip', '')
             if sid:
                 print(f"  SAP HANA SID: {sid}, Instance: {inst}")
+            if vip:
+                print(f"  Virtual IP: {vip}")
 
         # Store cluster info
         if cluster_name:
@@ -1425,41 +1550,107 @@ def show_config(config_path: Path, cluster_or_node: str = None):
             print(f"    Nodes: {', '.join(cluster_nodes)}")
             print(f"    Discovered from: {discovered_from}")
 
-            # Show SAP HANA info if available
+            # Show SAP HANA info if available (Ansible-compatible parameters)
             sid = info.get('sid')
             if sid:
                 inst = info.get('instance_number', '??')
                 resource_type = info.get('resource_type', 'SAPHana')
-                resource_name = info.get('resource_name', '')
-                topology_resource = info.get('topology_resource', '')
+
+                print("\n    SAP HANA Configuration:")
+                print("    " + "-" * 40)
+
+                # Core Parameters
+                print(f"      hana_sid: {sid}")
+                print(f"      hana_instance_number: \"{inst}\"")
+
+                # Cluster type
+                cluster_type = "Scale-Up" if resource_type == "SAPHana" else "Scale-Out"
+                print(f"      cluster_type: {cluster_type}")
+
+                # Node Information
+                node1_fqdn = info.get('node1_fqdn', '')
+                node1_ip = info.get('node1_ip', '')
+                node2_fqdn = info.get('node2_fqdn', '')
+                node2_ip = info.get('node2_ip', '')
+                if node1_fqdn or node1_ip:
+                    print("\n      # Node 1")
+                    if node1_fqdn:
+                        print(f"      node1_fqdn: {node1_fqdn}")
+                    if node1_ip:
+                        print(f"      node1_ip: {node1_ip}")
+                if node2_fqdn or node2_ip:
+                    print("\n      # Node 2")
+                    if node2_fqdn:
+                        print(f"      node2_fqdn: {node2_fqdn}")
+                    if node2_ip:
+                        print(f"      node2_ip: {node2_ip}")
+
+                # Virtual IP
                 virtual_ip = info.get('virtual_ip', '')
                 vip_resource = info.get('vip_resource', '')
-                stonith_device = info.get('stonith_device', '')
+                secondary_vip = info.get('secondary_vip', '')
+                if virtual_ip:
+                    print("\n      # Virtual IP Configuration")
+                    print(f"      vip: {virtual_ip}")
+                    if vip_resource:
+                        print(f"      vip_resource: {vip_resource}")
+                    if secondary_vip:
+                        print(f"      secondary_vip: {secondary_vip}")
+                        print("      secondary_read: true")
+
+                # System Replication
                 repl_mode = info.get('replication_mode', '')
                 op_mode = info.get('operation_mode', '')
                 sites = info.get('sites', [])
+                site1 = info.get('site1_name', '')
+                site2 = info.get('site2_name', '')
+                if repl_mode or op_mode or sites:
+                    print("\n      # System Replication")
+                    if repl_mode:
+                        print(f"      replication_mode: {repl_mode}")
+                    if op_mode:
+                        print(f"      operation_mode: {op_mode}")
+                    if site1:
+                        print(f"      site1_name: {site1}")
+                    if site2:
+                        print(f"      site2_name: {site2}")
+                    elif sites:
+                        print(f"      sites: {', '.join(sites)}")
 
-                print("\n    SAP HANA Configuration:")
-                print(f"      SID: {sid}")
-                print(f"      Instance Number: {inst}")
-                print(f"      Resource Type: {resource_type}")
-                if resource_name:
-                    print(f"      HANA Resource: {resource_name}")
-                if topology_resource:
-                    print(f"      Topology Resource: {topology_resource}")
-                if virtual_ip:
-                    vip_info = f"{virtual_ip}"
-                    if vip_resource:
-                        vip_info += f" ({vip_resource})"
-                    print(f"      Virtual IP: {vip_info}")
-                if repl_mode:
-                    print(f"      Replication Mode: {repl_mode}")
-                if op_mode:
-                    print(f"      Operation Mode: {op_mode}")
-                if sites:
-                    print(f"      Sites: {', '.join(sites)}")
+                # Resource Names
+                resource_name = info.get('resource_name', '')
+                topology_resource = info.get('topology_resource', '')
+                if resource_name or topology_resource:
+                    print("\n      # Pacemaker Resources")
+                    if resource_name:
+                        print(f"      hana_resource: {resource_name}")
+                    if topology_resource:
+                        print(f"      topology_resource: {topology_resource}")
+
+                # STONITH
+                stonith_device = info.get('stonith_device', '')
+                stonith_type = info.get('stonith_type', '')
                 if stonith_device:
-                    print(f"      STONITH Device: {stonith_device}")
+                    print("\n      # STONITH/Fencing")
+                    print(f"      stonith_device: {stonith_device}")
+                    if stonith_type:
+                        print(f"      stonith_type: {stonith_type}")
+
+                # Cluster Properties
+                stickiness = info.get('resource_stickiness')
+                migration = info.get('migration_threshold')
+                auto_reg = info.get('automated_register')
+                prefer_takeover = info.get('prefer_site_takeover')
+                if stickiness or migration or auto_reg is not None or prefer_takeover is not None:
+                    print("\n      # Cluster Properties")
+                    if stickiness:
+                        print(f"      resource_stickiness: {stickiness}")
+                    if migration:
+                        print(f"      migration_threshold: {migration}")
+                    if auto_reg is not None:
+                        print(f"      automated_register: {str(auto_reg).lower()}")
+                    if prefer_takeover is not None:
+                        print(f"      prefer_site_takeover: {str(prefer_takeover).lower()}")
 
             print("\n    To check this cluster:")
             print(f"      ./cluster_health_check.py -C {name}")
