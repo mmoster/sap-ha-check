@@ -171,6 +171,9 @@ class RulesEngine:
                 full_cmd = cmd
             elif node and method == 'ssh':
                 ssh_user = user or os.environ.get('USER', 'root')
+                # Use sudo for non-root users (cluster commands need root)
+                if ssh_user != 'root':
+                    cmd = f"sudo {cmd}"
                 # Escape single quotes in command: replace ' with '\''
                 escaped_cmd = cmd.replace("'", "'\"'\"'")
                 full_cmd = f"ssh -o BatchMode=yes -o ConnectTimeout=10 {ssh_user}@{node} '{escaped_cmd}'"

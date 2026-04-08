@@ -570,6 +570,8 @@ class AccessDiscovery:
     def discover_cluster_name(self, host: str, user: str = None) -> Optional[str]:
         """Discover cluster name from a node."""
         ssh_user = user or 'root'
+        # Use sudo for non-root users (cluster commands need root)
+        sudo_prefix = "sudo " if ssh_user != 'root' else ""
 
         # Commands to try for getting cluster name
         name_commands = [
@@ -586,7 +588,7 @@ class AccessDiscovery:
                     "-o", f"ConnectTimeout={self.SSH_TIMEOUT}",
                     "-o", "StrictHostKeyChecking=no",
                     f"{ssh_user}@{host}",
-                    cmd
+                    f"{sudo_prefix}{cmd}"
                 ]
                 result = subprocess.run(ssh_cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                         universal_newlines=True, timeout=self.SSH_TIMEOUT + 2)
@@ -706,6 +708,8 @@ class AccessDiscovery:
         Returns tuple: (cluster_name, list of cluster node hostnames)
         """
         ssh_user = user or 'root'
+        # Use sudo for non-root users (cluster commands need root)
+        sudo_prefix = "sudo " if ssh_user != 'root' else ""
         cluster_nodes = []
         cluster_name = None
 
@@ -736,7 +740,7 @@ class AccessDiscovery:
                     "-o", f"ConnectTimeout={self.SSH_TIMEOUT}",
                     "-o", "StrictHostKeyChecking=no",
                     f"{ssh_user}@{seed_host}",
-                    cmd
+                    f"{sudo_prefix}{cmd}"
                 ]
                 result = subprocess.run(ssh_cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                         universal_newlines=True, timeout=self.SSH_TIMEOUT + 2)
