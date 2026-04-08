@@ -1921,11 +1921,12 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
 
         print("""
   Common next steps:
-    ./cluster_health_check.py --suggest install  # Installation guide
-    ./cluster_health_check.py --show-config      # View current config
-    ./cluster_health_check.py -f hana01          # Force re-discovery
-    ./cluster_health_check.py --list-rules       # List all health checks
-    ./cluster_health_check.py --guide            # Show detailed usage guide
+    ./cluster_health_check.py --suggest install   # Installation guide
+    ./cluster_health_check.py --show-config       # View all clusters config
+    ./cluster_health_check.py -S mycluster        # View specific cluster config
+    ./cluster_health_check.py -f hana01           # Force re-discovery
+    ./cluster_health_check.py --list-rules        # List all health checks
+    ./cluster_health_check.py --guide             # Show detailed usage guide
 """)
 
         print("  Documentation:")
@@ -1966,7 +1967,9 @@ Examples:
   %(prog)s -d hana03                Same with debug output
   %(prog)s --access-only hana03     Only test access (discover cluster members)
   %(prog)s -g sap_cluster           Only check hosts in Ansible group 'sap_cluster'
-  %(prog)s --show-config            Show current configuration
+  %(prog)s --show-config            Show all discovered clusters and nodes
+  %(prog)s --show-config mycluster  Show config for specific cluster
+  %(prog)s -S hana03                Show config for cluster containing hana03
   %(prog)s -H hosts.txt             Use custom hosts file
   %(prog)s -s /path/to/sosreports   Use SOSreport directory
   %(prog)s -i                        Show installation guide (shortcut)
@@ -2011,8 +2014,11 @@ Examples:
     )
     parser.add_argument(
         '--show-config', '-S',
-        action='store_true',
-        help='Display current configuration and exit'
+        nargs='?',
+        const=True,
+        default=False,
+        metavar='CLUSTER|NODE',
+        help='Display configuration and exit. Optionally specify cluster name or hostname to show only that cluster.'
     )
     parser.add_argument(
         '--delete-reports', '-D',
@@ -2401,7 +2407,9 @@ Examples:
 
     # Handle show-config action
     if args.show_config:
-        show_config(config_path)
+        # args.show_config is True (no argument) or a string (cluster/node name)
+        cluster_or_node = None if args.show_config is True else args.show_config
+        show_config(config_path, cluster_or_node)
         sys.exit(0)
 
     # Handle delete-config action

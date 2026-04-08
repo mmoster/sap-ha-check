@@ -1244,8 +1244,15 @@ class AccessDiscovery:
             print(f"  (source: {self.config.ansible_inventory_source})")
 
 
-def show_config(config_path: Path):
-    """Display the current configuration in a user-friendly format."""
+def show_config(config_path: Path, cluster_or_node: str = None):
+    """Display the current configuration in a user-friendly format.
+
+    Args:
+        config_path: Path to the configuration file
+        cluster_or_node: Optional cluster name or hostname to filter output.
+                         If a cluster name is provided, shows that cluster.
+                         If a hostname is provided, shows the cluster containing that node.
+    """
     if not config_path.exists():
         print(f"No configuration file found at {config_path}")
         print("\nRun discovery first:")
@@ -1255,20 +1262,68 @@ def show_config(config_path: Path):
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
 
+    clusters = config.get('clusters', {})
+    all_nodes = config.get('nodes', {})
+
+    # Resolve cluster_or_node to a cluster name
+    cluster_name = None
+    if cluster_or_node:
+        # First, check if it's a cluster name
+        if cluster_or_node in clusters:
+            cluster_name = cluster_or_node
+        else:
+            # Check if it's a hostname - find which cluster contains it
+            for cname, cinfo in clusters.items():
+                if cluster_or_node in cinfo.get('nodes', []):
+                    cluster_name = cname
+                    print(f"[INFO] Node '{cluster_or_node}' belongs to cluster '{cluster_name}'")
+                    break
+
+            if not cluster_name:
+                # Not found as cluster or node in any cluster
+                if cluster_or_node in all_nodes:
+                    # It's a known node but not in any cluster
+                    print(f"\n[INFO] Node '{cluster_or_node}' found but not assigned to any cluster")
+                else:
+                    print(f"\n[ERROR] '{cluster_or_node}' not found as cluster or node")
+
+                if clusters:
+                    print(f"\nAvailable clusters: {', '.join(clusters.keys())}")
+                    print(f"Available nodes: {', '.join(list(all_nodes.keys())[:10])}", end='')
+                    if len(all_nodes) > 10:
+                        print(f" ... and {len(all_nodes) - 10} more")
+                    else:
+                        print()
+                    print("\nTo show all configuration:")
+                    print("  ./cluster_health_check.py --show-config")
+                else:
+                    print("\nNo clusters discovered yet. Run discovery first:")
+                    print("  ./cluster_health_check.py hana01")
+                return False
+
     print("\n" + "=" * 60)
-    print(" SAP Cluster Health Check - Configuration")
+    if cluster_name:
+        print(f" SAP Cluster Health Check - Cluster: {cluster_name}")
+    else:
+        print(" SAP Cluster Health Check - Configuration")
     print("=" * 60)
     print(f"Config file: {config_path}")
 
-    # Show clusters prominently
-    clusters = config.get('clusters', {})
+    # Show clusters (filtered if cluster_name specified)
     if clusters:
-        print("\n--- Discovered Clusters ---")
-        for name, info in clusters.items():
-            nodes = info.get('nodes', [])
+        clusters_to_show = {cluster_name: clusters[cluster_name]} if cluster_name else clusters
+
+        if cluster_name:
+            print(f"\n--- Cluster: {cluster_name} ---")
+        else:
+            print("\n--- Discovered Clusters ---")
+
+        for name, info in clusters_to_show.items():
+            cluster_nodes = info.get('nodes', [])
             discovered_from = info.get('discovered_from', 'unknown')
-            print(f"\n  Cluster: {name}")
-            print(f"    Nodes: {', '.join(nodes)}")
+            if not cluster_name:
+                print(f"\n  Cluster: {name}")
+            print(f"    Nodes: {', '.join(cluster_nodes)}")
             print(f"    Discovered from: {discovered_from}")
             print("\n    To check this cluster:")
             print(f"      ./cluster_health_check.py -C {name}")
@@ -1276,10 +1331,17 @@ def show_config(config_path: Path):
         print("\n[INFO] No clusters discovered yet")
         print("  Run: ./cluster_health_check.py hana01")
 
-    # Show node summary
-    nodes = config.get('nodes', {})
+    # Show node summary (filtered to cluster nodes if cluster_name specified)
+    if cluster_name and cluster_name in clusters:
+        cluster_node_names = clusters[cluster_name].get('nodes', [])
+        nodes = {n: all_nodes[n] for n in cluster_node_names if n in all_nodes}
+        node_label = f"Nodes in Cluster '{cluster_name}'"
+    else:
+        nodes = all_nodes
+        node_label = "All Discovered Nodes"
+
     if nodes:
-        print(f"\n--- All Discovered Nodes ({len(nodes)}) ---")
+        print(f"\n--- {node_label} ({len(nodes)}) ---")
         accessible = [n for n, info in nodes.items() if info.get('preferred_method')]
         no_access = [n for n, info in nodes.items() if not info.get('preferred_method')]
 
@@ -1301,20 +1363,25 @@ def show_config(config_path: Path):
             else:
                 print()
 
-    # Show other config
-    if config.get('sosreport_directory'):
-        print("\n--- SOSreport Directory ---")
-        print(f"  {config['sosreport_directory']}")
+    # Show other config (only in full view, not cluster-specific)
+    if not cluster_name:
+        if config.get('sosreport_directory'):
+            print("\n--- SOSreport Directory ---")
+            print(f"  {config['sosreport_directory']}")
 
-    if config.get('ansible_inventory_path'):
-        print("\n--- Ansible Inventory ---")
-        print(f"  Path: {config['ansible_inventory_path']}")
-        print(f"  Source: {config.get('ansible_inventory_source', 'unknown')}")
+        if config.get('ansible_inventory_path'):
+            print("\n--- Ansible Inventory ---")
+            print(f"  Path: {config['ansible_inventory_path']}")
+            print(f"  Source: {config.get('ansible_inventory_source', 'unknown')}")
 
     print("\n--- Quick Commands ---")
-    if clusters:
+    if cluster_name:
+        print(f"  Check cluster:    ./cluster_health_check.py -C {cluster_name}")
+        print(f"  Show all config:  ./cluster_health_check.py --show-config")
+    elif clusters:
         first_cluster = list(clusters.keys())[0]
         print(f"  Check cluster:    ./cluster_health_check.py -C {first_cluster}")
+        print(f"  Show one cluster: ./cluster_health_check.py --show-config {first_cluster}")
     print("  Force rediscover: ./cluster_health_check.py -f hana01")
     print("  Delete config:    ./cluster_health_check.py -D")
     print("  Show guide:       ./cluster_health_check.py --guide")

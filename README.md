@@ -67,7 +67,7 @@ Options:
   --local               Run locally on this cluster node
   -f, --force           Force rediscovery (ignore existing config)
   -D, --delete-reports  Delete reports and restart
-  -S, --show-config     Display current configuration
+  -S, --show-config [CLUSTER|NODE]  Display configuration (optionally filter by cluster or node)
   -L, --list-rules      List available health check rules
   -d, --debug           Enable debug mode
   --no-pdf              Skip PDF report generation
@@ -159,6 +159,19 @@ nodes:
     hostname: hana01
     ssh_reachable: true
     preferred_method: ssh
+```
+
+### Viewing Configuration
+
+```bash
+# Show all discovered clusters and nodes
+./cluster_health_check.py --show-config
+
+# Show config for a specific cluster
+./cluster_health_check.py --show-config my_cluster
+
+# Show config for cluster containing a specific node
+./cluster_health_check.py -S hana01
 ```
 
 Delete with `-D` to restart the investigation from scratch.
