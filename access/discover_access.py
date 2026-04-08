@@ -602,6 +602,89 @@ class AccessDiscovery:
 
         return None
 
+    def discover_hana_info(self, host: str, user: str = None) -> dict:
+        """Discover SAP HANA SID, instance number, resource names, and cluster configuration."""
+        ssh_user = user or 'root'
+        sudo_prefix = "sudo " if ssh_user != 'root' else ""
+        hana_info = {}
+
+        def run_ssh_cmd(cmd: str) -> str:
+            """Helper to run SSH command and return output."""
+            try:
+                ssh_cmd = [
+                    "ssh", "-o", "BatchMode=yes",
+                    "-o", f"ConnectTimeout={self.SSH_TIMEOUT}",
+                    "-o", "StrictHostKeyChecking=no",
+                    f"{ssh_user}@{host}",
+                    f"{sudo_prefix}{cmd}"
+                ]
+                result = subprocess.run(ssh_cmd, stdin=subprocess.DEVNULL,
+                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                       universal_newlines=True, timeout=self.SSH_TIMEOUT + 2)
+                if result.returncode == 0:
+                    return result.stdout.strip()
+            except Exception:
+                pass
+            return ""
+
+        # Commands to discover SAP HANA resources
+        resource_commands = [
+            ("pcs resource status 2>/dev/null | grep -oE 'SAPHana_[A-Z0-9]+_[0-9]+' | head -1", "SAPHana"),
+            ("pcs resource status 2>/dev/null | grep -oE 'SAPHanaController_[A-Z0-9]+_[0-9]+' | head -1", "SAPHanaController"),
+            ("crm resource status 2>/dev/null | grep -oE 'SAPHana_[A-Z0-9]+_[0-9]+' | head -1", "SAPHana"),
+        ]
+
+        import re
+        for cmd, _ in resource_commands:
+            output = run_ssh_cmd(cmd)
+            if output:
+                match = re.match(r'(SAPHana(?:Controller)?)_([A-Z0-9]+)_(\d+)', output)
+                if match:
+                    hana_info['resource_type'] = match.group(1)
+                    hana_info['sid'] = match.group(2)
+                    hana_info['instance_number'] = match.group(3)
+                    hana_info['resource_name'] = output
+                    break
+
+        # Get topology resource
+        topo_output = run_ssh_cmd("pcs resource status 2>/dev/null | grep -oE 'SAPHanaTopology_[A-Z0-9]+_[0-9]+' | head -1")
+        if topo_output:
+            hana_info['topology_resource'] = topo_output
+
+        # Get Virtual IP resource and address
+        vip_output = run_ssh_cmd("pcs resource config 2>/dev/null | grep -A5 'IPaddr2' | grep -oE 'ip=[0-9.]+' | cut -d= -f2 | head -1")
+        if vip_output:
+            hana_info['virtual_ip'] = vip_output
+
+        # Get VIP resource name
+        vip_name = run_ssh_cmd("pcs resource status 2>/dev/null | grep -oE 'vip[-_][A-Za-z0-9_]+|rsc_ip_[A-Za-z0-9_]+' | head -1")
+        if vip_name:
+            hana_info['vip_resource'] = vip_name
+
+        # Get STONITH/fencing device
+        stonith_output = run_ssh_cmd("pcs stonith status 2>/dev/null | grep -oE '^[[:space:]]*\\*[[:space:]]+[A-Za-z0-9_-]+' | awk '{print $2}' | head -1")
+        if stonith_output:
+            hana_info['stonith_device'] = stonith_output
+
+        # Get replication mode from SAPHanaSR
+        repl_mode = run_ssh_cmd("SAPHanaSR-showAttr 2>/dev/null | grep -oE 'sync|syncmem|async' | head -1")
+        if repl_mode:
+            hana_info['replication_mode'] = repl_mode
+
+        # Get operation mode
+        op_mode = run_ssh_cmd("SAPHanaSR-showAttr 2>/dev/null | grep -oE 'logreplay|delta_datashipping' | head -1")
+        if op_mode:
+            hana_info['operation_mode'] = op_mode
+
+        # Get site names from SAPHanaSR
+        sites_output = run_ssh_cmd("SAPHanaSR-showAttr 2>/dev/null | grep -E 'site' | grep -oE 'DC[0-9]+|site[0-9]+|SITE[0-9]+|[A-Z]+[0-9]*' | sort -u | head -2")
+        if sites_output:
+            sites = [s.strip() for s in sites_output.split('\n') if s.strip()]
+            if sites:
+                hana_info['sites'] = sites
+
+        return hana_info
+
     def get_local_hostname(self) -> str:
         """Get the local hostname (short form)."""
         try:
@@ -765,13 +848,25 @@ class AccessDiscovery:
             print(f"  Using {seed_host} as only node")
             cluster_nodes = [seed_host]
 
+        # Discover SAP HANA info
+        hana_info = self.discover_hana_info(seed_host, ssh_user)
+        if hana_info:
+            sid = hana_info.get('sid', '')
+            inst = hana_info.get('instance_number', '')
+            if sid:
+                print(f"  SAP HANA SID: {sid}, Instance: {inst}")
+
         # Store cluster info
         if cluster_name:
-            self.config.clusters[cluster_name] = {
+            cluster_data = {
                 'nodes': cluster_nodes,
                 'discovered_from': seed_host,
                 'discovered_at': datetime.now().isoformat()
             }
+            # Add HANA info if discovered
+            if hana_info:
+                cluster_data.update(hana_info)
+            self.config.clusters[cluster_name] = cluster_data
 
         return cluster_name, cluster_nodes
 
@@ -1329,6 +1424,43 @@ def show_config(config_path: Path, cluster_or_node: str = None):
                 print(f"\n  Cluster: {name}")
             print(f"    Nodes: {', '.join(cluster_nodes)}")
             print(f"    Discovered from: {discovered_from}")
+
+            # Show SAP HANA info if available
+            sid = info.get('sid')
+            if sid:
+                inst = info.get('instance_number', '??')
+                resource_type = info.get('resource_type', 'SAPHana')
+                resource_name = info.get('resource_name', '')
+                topology_resource = info.get('topology_resource', '')
+                virtual_ip = info.get('virtual_ip', '')
+                vip_resource = info.get('vip_resource', '')
+                stonith_device = info.get('stonith_device', '')
+                repl_mode = info.get('replication_mode', '')
+                op_mode = info.get('operation_mode', '')
+                sites = info.get('sites', [])
+
+                print("\n    SAP HANA Configuration:")
+                print(f"      SID: {sid}")
+                print(f"      Instance Number: {inst}")
+                print(f"      Resource Type: {resource_type}")
+                if resource_name:
+                    print(f"      HANA Resource: {resource_name}")
+                if topology_resource:
+                    print(f"      Topology Resource: {topology_resource}")
+                if virtual_ip:
+                    vip_info = f"{virtual_ip}"
+                    if vip_resource:
+                        vip_info += f" ({vip_resource})"
+                    print(f"      Virtual IP: {vip_info}")
+                if repl_mode:
+                    print(f"      Replication Mode: {repl_mode}")
+                if op_mode:
+                    print(f"      Operation Mode: {op_mode}")
+                if sites:
+                    print(f"      Sites: {', '.join(sites)}")
+                if stonith_device:
+                    print(f"      STONITH Device: {stonith_device}")
+
             print("\n    To check this cluster:")
             print(f"      ./cluster_health_check.py -C {name}")
     else:
