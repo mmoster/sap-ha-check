@@ -100,6 +100,7 @@ class RulesEngine:
     DEFAULT_RULES_PATH = str(Path(__file__).parent / "health_checks")
     CMD_TIMEOUT = 15  # Reduced from 30 to avoid long waits
     MAX_WORKERS = 5
+    CIB_PATH = "/var/lib/pacemaker/cib/cib.xml"
 
     def __init__(self, rules_path: str = None, access_config: dict = None, strict_mode: bool = False):
         self.rules_path = Path(rules_path) if rules_path else Path(self.DEFAULT_RULES_PATH)
@@ -107,6 +108,9 @@ class RulesEngine:
         self.rules: List[RuleDefinition] = []
         self.results: List[CheckResult] = []
         self.strict_mode = strict_mode
+        # Track cluster running state and cib.xml availability per node
+        self._cluster_running: Dict[str, bool] = {}
+        self._cib_available: Dict[str, bool] = {}
 
     def load_rules(self) -> List[RuleDefinition]:
         """Load all CHK_*.yaml rule files."""
@@ -162,19 +166,62 @@ class RulesEngine:
             for r in self.rules
         ]
 
-    def _execute_command(self, cmd: str, node: str = None,
-                        method: str = 'ssh', user: str = None) -> Tuple[bool, str]:
-        """Execute a command locally, via SSH, or via Ansible."""
+    def _check_cluster_status(self, node: str, method: str = 'ssh', user: str = None) -> Tuple[bool, bool]:
+        """
+        Check if cluster is running and if cib.xml exists on a node.
+        Returns (cluster_running, cib_available) tuple.
+        Caches results per node.
+        """
+        if node in self._cluster_running:
+            return self._cluster_running[node], self._cib_available.get(node, False)
+
+        # Check if pacemaker is running
+        cluster_running = False
+        cib_available = False
+
+        check_cmd = "systemctl is-active pacemaker 2>/dev/null"
+        success, output = self._execute_command_raw(check_cmd, node, method, user)
+        # Check for exact 'active' status (not 'inactive')
+        cluster_running = success and output.strip() == 'active'
+
+        # Check if cib.xml exists
+        cib_check_cmd = f"test -f {self.CIB_PATH} && echo 'exists'"
+        success, output = self._execute_command_raw(cib_check_cmd, node, method, user)
+        cib_available = success and 'exists' in output
+
+        self._cluster_running[node] = cluster_running
+        self._cib_available[node] = cib_available
+
+        return cluster_running, cib_available
+
+    def _transform_pcs_for_cib(self, cmd: str) -> str:
+        """
+        Transform pcs commands to use -f cib.xml for offline cluster queries.
+        Only transforms commands that can work with -f flag.
+        """
+        # Commands that support -f flag for offline queries
+        pcs_offline_cmds = ['pcs property', 'pcs resource', 'pcs stonith', 'pcs constraint']
+
+        for pcs_cmd in pcs_offline_cmds:
+            if pcs_cmd in cmd:
+                # Insert -f cib.xml after 'pcs'
+                # Handle: pcs property -> pcs -f /path/cib.xml property
+                # Also handle: pcs resource config -> pcs -f /path/cib.xml resource config
+                transformed = cmd.replace(pcs_cmd, f"pcs -f {self.CIB_PATH} {pcs_cmd.split()[1]}")
+                return transformed
+
+        return None  # Command cannot be transformed
+
+    def _execute_command_raw(self, cmd: str, node: str = None,
+                             method: str = 'ssh', user: str = None) -> Tuple[bool, str]:
+        """Execute a command without fallback logic (internal use)."""
         try:
             if method == 'local':
-                # Execute command locally (when running on the cluster node itself)
                 full_cmd = cmd
             elif node and method == 'ssh':
                 ssh_user = user or os.environ.get('USER', 'root')
-                # Use sudo for non-root users (cluster commands need root)
                 if ssh_user != 'root':
                     cmd = f"sudo {cmd}"
-                # Escape single quotes in command: replace ' with '\''
                 escaped_cmd = cmd.replace("'", "'\"'\"'")
                 full_cmd = f"ssh -o BatchMode=yes -o ConnectTimeout=10 {ssh_user}@{node} '{escaped_cmd}'"
             elif node and method == 'ansible':
@@ -194,7 +241,6 @@ class RulesEngine:
 
             output = result.stdout
             if method == 'ansible' and node:
-                # Parse Ansible output - extract actual command output
                 if '|' in output and '>>' in output:
                     output = output.split('>>', 1)[-1].strip()
 
@@ -204,6 +250,24 @@ class RulesEngine:
             return False, f"Command timed out after {self.CMD_TIMEOUT}s"
         except Exception as e:
             return False, str(e)
+
+    def _execute_command(self, cmd: str, node: str = None,
+                        method: str = 'ssh', user: str = None) -> Tuple[bool, str]:
+        """Execute a command locally, via SSH, or via Ansible.
+        Uses pcs -f cib.xml if cluster is not running but cib.xml exists."""
+        # For pcs commands, pre-check if cluster is running
+        # If not running but cib.xml exists, use -f cib.xml from the start
+        if 'pcs ' in cmd and node:
+            cluster_running, cib_available = self._check_cluster_status(node, method, user)
+
+            if not cluster_running and cib_available:
+                # Transform pcs command to use -f cib.xml
+                transformed_cmd = self._transform_pcs_for_cib(cmd)
+                if transformed_cmd:
+                    return self._execute_command_raw(transformed_cmd, node, method, user)
+
+        # Execute the original command
+        return self._execute_command_raw(cmd, node, method, user)
 
     def _read_sosreport(self, sos_path: str, node: str, sos_base: str) -> Tuple[bool, str]:
         """Read data from SOSreport directory."""
