@@ -1927,6 +1927,169 @@ def delete_config(config_path: Path):
         return False
 
 
+def fetch_sosreports(config_path: Path, cluster_name: str = None, nodes: list = None,
+                     output_dir: str = None, ssh_user: str = 'root'):
+    """
+    Fetch the latest sosreports from cluster nodes via SCP.
+
+    Args:
+        config_path: Path to the configuration file
+        cluster_name: Name of the cluster to fetch sosreports from
+        nodes: List of specific node hostnames (alternative to cluster_name)
+        output_dir: Directory to save sosreports (default: ./sosreports)
+        ssh_user: SSH user for connecting to nodes (default: root)
+
+    Returns:
+        List of downloaded file paths, or empty list on failure
+    """
+    import subprocess
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    # Determine output directory
+    if output_dir:
+        sos_dir = Path(output_dir)
+    else:
+        sos_dir = config_path.parent / 'sosreports'
+
+    sos_dir.mkdir(parents=True, exist_ok=True)
+
+    # Get list of nodes to fetch from
+    target_nodes = []
+
+    if nodes:
+        # Use specified nodes directly
+        target_nodes = nodes
+    elif cluster_name:
+        # Load nodes from cluster config
+        if not config_path.exists():
+            print(f"[ERROR] Configuration file not found: {config_path}")
+            return []
+
+        with open(config_path, 'r') as f:
+            config = yaml.safe_load(f)
+
+        clusters = config.get('clusters', {})
+        if cluster_name not in clusters:
+            print(f"[ERROR] Cluster '{cluster_name}' not found in configuration.")
+            print(f"Available clusters: {', '.join(clusters.keys())}")
+            return []
+
+        target_nodes = clusters[cluster_name].get('nodes', [])
+    else:
+        print("[ERROR] Either cluster_name or nodes must be specified.")
+        return []
+
+    if not target_nodes:
+        print("[ERROR] No nodes found to fetch sosreports from.")
+        return []
+
+    print(f"\n{'='*60}")
+    print(" Fetching SOSreports from cluster nodes")
+    print(f"{'='*60}")
+    print(f"  Nodes: {', '.join(target_nodes)}")
+    print(f"  Output: {sos_dir}")
+    print(f"  SSH user: {ssh_user}")
+    print()
+
+    downloaded_files = []
+
+    def fetch_from_node(hostname: str) -> tuple:
+        """Find and download latest sosreport from a single node."""
+        try:
+            # Find latest sosreport in /var/tmp
+            find_cmd = [
+                "ssh", "-o", "BatchMode=yes",
+                "-o", "ConnectTimeout=10",
+                "-o", "StrictHostKeyChecking=no",
+                f"{ssh_user}@{hostname}",
+                "ls -t /var/tmp/sosreport-*.tar.xz 2>/dev/null | head -1"
+            ]
+
+            result = subprocess.run(
+                find_cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=30,
+                text=True
+            )
+
+            if result.returncode != 0 or not result.stdout.strip():
+                # Try .tar.gz format
+                find_cmd[-1] = "ls -t /var/tmp/sosreport-*.tar.gz 2>/dev/null | head -1"
+                result = subprocess.run(
+                    find_cmd,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    timeout=30,
+                    text=True
+                )
+
+            if result.returncode != 0 or not result.stdout.strip():
+                return (hostname, None, "No sosreport found in /var/tmp")
+
+            remote_path = result.stdout.strip()
+            filename = os.path.basename(remote_path)
+            local_path = sos_dir / filename
+
+            # Check if already downloaded
+            if local_path.exists():
+                return (hostname, str(local_path), "Already exists (skipped)")
+
+            # Download via SCP
+            scp_cmd = [
+                "scp", "-o", "BatchMode=yes",
+                "-o", "ConnectTimeout=10",
+                "-o", "StrictHostKeyChecking=no",
+                f"{ssh_user}@{hostname}:{remote_path}",
+                str(local_path)
+            ]
+
+            result = subprocess.run(
+                scp_cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=300,  # 5 minutes for large files
+                text=True
+            )
+
+            if result.returncode == 0:
+                # Get file size
+                size_mb = local_path.stat().st_size / (1024 * 1024)
+                return (hostname, str(local_path), f"Downloaded ({size_mb:.1f} MB)")
+            else:
+                return (hostname, None, f"SCP failed: {result.stderr.strip()}")
+
+        except subprocess.TimeoutExpired:
+            return (hostname, None, "Timeout")
+        except Exception as e:
+            return (hostname, None, f"Error: {str(e)}")
+
+    # Fetch from all nodes in parallel
+    with ThreadPoolExecutor(max_workers=min(len(target_nodes), 5)) as executor:
+        futures = {executor.submit(fetch_from_node, node): node for node in target_nodes}
+
+        for future in as_completed(futures):
+            hostname, filepath, message = future.result()
+            if filepath:
+                downloaded_files.append(filepath)
+                print(f"  [{hostname}] {message}")
+            else:
+                print(f"  [{hostname}] {message}")
+
+    print()
+    if downloaded_files:
+        print(f"Downloaded {len(downloaded_files)} sosreport(s) to: {sos_dir}")
+        print("\nTo analyze with health check:")
+        print(f"  ./cluster_health_check.py -s {sos_dir}")
+    else:
+        print("No sosreports were downloaded.")
+
+    return downloaded_files
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='Discover access methods to SAP Pacemaker cluster nodes'

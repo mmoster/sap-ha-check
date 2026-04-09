@@ -36,7 +36,7 @@ SCRIPT_DIR = Path(__file__).parent.resolve()
 sys.path.insert(0, str(SCRIPT_DIR / "access"))
 sys.path.insert(0, str(SCRIPT_DIR / "rules"))
 
-from discover_access import AccessDiscovery, show_config, delete_config, export_ansible_vars  # noqa: E402
+from discover_access import AccessDiscovery, show_config, delete_config, export_ansible_vars, fetch_sosreports  # noqa: E402
 from engine import RulesEngine, CheckResult, CheckStatus, Severity  # noqa: E402
 
 # Import lib modules
@@ -2032,6 +2032,12 @@ Examples:
         help='Export cluster config as Ansible group_vars YAML. Usage: --export-ansible CLUSTER [output.yml]'
     )
     parser.add_argument(
+        '--fetch-sosreports', '-F',
+        nargs='*',
+        metavar='CLUSTER_OR_NODE',
+        help='Fetch latest sosreports from cluster nodes via SCP. Usage: --fetch-sosreports [CLUSTER|node1 node2...]'
+    )
+    parser.add_argument(
         '--force', '-f',
         action='store_true',
         help='Force rediscovery (ignore existing config)'
@@ -2227,7 +2233,7 @@ Examples:
             pass  # Silently ignore any errors in update check
 
     # Check for updates (skip if running non-interactively or with certain flags)
-    if sys.stdin.isatty() and not any([args.show_config, args.list_rules, args.guide, args.install, args.no_update_check, args.export_ansible]):
+    if sys.stdin.isatty() and not any([args.show_config, args.list_rules, args.guide, args.install, args.no_update_check, args.export_ansible, args.fetch_sosreports is not None]):
         check_for_updates()
 
     # Handle usage/scan action (-u)
@@ -2380,6 +2386,43 @@ Examples:
         success = export_ansible_vars(config_path, cluster_name, output_file)
         sys.exit(0 if success else 1)
 
+    # Handle fetch-sosreports action
+    if args.fetch_sosreports is not None:
+        # Check what was provided: cluster name or node names
+        fetch_args = args.fetch_sosreports
+
+        if not fetch_args:
+            # No arguments - use cluster from -C if provided
+            if args.cluster:
+                downloaded = fetch_sosreports(config_path, cluster_name=args.cluster)
+            else:
+                print("[ERROR] Please specify a cluster name or node names.")
+                print("Usage: --fetch-sosreports CLUSTER")
+                print("       --fetch-sosreports node1 node2 ...")
+                print("       -C CLUSTER --fetch-sosreports")
+                sys.exit(1)
+        elif len(fetch_args) == 1:
+            # Single argument - check if it's a cluster name or a node
+            arg = fetch_args[0]
+            # Load config to check if it's a cluster name
+            if config_path.exists():
+                with open(config_path, 'r') as f:
+                    config = yaml.safe_load(f)
+                clusters = config.get('clusters', {})
+                if arg in clusters:
+                    downloaded = fetch_sosreports(config_path, cluster_name=arg)
+                else:
+                    # Treat as node name
+                    downloaded = fetch_sosreports(config_path, nodes=[arg])
+            else:
+                # No config, treat as node name
+                downloaded = fetch_sosreports(config_path, nodes=[arg])
+        else:
+            # Multiple arguments - treat as node names
+            downloaded = fetch_sosreports(config_path, nodes=fetch_args)
+
+        sys.exit(0 if downloaded else 1)
+
     # Interactive mode: if no arguments provided, show intro and ask user
     local_mode = args.local
     interactive_hosts = None
@@ -2389,7 +2432,8 @@ Examples:
                           not args.local and not args.access_only and
                           not args.show_config and not args.delete_reports and
                           not args.list_rules and not args.force and
-                          not args.export_ansible)
+                          not args.export_ansible and
+                          args.fetch_sosreports is None)
 
     if no_input_specified:
         # Run interactive startup
