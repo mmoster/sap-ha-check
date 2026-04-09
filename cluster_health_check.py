@@ -101,6 +101,7 @@ class ClusterHealthCheck:
             # Phase 2: Cluster Creation
             'nodes_authenticated': None,
             'corosync_conf_exists': None,
+            'cib_exists': None,
             'cluster_configured': None,
             'corosync_running': None,
             'pacemaker_running': None,
@@ -124,6 +125,10 @@ class ClusterHealthCheck:
         # Check if corosync.conf exists
         corosync_conf = sos_path / "etc/corosync/corosync.conf"
         status['corosync_conf_exists'] = corosync_conf.exists()
+
+        # Check if cib.xml exists (cluster configuration exists)
+        cib_xml = sos_path / "var/lib/pacemaker/cib/cib.xml"
+        status['cib_exists'] = cib_xml.exists()
 
         # Extract cluster name from corosync.conf
         if corosync_conf.exists():
@@ -269,6 +274,7 @@ class ClusterHealthCheck:
             # Phase 2: Cluster Creation
             'nodes_authenticated': None,
             'corosync_conf_exists': None,
+            'cib_exists': None,
             'cluster_configured': None,
             'corosync_running': None,
             'pacemaker_running': None,
@@ -413,6 +419,13 @@ class ClusterHealthCheck:
             node, method, user
         )
         status['corosync_conf_exists'] = success and 'exists' in output
+
+        # Check if cib.xml exists (cluster configuration exists - even if not running)
+        success, output = self._execute_check_cmd(
+            "test -f /var/lib/pacemaker/cib/cib.xml && echo 'exists'",
+            node, method, user
+        )
+        status['cib_exists'] = success and 'exists' in output
 
         # Check cluster configured and get cluster name
         success, output = self._execute_check_cmd(
@@ -567,6 +580,7 @@ class ClusterHealthCheck:
         print(f"    {status_icon(status['nodes_authenticated'])} Nodes authenticated (pcs host auth)")
         cluster_info = f" ({status['cluster_name']})" if status['cluster_name'] else ""
         print(f"    {status_icon(status.get('corosync_conf_exists'))} Cluster created (corosync.conf)")
+        print(f"    {status_icon(status.get('cib_exists'))} Cluster configured (cib.xml)")
         print(f"    {status_icon(status['cluster_configured'])} Cluster running{cluster_info}")
         print(f"    {status_icon(status['corosync_running'])} Corosync running (messaging)")
         print(f"    {status_icon(status['pacemaker_running'])} Pacemaker running (resource mgr)")
@@ -583,8 +597,8 @@ class ClusterHealthCheck:
         if status.get('offline_nodes'):
             print(f"        Offline: {', '.join(status['offline_nodes'])}")
 
-        # Warning if cluster is created but not running
-        if status.get('corosync_conf_exists') and not status['pacemaker_running']:
+        # Warning if cluster is configured but not running
+        if (status.get('corosync_conf_exists') or status.get('cib_exists')) and not status['pacemaker_running']:
             print("""
   ╔═════════════════════════════════════════════════════════════╗
   ║  [!] CLUSTER NOT RUNNING                                    ║
@@ -1842,11 +1856,11 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                 # Many errors with packages installed - check if cluster exists
                 try:
                     install_status = self.check_install_status()
-                    if not install_status.get('corosync_conf_exists'):
-                        # corosync.conf doesn't exist - cluster not created (pcs cluster setup not run)
+                    if not install_status.get('corosync_conf_exists') and not install_status.get('cib_exists'):
+                        # Neither corosync.conf nor cib.xml exist - cluster not created
                         cluster_not_created = True
                     elif not install_status.get('pacemaker_running'):
-                        # corosync.conf exists but cluster not running
+                        # Cluster config exists (corosync.conf or cib.xml) but not running
                         cluster_not_running = True
                 except Exception:
                     # Fallback - assume cluster might not be running
