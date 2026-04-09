@@ -403,6 +403,20 @@ def generate_health_check_report(
                 check.get('node', '')
             )
 
+        # Add note about errors when cluster is stopped
+        if error_checks:
+            pdf.ln(3)
+            pdf.set_font('Helvetica', 'I', 9)
+            pdf.set_text_color(*RedHatColors.GRAY)
+            pdf.multi_cell(0, 5,
+                "Note: Some checks report ERROR status when the cluster services are not running. "
+                "Commands like 'crm_mon', 'pcs status', and 'SAPHanaSR-showAttr' require a running "
+                "cluster to report accurate status. Configuration checks using 'pcs -f cib.xml' can "
+                "still verify the cluster configuration is correct even when stopped."
+            )
+            pdf.set_text_color(0, 0, 0)
+            pdf.ln(3)
+
     # Warnings
     if warning_checks:
         pdf.sub_section("Warnings")

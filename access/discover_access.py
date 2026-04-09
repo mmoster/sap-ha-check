@@ -1294,8 +1294,14 @@ class AccessDiscovery:
                 if reachable:
                     # Discover cluster members (returns cluster_name, nodes)
                     discovered_name, cluster_nodes = self.discover_cluster_nodes(seed_host, ssh_user)
-                    # Use cluster nodes instead of just the specified hosts
-                    file_hosts = cluster_nodes
+                    # Only use discovered nodes if we found more than what was specified
+                    # or if we successfully discovered the cluster
+                    if cluster_nodes and len(cluster_nodes) >= len(file_hosts):
+                        file_hosts = cluster_nodes
+                    elif not cluster_nodes or len(cluster_nodes) < len(file_hosts):
+                        # Cluster discovery failed or incomplete, keep original hosts
+                        if self.debug:
+                            print(f"  [DEBUG] Cluster discovery incomplete, keeping specified hosts")
                     break
                 else:
                     if self.debug:
