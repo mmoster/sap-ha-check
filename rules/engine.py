@@ -811,13 +811,45 @@ class RulesEngine:
                         })
 
             if mismatches:
+                # Build detailed message about differences
+                missing_packages = []  # Package exists on some nodes but not others
+                version_diffs = []     # Same package, different versions
+
+                for m in mismatches:
+                    key = m['key']
+                    expected = m.get('expected')
+                    actual = m.get('actual')
+
+                    if expected is None and actual is not None:
+                        # Package only on this node (extra package)
+                        missing_packages.append(f"{key}: only on {m['node']} ({actual})")
+                    elif expected is not None and actual is None:
+                        # Package missing on this node
+                        missing_packages.append(f"{key}: missing on {m['node']} (reference: {expected})")
+                    elif expected != actual:
+                        # Different versions
+                        version_diffs.append(f"{key}: {m['node']} has {actual} (reference: {expected})")
+
+                # Build message with details
+                msg_parts = []
+                if version_diffs:
+                    msg_parts.append(f"Version mismatch: {'; '.join(version_diffs[:3])}")
+                    if len(version_diffs) > 3:
+                        msg_parts.append(f"...and {len(version_diffs) - 3} more")
+                if missing_packages:
+                    msg_parts.append(f"Package differences: {'; '.join(missing_packages[:3])}")
+                    if len(missing_packages) > 3:
+                        msg_parts.append(f"...and {len(missing_packages) - 3} more")
+
+                message = " | ".join(msg_parts) if msg_parts else f"Values differ across nodes: {', '.join(set(m['key'] for m in mismatches))}"
+
                 # Add a comparison failure result
                 results.append(CheckResult(
                     check_id=rule.check_id,
                     description=rule.description,
                     status=CheckStatus.FAILED,
                     severity=Severity[rule.severity],
-                    message=f"Values differ across nodes: {', '.join(set(m['key'] for m in mismatches))}",
+                    message=message,
                     details={'mismatches': mismatches, 'reference_node': reference_node},
                     node="(comparison)"
                 ))
