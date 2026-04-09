@@ -75,6 +75,7 @@ class ClusterHealthCheck:
         self.local_mode = local_mode
         self.strict_mode = strict_mode
         self.generate_pdf = generate_pdf
+        self.majority_makers = []  # Nodes that are majority makers (Scale-Out)
 
     def _debug_print(self, message: str):
         """Print debug message if debug mode is enabled."""
@@ -1161,6 +1162,7 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                                 break
 
                 if majority_makers:
+                    self.majority_makers = majority_makers  # Store for PDF report
                     print(f"[OK] Majority maker node(s) detected: {', '.join(majority_makers)}")
                     # Update nodes_without_hana to exclude majority makers for reporting
                     non_majority_without_hana = [n for n in nodes_without_hana if n not in majority_makers]
@@ -1246,9 +1248,10 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                 print(f"    ... and {len(warnings) - 10} more warnings")
 
         # Determine cluster name for report filename
-        # Find the cluster that contains the nodes we checked
-        cluster_name = 'unknown'
-        if self.access_config and self.access_config.clusters:
+        # Use self.cluster_name if explicitly set (via -C option)
+        cluster_name = self.cluster_name if self.cluster_name else 'unknown'
+        if cluster_name == 'unknown' and self.access_config and self.access_config.clusters:
+            # Find the cluster that contains the nodes we checked
             current_nodes = set(self.access_config.nodes.keys())
             for cname, cinfo in self.access_config.clusters.items():
                 cluster_nodes = set(cinfo.get('nodes', []))
@@ -1305,11 +1308,52 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                 from report_generator import generate_health_check_report
 
                 # Gather cluster info (reuse cluster_name from above)
+                cluster_config = {}
+                if self.access_config and hasattr(self.access_config, 'clusters'):
+                    cluster_config = self.access_config.clusters.get(cluster_name, {})
+
+                # Determine cluster type: Scale-Out if SAPHanaController or >2 nodes
+                node_list = list(self.access_config.nodes.keys()) if self.access_config else []
+                resource_type = cluster_config.get('resource_type', '')
+                if resource_type == 'SAPHanaController' or len(node_list) > 2:
+                    cluster_type = 'Scale-Out'
+                else:
+                    cluster_type = 'Scale-Up'
+
                 cluster_info = {
                     'cluster_name': cluster_name,
-                    'nodes': list(self.access_config.nodes.keys()) if self.access_config else [],
-                    'cluster_type': 'Scale-Up',
+                    'nodes': node_list,
+                    'cluster_type': cluster_type,
+                    'majority_makers': self.majority_makers,
                 }
+
+                # Add SAP HANA HA parameters from cluster config
+                if cluster_config:
+                    cluster_info.update({
+                        'sid': cluster_config.get('sid'),
+                        'instance_number': cluster_config.get('instance_number'),
+                        'virtual_ip': cluster_config.get('virtual_ip'),
+                        'secondary_vip': cluster_config.get('secondary_vip'),
+                        'replication_mode': cluster_config.get('replication_mode'),
+                        'operation_mode': cluster_config.get('operation_mode'),
+                        'prefer_site_takeover': cluster_config.get('prefer_site_takeover'),
+                        'automated_register': cluster_config.get('automated_register'),
+                        'duplicate_primary_timeout': cluster_config.get('duplicate_primary_timeout'),
+                        'migration_threshold': cluster_config.get('migration_threshold'),
+                        'stonith_device': cluster_config.get('stonith_device'),
+                        'stonith_params': cluster_config.get('stonith_params'),
+                        'resource_type': cluster_config.get('resource_type'),
+                        'resource_name': cluster_config.get('resource_name'),
+                        'topology_resource': cluster_config.get('topology_resource'),
+                        'vip_resource': cluster_config.get('vip_resource'),
+                        'secondary_vip_resource': cluster_config.get('secondary_vip_resource'),
+                        'secondary_read': cluster_config.get('secondary_read'),
+                        'node1_hostname': cluster_config.get('node1_hostname'),
+                        'node1_ip': cluster_config.get('node1_ip'),
+                        'node2_hostname': cluster_config.get('node2_hostname'),
+                        'node2_ip': cluster_config.get('node2_ip'),
+                        'sites': cluster_config.get('sites'),
+                    })
 
                 # Convert results to dict format
                 results_dict = [
@@ -1522,11 +1566,49 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                             cluster_name_safe = re.sub(r'[^\w\-]', '_', cluster_name)
 
                             # Prepare report data
+                            cluster_config = clusters.get(cluster_name, {})
+                            node_list = list(self.access_config.nodes.keys()) if self.access_config else []
+                            resource_type = cluster_config.get('resource_type', '')
+                            if resource_type == 'SAPHanaController' or len(node_list) > 2:
+                                cluster_type = 'Scale-Out'
+                            else:
+                                cluster_type = 'Scale-Up'
+
                             cluster_info = {
                                 'cluster_name': cluster_name,
-                                'nodes': list(self.access_config.nodes.keys()) if self.access_config else [],
-                                'cluster_type': 'Scale-Up',
+                                'nodes': node_list,
+                                'cluster_type': cluster_type,
+                                'majority_makers': self.majority_makers,
                             }
+
+                            # Add SAP HANA HA parameters from cluster config
+                            if cluster_config:
+                                cluster_info.update({
+                                    'sid': cluster_config.get('sid'),
+                                    'instance_number': cluster_config.get('instance_number'),
+                                    'virtual_ip': cluster_config.get('virtual_ip'),
+                                    'secondary_vip': cluster_config.get('secondary_vip'),
+                                    'replication_mode': cluster_config.get('replication_mode'),
+                                    'operation_mode': cluster_config.get('operation_mode'),
+                                    'prefer_site_takeover': cluster_config.get('prefer_site_takeover'),
+                                    'automated_register': cluster_config.get('automated_register'),
+                                    'duplicate_primary_timeout': cluster_config.get('duplicate_primary_timeout'),
+                                    'migration_threshold': cluster_config.get('migration_threshold'),
+                                    'stonith_device': cluster_config.get('stonith_device'),
+                                    'stonith_params': cluster_config.get('stonith_params'),
+                                    'resource_type': cluster_config.get('resource_type'),
+                                    'resource_name': cluster_config.get('resource_name'),
+                                    'topology_resource': cluster_config.get('topology_resource'),
+                                    'vip_resource': cluster_config.get('vip_resource'),
+                                    'secondary_vip_resource': cluster_config.get('secondary_vip_resource'),
+                                    'secondary_read': cluster_config.get('secondary_read'),
+                                    'node1_hostname': cluster_config.get('node1_hostname'),
+                                    'node1_ip': cluster_config.get('node1_ip'),
+                                    'node2_hostname': cluster_config.get('node2_hostname'),
+                                    'node2_ip': cluster_config.get('node2_ip'),
+                                    'sites': cluster_config.get('sites'),
+                                })
+
                             results_dict = [
                                 {
                                     'check_id': r.check_id,
@@ -2636,11 +2718,52 @@ Examples:
                         # Generate PDF
                         from report_generator import generate_health_check_report
 
+                        # Get cluster config and determine type
+                        cluster_config = {}
+                        if health_check.access_config and health_check.access_config.clusters:
+                            cluster_config = health_check.access_config.clusters.get(cluster_name, {})
+
+                        node_list = list(health_check.access_config.nodes.keys()) if health_check.access_config else []
+                        resource_type = cluster_config.get('resource_type', '')
+                        if resource_type == 'SAPHanaController' or len(node_list) > 2:
+                            cluster_type = 'Scale-Out'
+                        else:
+                            cluster_type = 'Scale-Up'
+
                         cluster_info = {
                             'cluster_name': cluster_name,
-                            'nodes': list(health_check.access_config.nodes.keys()) if health_check.access_config else [],
-                            'cluster_type': 'Scale-Up',
+                            'nodes': node_list,
+                            'cluster_type': cluster_type,
+                            'majority_makers': health_check.majority_makers,
                         }
+
+                        # Add SAP HANA HA parameters from cluster config
+                        if cluster_config:
+                            cluster_info.update({
+                                'sid': cluster_config.get('sid'),
+                                    'instance_number': cluster_config.get('instance_number'),
+                                    'virtual_ip': cluster_config.get('virtual_ip'),
+                                    'secondary_vip': cluster_config.get('secondary_vip'),
+                                    'replication_mode': cluster_config.get('replication_mode'),
+                                    'operation_mode': cluster_config.get('operation_mode'),
+                                    'prefer_site_takeover': cluster_config.get('prefer_site_takeover'),
+                                    'automated_register': cluster_config.get('automated_register'),
+                                    'duplicate_primary_timeout': cluster_config.get('duplicate_primary_timeout'),
+                                    'migration_threshold': cluster_config.get('migration_threshold'),
+                                    'stonith_device': cluster_config.get('stonith_device'),
+                                    'stonith_params': cluster_config.get('stonith_params'),
+                                    'resource_type': cluster_config.get('resource_type'),
+                                    'resource_name': cluster_config.get('resource_name'),
+                                    'topology_resource': cluster_config.get('topology_resource'),
+                                    'vip_resource': cluster_config.get('vip_resource'),
+                                    'secondary_vip_resource': cluster_config.get('secondary_vip_resource'),
+                                    'secondary_read': cluster_config.get('secondary_read'),
+                                    'node1_hostname': cluster_config.get('node1_hostname'),
+                                    'node1_ip': cluster_config.get('node1_ip'),
+                                    'node2_hostname': cluster_config.get('node2_hostname'),
+                                    'node2_ip': cluster_config.get('node2_ip'),
+                                    'sites': cluster_config.get('sites'),
+                                })
 
                         results_dict = [
                             {
