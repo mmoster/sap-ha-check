@@ -811,24 +811,51 @@ class RulesEngine:
                         })
 
             if mismatches:
+                # SAP HANA package keys - differences in these on majority maker nodes are expected
+                sap_hana_package_keys = {
+                    'sap_hana_ha_version', 'resource_agents_sap_hana',
+                    'resource_agents_sap_hana_scaleout', 'saphanasr_version'
+                }
+
                 # Build detailed message about differences
                 missing_packages = []  # Package exists on some nodes but not others
                 version_diffs = []     # Same package, different versions
+                critical_mismatches = []  # Non-SAP-HANA package mismatches (always report)
+                sap_hana_mismatches = []  # SAP HANA package mismatches (may be expected on majority maker)
 
                 for m in mismatches:
                     key = m['key']
                     expected = m.get('expected')
                     actual = m.get('actual')
+                    is_sap_hana_pkg = key in sap_hana_package_keys
 
                     if expected is None and actual is not None:
                         # Package only on this node (extra package)
-                        missing_packages.append(f"{key}: only on {m['node']} ({actual})")
+                        msg = f"{key}: only on {m['node']} ({actual})"
+                        missing_packages.append(msg)
+                        if is_sap_hana_pkg:
+                            sap_hana_mismatches.append(m)
+                        else:
+                            critical_mismatches.append(m)
                     elif expected is not None and actual is None:
                         # Package missing on this node
-                        missing_packages.append(f"{key}: missing on {m['node']} (reference: {expected})")
+                        msg = f"{key}: missing on {m['node']} (reference: {expected})"
+                        missing_packages.append(msg)
+                        if is_sap_hana_pkg:
+                            sap_hana_mismatches.append(m)
+                        else:
+                            critical_mismatches.append(m)
                     elif expected != actual:
                         # Different versions
-                        version_diffs.append(f"{key}: {m['node']} has {actual} (reference: {expected})")
+                        msg = f"{key}: {m['node']} has {actual} (reference: {expected})"
+                        version_diffs.append(msg)
+                        if is_sap_hana_pkg:
+                            sap_hana_mismatches.append(m)
+                        else:
+                            critical_mismatches.append(m)
+
+                # Determine status: if only SAP HANA package differences, it's INFO (expected for majority maker)
+                only_sap_hana_diffs = len(critical_mismatches) == 0 and len(sap_hana_mismatches) > 0
 
                 # Build message with details
                 msg_parts = []
@@ -841,18 +868,31 @@ class RulesEngine:
                     if len(missing_packages) > 3:
                         msg_parts.append(f"...and {len(missing_packages) - 3} more")
 
-                message = " | ".join(msg_parts) if msg_parts else f"Values differ across nodes: {', '.join(set(m['key'] for m in mismatches))}"
-
-                # Add a comparison failure result
-                results.append(CheckResult(
-                    check_id=rule.check_id,
-                    description=rule.description,
-                    status=CheckStatus.FAILED,
-                    severity=Severity[rule.severity],
-                    message=message,
-                    details={'mismatches': mismatches, 'reference_node': reference_node},
-                    node="(comparison)"
-                ))
+                if only_sap_hana_diffs:
+                    # Only SAP HANA package differences - expected for majority maker nodes
+                    msg_parts.append("(expected for MajorityMaker nodes)")
+                    message = " | ".join(msg_parts)
+                    results.append(CheckResult(
+                        check_id=rule.check_id,
+                        description=rule.description,
+                        status=CheckStatus.PASSED,
+                        severity=Severity.INFO,
+                        message=message,
+                        details={'mismatches': mismatches, 'reference_node': reference_node, 'majority_maker_expected': True},
+                        node="(comparison)"
+                    ))
+                else:
+                    message = " | ".join(msg_parts) if msg_parts else f"Values differ across nodes: {', '.join(set(m['key'] for m in mismatches))}"
+                    # Add a comparison failure result
+                    results.append(CheckResult(
+                        check_id=rule.check_id,
+                        description=rule.description,
+                        status=CheckStatus.FAILED,
+                        severity=Severity[rule.severity],
+                        message=message,
+                        details={'mismatches': mismatches, 'reference_node': reference_node},
+                        node="(comparison)"
+                    ))
 
         return results
 
