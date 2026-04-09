@@ -374,7 +374,7 @@ def generate_health_check_report(
 
             # Warning box
             y_start = pdf.get_y()
-            pdf.rect(10, y_start, 190, 28, 'DF')
+            pdf.rect(10, y_start, 190, 38, 'DF')
             pdf.set_xy(15, y_start + 3)
             pdf.cell(0, 6, "WARNING: Cluster Services Not Running", ln=True)
 
@@ -382,16 +382,20 @@ def generate_health_check_report(
             pdf.set_font('Helvetica', '', 9)
             pdf.multi_cell(180, 4,
                 "The cluster is configured but Pacemaker is not running. Health check results "
-                "may be incomplete or inaccurate. Some checks rely on live cluster data that "
-                "is only available when the cluster is running."
+                "may be incomplete or inaccurate. Checks that require live cluster data (quorum, "
+                "node status, resource status, replication status) will report ERROR status."
             )
             pdf.set_xy(15, y_start + 22)
             pdf.set_font('Helvetica', 'B', 9)
-            pdf.cell(0, 4, "Recommendation: Start the cluster and rerun the health check for accurate results.")
+            pdf.cell(0, 4, "To start the cluster and rerun the health check:")
+            pdf.set_xy(15, y_start + 28)
+            pdf.set_font('Courier', '', 9)
+            pdf.set_fill_color(245, 245, 245)
+            pdf.cell(180, 5, "  pcs cluster start --all", fill=True)
 
             pdf.set_text_color(*RedHatColors.BLACK)
             pdf.set_line_width(0.2)
-            pdf.ln(10)
+            pdf.ln(20)
 
     # =========================================================================
     # CLUSTER CONFIGURATION
@@ -571,6 +575,28 @@ def generate_health_check_report(
     # Critical/Failed checks first
     if failed_checks or error_checks:
         pdf.sub_section("Failed Checks")
+
+        # Add prominent note when cluster is stopped and there are errors
+        if error_checks and not cluster_running:
+            pdf.set_fill_color(255, 243, 205)  # Light yellow background
+            pdf.set_draw_color(255, 193, 7)    # Yellow border
+            pdf.set_line_width(0.3)
+            y_note = pdf.get_y()
+            pdf.rect(10, y_note, 190, 16, 'DF')
+            pdf.set_xy(15, y_note + 2)
+            pdf.set_font('Helvetica', 'B', 9)
+            pdf.set_text_color(133, 100, 4)
+            pdf.cell(0, 5, "Cluster Not Running - Some checks cannot retrieve live data", ln=True)
+            pdf.set_xy(15, y_note + 8)
+            pdf.set_font('Helvetica', '', 8)
+            pdf.multi_cell(180, 4,
+                "ERROR status below may be caused by the stopped cluster. Start the cluster "
+                "with 'pcs cluster start --all' and rerun the health check for accurate results."
+            )
+            pdf.set_text_color(*RedHatColors.BLACK)
+            pdf.set_line_width(0.2)
+            pdf.ln(5)
+
         for check in failed_checks + error_checks:
             pdf.check_result_row(
                 check.get('check_id', 'N/A'),
@@ -580,16 +606,14 @@ def generate_health_check_report(
                 check.get('node', '')
             )
 
-        # Add note about errors when cluster is stopped
-        if error_checks:
+        # Add note about errors when cluster is stopped (for running cluster case)
+        if error_checks and cluster_running:
             pdf.ln(3)
             pdf.set_font('Helvetica', 'I', 9)
             pdf.set_text_color(*RedHatColors.GRAY)
             pdf.multi_cell(0, 5,
-                "Note: Some checks report ERROR status when the cluster services are not running. "
-                "Commands like 'crm_mon', 'pcs status', and 'SAPHanaSR-showAttr' require a running "
-                "cluster to report accurate status. Configuration checks using 'pcs -f cib.xml' can "
-                "still verify the cluster configuration is correct even when stopped."
+                "Note: Some checks report ERROR status when data could not be retrieved. "
+                "This may indicate a problem with the cluster configuration or services."
             )
             pdf.set_text_color(0, 0, 0)
             pdf.ln(3)
