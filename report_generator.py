@@ -419,6 +419,17 @@ def generate_health_check_report(
         else:
             pdf.cell(0, 6, node, new_x="LMARGIN", new_y="NEXT")
 
+    # Note about MajorityMaker constraints for Scale-Out
+    if majority_makers and cluster_info.get('cluster_type') == 'Scale-Out':
+        pdf.ln(2)
+        pdf.set_font('Helvetica', 'I', 8)
+        pdf.set_text_color(100, 100, 100)
+        pdf.multi_cell(0, 4,
+            f"Note: MajorityMaker node(s) have location constraints with resource-discovery=never "
+            f"to prevent SAPHanaTopology and SAPHanaController from running on these nodes."
+        )
+        pdf.set_text_color(*RedHatColors.BLACK)
+
     pdf.ln(5)
 
     # SAP HANA HA Parameters (Ansible-compatible)
@@ -466,8 +477,12 @@ def generate_health_check_report(
             topo_config = {
                 "Resource Name": topology_resource,
                 "Resource Agent": "ocf:suse:SAPHanaTopology",
-                "Clone Type": "clone (runs on all nodes)",
+                "Clone Type": "clone (runs on all HANA nodes)",
+                "interleave": "true",
             }
+            # Add majority maker exclusion info
+            if majority_makers:
+                topo_config["Excluded Nodes"] = ", ".join(majority_makers) + " (resource-discovery=never)"
             pdf.info_table(topo_config)
             pdf.ln(3)
 
@@ -481,6 +496,10 @@ def generate_health_check_report(
                 res_config["Resource Name"] = resource_name
                 res_config["Resource Agent"] = "ocf:suse:SAPHanaController"
                 res_config["Clone Type"] = "promotable (master/slave)"
+                res_config["interleave"] = "true"
+                # Add majority maker exclusion info
+                if majority_makers:
+                    res_config["Excluded Nodes"] = ", ".join(majority_makers) + " (resource-discovery=never)"
             else:
                 pdf.sub_section("SAPHana Resource")
                 res_config["Resource Name"] = resource_name
