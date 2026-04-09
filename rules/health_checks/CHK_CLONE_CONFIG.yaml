@@ -1,36 +1,80 @@
 # CHK_CLONE_CONFIG - Validate clone resource configuration
 check_id: CHK_CLONE_CONFIG
-version: "1.0"
+version: "1.1"
 severity: CRITICAL
 description: Validate SAPHana clone/promotable resource configuration
 enabled: true
 
+# For Scale-Out clusters:
+# - clone-max should equal the number of HANA nodes (excluding majority maker)
+# - clone-node-max should be 1 (only one instance per node)
+# - interleave should be true for better failover behavior
+
 source_definitions:
-  # Check clone/promotable resource config using pcs (RHEL)
-  live_cmd: "pcs resource config 2>/dev/null | grep -iE 'clone|promotable|SAPHana' || echo 'NO_CLONE_CONFIG'"
+  # Get detailed clone config for SAPHana resources
+  live_cmd: |
+    echo "=== HANA_NODES ===" && \
+    pcs resource config 2>/dev/null | grep -A20 'SAPHanaController.*clone' | grep -E 'clone-max|clone-node-max|interleave|promotable' | head -5 && \
+    echo "=== TOPOLOGY ===" && \
+    pcs resource config 2>/dev/null | grep -A10 'SAPHanaTopology.*clone' | grep -E 'clone-max|clone-node-max|interleave' | head -4 && \
+    echo "=== NODE_COUNT ===" && \
+    pcs status nodes 2>/dev/null | grep -c 'Online:' || echo "0"
   sos_path: "sos_commands/pacemaker/pcs_config"
 
 parser:
   type: regex
   multiline: true
   search_patterns:
-    - name: clone_max
-      regex: "(clone-max=\\d+|promotable-max=\\d+|Clone)"
-      group: 0
-    - name: clone_node_max
-      regex: "(clone-node-max=1|promoted-node-max=1)"
-      group: 0
-    - name: master_slave
-      regex: "(ms |master-slave|promotable|Promotable|SAPHana.*clone)"
-      group: 0
+    - name: controller_clone_max
+      regex: "=== HANA_NODES ===\\s+clone-max=(\\d+)"
+      group: 1
+    - name: controller_clone_node_max
+      regex: "=== HANA_NODES ===[\\s\\S]*?clone-node-max=(\\d+)"
+      group: 1
+    - name: controller_interleave
+      regex: "=== HANA_NODES ===[\\s\\S]*?interleave=(true|false)"
+      group: 1
+    - name: controller_promotable
+      regex: "=== HANA_NODES ===[\\s\\S]*?promotable=(true|false)"
+      group: 1
+    - name: topology_clone_max
+      regex: "=== TOPOLOGY ===\\s+clone-max=(\\d+)"
+      group: 1
+    - name: topology_clone_node_max
+      regex: "=== TOPOLOGY ===[\\s\\S]*?clone-node-max=(\\d+)"
+      group: 1
+    - name: topology_interleave
+      regex: "=== TOPOLOGY ===[\\s\\S]*?interleave=(true|false)"
+      group: 1
     - name: saphana_resource
-      regex: "(SAPHana_|SAPHanaTopology)"
+      regex: "(SAPHanaController|SAPHanaTopology)"
       group: 0
 
 validation_logic:
   scope: cluster  # Clone config is cluster-wide
+  custom_check: clone_max_validation
   expectations:
     - key: saphana_resource
       operator: exists
       value: true
       message: "No SAPHana clone/promotable resource found"
+    - key: controller_clone_node_max
+      operator: equals
+      value: "1"
+      message: "SAPHanaController clone-node-max should be 1"
+    - key: controller_interleave
+      operator: equals
+      value: "true"
+      message: "SAPHanaController interleave should be true"
+    - key: controller_promotable
+      operator: equals
+      value: "true"
+      message: "SAPHanaController should be promotable (master/slave)"
+    - key: topology_clone_node_max
+      operator: equals
+      value: "1"
+      message: "SAPHanaTopology clone-node-max should be 1"
+    - key: topology_interleave
+      operator: equals
+      value: "true"
+      message: "SAPHanaTopology interleave should be true"
