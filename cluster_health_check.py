@@ -2035,7 +2035,7 @@ Examples:
         '--fetch-sosreports', '-F',
         nargs='*',
         metavar='CLUSTER_OR_NODE',
-        help='Fetch latest sosreports from cluster nodes via SCP. Usage: --fetch-sosreports [CLUSTER|node1 node2...]'
+        help='Fetch latest sosreports from cluster nodes via SCP. Saves to ./sosreports/ by default. Usage: --fetch-sosreports [CLUSTER|node1 node2...]'
     )
     parser.add_argument(
         '--force', '-f',
