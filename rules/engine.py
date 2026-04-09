@@ -425,6 +425,91 @@ class RulesEngine:
             node=node
         )
 
+    def _validate_clone_max(self, rule: RuleDefinition, parsed: Dict, node: str) -> CheckResult:
+        """Validate clone-max setting for SAPHanaController and SAPHanaTopology.
+
+        For Scale-Out clusters:
+        - clone-max should equal the number of HANA nodes (total nodes - majority makers)
+        - clone-node-max should be 1
+        - interleave should be true
+        """
+        issues = []
+        info = []
+
+        # Get clone-max values
+        controller_clone_max = parsed.get('controller_clone_max')
+        topology_clone_max = parsed.get('topology_clone_max')
+        controller_clone_node_max = parsed.get('controller_clone_node_max')
+        topology_clone_node_max = parsed.get('topology_clone_node_max')
+        controller_interleave = parsed.get('controller_interleave')
+        topology_interleave = parsed.get('topology_interleave')
+        controller_promotable = parsed.get('controller_promotable')
+
+        # Check if we have any data
+        if not controller_clone_max and not topology_clone_max:
+            # No clone config found - might be using pcs -f cib.xml or cluster not running
+            return CheckResult(
+                check_id=rule.check_id,
+                description=rule.description,
+                status=CheckStatus.PASSED,
+                severity=Severity.INFO,
+                message="Clone configuration not available (cluster may be stopped)",
+                details={'parsed': parsed},
+                node=node
+            )
+
+        # Validate clone-node-max = 1
+        if controller_clone_node_max and controller_clone_node_max != '1':
+            issues.append(f"SAPHanaController clone-node-max={controller_clone_node_max} (should be 1)")
+        if topology_clone_node_max and topology_clone_node_max != '1':
+            issues.append(f"SAPHanaTopology clone-node-max={topology_clone_node_max} (should be 1)")
+
+        # Validate interleave = true
+        if controller_interleave and controller_interleave != 'true':
+            issues.append(f"SAPHanaController interleave={controller_interleave} (should be true)")
+        if topology_interleave and topology_interleave != 'true':
+            issues.append(f"SAPHanaTopology interleave={topology_interleave} (should be true)")
+
+        # Validate promotable = true for controller
+        if controller_promotable and controller_promotable != 'true':
+            issues.append(f"SAPHanaController promotable={controller_promotable} (should be true)")
+
+        # Report clone-max values (informational - we can't validate without knowing HANA node count)
+        if controller_clone_max:
+            info.append(f"SAPHanaController clone-max={controller_clone_max}")
+        if topology_clone_max:
+            info.append(f"SAPHanaTopology clone-max={topology_clone_max}")
+
+        # Check if controller and topology have matching clone-max
+        if controller_clone_max and topology_clone_max and controller_clone_max != topology_clone_max:
+            issues.append(f"clone-max mismatch: Controller={controller_clone_max}, Topology={topology_clone_max}")
+
+        if issues:
+            return CheckResult(
+                check_id=rule.check_id,
+                description=rule.description,
+                status=CheckStatus.FAILED,
+                severity=Severity.WARNING,
+                message="; ".join(issues),
+                details={'parsed': parsed, 'issues': issues},
+                node=node
+            )
+
+        # All checks passed
+        message = "Clone configuration valid"
+        if info:
+            message += f" ({'; '.join(info)})"
+
+        return CheckResult(
+            check_id=rule.check_id,
+            description=rule.description,
+            status=CheckStatus.PASSED,
+            severity=Severity.INFO,
+            message=message,
+            details={'parsed': parsed, 'info': info},
+            node=node
+        )
+
     def _evaluate_expectation(self, parsed: Dict, expectation: Dict) -> Tuple[bool, str, str]:
         """Evaluate a single expectation against parsed data.
 
@@ -611,6 +696,11 @@ class RulesEngine:
         validation = rule.validation_logic
         if validation.get('type') == 'detection':
             return self._handle_detection_check(rule, parsed, node)
+
+        # Handle custom checks (e.g., clone_max_validation)
+        custom_check = validation.get('custom_check')
+        if custom_check == 'clone_max_validation':
+            return self._validate_clone_max(rule, parsed, node)
 
         # Evaluate expectations
         expectations = validation.get('expectations', [])
