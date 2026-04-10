@@ -268,7 +268,10 @@ class CIBParser:
             - order: order constraints
             - resource_discovery: resource-discovery settings with context
             - majority_maker: identified majority maker node (if any)
+            - majority_maker_info: details about majority maker constraints
         """
+        import re
+
         result = {
             'success': False,
             'raw_output': '',
@@ -276,7 +279,8 @@ class CIBParser:
             'colocation': [],
             'order': [],
             'resource_discovery': [],
-            'majority_maker': None
+            'majority_maker': None,
+            'majority_maker_info': {}
         }
 
         success, output = self._run_pcs('constraint', 'constraints')
@@ -289,7 +293,13 @@ class CIBParser:
 
         current_section = None
         previous_line = ""
-        majority_maker_candidates = {}  # node -> count of resource-discovery=never
+
+        # Track majority maker constraints per node
+        # A majority maker must have constraints avoiding:
+        # 1. SAPHanaTopology (required)
+        # 2. SAPHanaController OR SAPHana (required)
+        # resource-discovery=never is optional but recommended
+        mm_constraints = {}  # node -> {'topology': bool, 'controller': bool, 'resource_discovery': bool}
 
         for line in output.split('\n'):
             line_stripped = line.strip()
@@ -316,20 +326,47 @@ class CIBParser:
                 context = f"{previous_line} | {line_stripped}"
                 result['resource_discovery'].append(context)
 
-                # Extract node name for majority maker detection
-                # Pattern: avoids node 'nodename'
-                import re
+                # Extract node name and resource for majority maker detection
                 match = re.search(r"avoids node '([^']+)'", previous_line)
                 if match:
                     node = match.group(1)
-                    majority_maker_candidates[node] = majority_maker_candidates.get(node, 0) + 1
+                    if node not in mm_constraints:
+                        mm_constraints[node] = {'topology': False, 'controller': False, 'resource_discovery': True}
+                    else:
+                        mm_constraints[node]['resource_discovery'] = True
+
+            # Check for location constraints that avoid a node (with or without resource-discovery)
+            # Pattern: resource 'X' avoids node 'nodename' with score INFINITY
+            if current_section == 'location' and 'avoids node' in line_stripped:
+                match = re.search(r"resource '([^']+)'.*avoids node '([^']+)'", line_stripped)
+                if match:
+                    resource = match.group(1)
+                    node = match.group(2)
+
+                    if node not in mm_constraints:
+                        mm_constraints[node] = {'topology': False, 'controller': False, 'resource_discovery': False}
+
+                    # Check if this is a SAPHanaTopology constraint
+                    if 'SAPHanaTopology' in resource:
+                        mm_constraints[node]['topology'] = True
+
+                    # Check if this is a SAPHanaController or SAPHana constraint
+                    if 'SAPHanaController' in resource or ('SAPHana' in resource and 'Topology' not in resource and 'FS' not in resource):
+                        mm_constraints[node]['controller'] = True
 
             previous_line = line_stripped
 
-        # Majority maker is the node with most resource-discovery=never constraints
-        # (typically has constraints for SAPHana, SAPHanaTopology, etc.)
-        if majority_maker_candidates:
-            result['majority_maker'] = max(majority_maker_candidates, key=majority_maker_candidates.get)
+        # Identify majority maker: node with both topology and controller constraints
+        for node, constraints in mm_constraints.items():
+            if constraints['topology'] and constraints['controller']:
+                result['majority_maker'] = node
+                result['majority_maker_info'] = {
+                    'node': node,
+                    'has_topology_constraint': constraints['topology'],
+                    'has_controller_constraint': constraints['controller'],
+                    'has_resource_discovery': constraints['resource_discovery']
+                }
+                break  # Found the majority maker
 
         return result
     
@@ -488,7 +525,8 @@ class CIBParser:
                 'devices': config['stonith'].get('devices', [])
             },
             'properties': config['properties'].get('properties', {}),
-            'majority_maker': config['constraints'].get('majority_maker')
+            'majority_maker': config['constraints'].get('majority_maker'),
+            'majority_maker_info': config['constraints'].get('majority_maker_info', {})
         }
 
         return summary
