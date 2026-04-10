@@ -2626,10 +2626,11 @@ Examples:
         print("  [4] Show configuration")
         print("  [5] Save PDF report and exit")
         print("  [6] Show suggestions")
+        print("  [7] Reset configuration (delete cached discovery)")
         print("  [q] Quit")
         print("-" * 63)
         try:
-            choice = input("  Enter choice [1-6/q] (default=1): ").strip().lower()
+            choice = input("  Enter choice [1-7/q] (default=1): ").strip().lower()
             return choice if choice else '1'  # Default to installation status
         except (EOFError, KeyboardInterrupt):
             return 'q'
@@ -2842,6 +2843,24 @@ Examples:
                             print(f"  Unknown topic: {topic}")
                     except (EOFError, KeyboardInterrupt):
                         pass
+                elif choice == '7' or choice == 'd':
+                    # Reset/delete configuration
+                    config_file = health_check.config_dir / 'cluster_access_config.yaml'
+                    if config_file.exists():
+                        try:
+                            confirm = input("  Delete saved configuration? This will force fresh discovery. [y/N]: ").strip().lower()
+                            if confirm == 'y' or confirm == 'yes':
+                                config_file.unlink()
+                                print("  Configuration deleted.")
+                                print("\n  To rediscover, run:")
+                                print("    ./cluster_health_check.py <hostname>")
+                                print("    ./cluster_health_check.py -s sosreports/")
+                            else:
+                                print("  Cancelled.")
+                        except (EOFError, KeyboardInterrupt):
+                            print("\n  Cancelled.")
+                    else:
+                        print("  No configuration file found.")
                 elif choice == 'q' or choice == 'quit' or choice == 'exit':
                     print("\n  Goodbye!")
                     break
