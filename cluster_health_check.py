@@ -1415,6 +1415,9 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                     resource_config = self.rules_engine.get_cluster_resources_config()
                     if resource_config.get('available'):
                         cluster_info['resource_config'] = resource_config
+                        # Extract majority maker for Scale-Out clusters
+                        if resource_config.get('majority_maker'):
+                            cluster_info['majority_makers'] = [resource_config['majority_maker']]
 
                 # PDF filename format: YYYYMMDD_health_check_report_clustername_HHMM.pdf
                 pdf_timestamp = datetime.now().strftime('%Y%m%d')
@@ -1700,6 +1703,9 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                                 resource_config = self.rules_engine.get_cluster_resources_config()
                                 if resource_config.get('available'):
                                     cluster_info['resource_config'] = resource_config
+                                    # Extract majority maker for Scale-Out clusters
+                                    if resource_config.get('majority_maker'):
+                                        cluster_info['majority_makers'] = [resource_config['majority_maker']]
 
                             generate_health_check_report(results_dict, summary, cluster_info, str(pdf_file), install_status)
                             print(f"\n  PDF report saved: {pdf_file}")
@@ -2876,6 +2882,9 @@ Examples:
                             resource_config = health_check.rules_engine.get_cluster_resources_config()
                             if resource_config.get('available'):
                                 cluster_info['resource_config'] = resource_config
+                                # Extract majority maker for Scale-Out clusters
+                                if resource_config.get('majority_maker'):
+                                    cluster_info['majority_makers'] = [resource_config['majority_maker']]
 
                         generate_health_check_report(results_dict, summary, cluster_info, str(pdf_file), install_status)
                         print(f"\n  PDF report saved: {pdf_file}")

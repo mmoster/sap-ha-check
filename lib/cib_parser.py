@@ -258,7 +258,7 @@ class CIBParser:
     
     def get_constraints(self) -> Dict[str, Any]:
         """Get cluster constraints.
-        
+
         Returns:
             Dict with:
             - success: bool
@@ -266,7 +266,8 @@ class CIBParser:
             - location: location constraints
             - colocation: colocation constraints
             - order: order constraints
-            - resource_discovery: resource-discovery settings
+            - resource_discovery: resource-discovery settings with context
+            - majority_maker: identified majority maker node (if any)
         """
         result = {
             'success': False,
@@ -274,22 +275,25 @@ class CIBParser:
             'location': [],
             'colocation': [],
             'order': [],
-            'resource_discovery': []
+            'resource_discovery': [],
+            'majority_maker': None
         }
-        
+
         success, output = self._run_pcs('constraint', 'constraints')
         if not success:
             result['error'] = output
             return result
-        
+
         result['success'] = True
         result['raw_output'] = output
-        
+
         current_section = None
-        
+        previous_line = ""
+        majority_maker_candidates = {}  # node -> count of resource-discovery=never
+
         for line in output.split('\n'):
             line_stripped = line.strip()
-            
+
             # Detect sections
             if line_stripped.startswith('Location Constraints:'):
                 current_section = 'location'
@@ -305,11 +309,28 @@ class CIBParser:
                     result['colocation'].append(line_stripped)
                 elif current_section == 'order':
                     result['order'].append(line_stripped)
-            
-            # Track resource-discovery settings
-            if 'resource-discovery' in line.lower():
-                result['resource_discovery'].append(line_stripped)
-        
+
+            # Track resource-discovery settings with context (previous line has node info)
+            if 'resource-discovery=never' in line.lower():
+                # Previous line contains the node: "resource 'X' avoids node 'nodename'"
+                context = f"{previous_line} | {line_stripped}"
+                result['resource_discovery'].append(context)
+
+                # Extract node name for majority maker detection
+                # Pattern: avoids node 'nodename'
+                import re
+                match = re.search(r"avoids node '([^']+)'", previous_line)
+                if match:
+                    node = match.group(1)
+                    majority_maker_candidates[node] = majority_maker_candidates.get(node, 0) + 1
+
+            previous_line = line_stripped
+
+        # Majority maker is the node with most resource-discovery=never constraints
+        # (typically has constraints for SAPHana, SAPHanaTopology, etc.)
+        if majority_maker_candidates:
+            result['majority_maker'] = max(majority_maker_candidates, key=majority_maker_candidates.get)
+
         return result
     
     def get_properties(self) -> Dict[str, Any]:
@@ -466,7 +487,8 @@ class CIBParser:
                 'enabled': config['stonith'].get('enabled'),
                 'devices': config['stonith'].get('devices', [])
             },
-            'properties': config['properties'].get('properties', {})
+            'properties': config['properties'].get('properties', {}),
+            'majority_maker': config['constraints'].get('majority_maker')
         }
-        
+
         return summary
