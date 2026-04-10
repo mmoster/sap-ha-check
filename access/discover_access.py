@@ -576,17 +576,28 @@ class AccessDiscovery:
         if unassigned and clusters:
             for cluster_name, cluster_info in clusters.items():
                 # Get expected nodes from first sosreport in this cluster
+                # Use CIBParser for accurate node list from cib.xml
                 first_sos_path = list(cluster_info['nodes'].values())[0]
                 expected_nodes = self.get_cluster_nodes_from_sosreport(first_sos_path)
 
+                # Also try to get nodes from cib.xml for more accurate matching
+                try:
+                    from lib.cib_parser import CIBParser
+                    parser = CIBParser.from_sosreport(first_sos_path)
+                    if parser and parser.is_available():
+                        cib_nodes = parser.get_nodes()
+                        if cib_nodes.get('success') and cib_nodes.get('nodes'):
+                            expected_nodes = cib_nodes['nodes']
+                except Exception:
+                    pass  # Fall back to corosync.conf nodes
+
                 for hostname, sos_path in list(unassigned.items()):
-                    # Check if hostname matches any expected node
-                    for expected in expected_nodes:
-                        if hostname in expected or expected in hostname:
-                            clusters[cluster_name]['nodes'][hostname] = sos_path
-                            del unassigned[hostname]
-                            print(f"  {hostname}: matched to cluster '{cluster_name}' (from nodelist)")
-                            break
+                    # Check if hostname exactly matches any expected node
+                    if hostname in expected_nodes:
+                        clusters[cluster_name]['nodes'][hostname] = sos_path
+                        del unassigned[hostname]
+                        print(f"  {hostname}: matched to cluster '{cluster_name}' (from nodelist)")
+                        continue
 
         # Put remaining unassigned in 'unknown' cluster
         if unassigned:
