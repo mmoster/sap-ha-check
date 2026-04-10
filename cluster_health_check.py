@@ -1117,42 +1117,53 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
             self._debug_print(f"Nodes with HANA: {nodes_with_hana}, Nodes without: {nodes_without_hana}")
             self._debug_print(f"HANA installed: {hana_installed}")
 
-            if not hana_installed:
-                print("[SKIP] SAP HANA not installed - skipping HANA-specific checks")
-                # Add skipped results for other SAP checks
-                sap_checks = ['CHK_HANA_SR_STATUS', 'CHK_REPLICATION_MODE', 'CHK_HADR_HOOKS',
-                             'CHK_HANA_AUTOSTART', 'CHK_SYSTEMD_SAP', 'CHK_SITE_ROLES']
-                for check_id in sap_checks:
-                    rule = next((r for r in self.rules_engine.rules if r.check_id == check_id), None)
-                    if rule:
-                        self.check_results.append(CheckResult(
-                            check_id=check_id,
-                            description=rule.description if rule else check_id,
-                            status=CheckStatus.SKIPPED,
-                            severity=Severity.INFO,
-                            message="SAP HANA not installed",
-                            node="all"
-                        ))
-                return True
-
-            # Check for majority maker nodes (have resource agent but no HANA)
+            # Check for majority maker nodes FIRST (have resource agent but no HANA)
+            # This must happen before the early return for "no HANA installed"
             majority_makers = []
             if nodes_without_hana:
                 for node_name in nodes_without_hana:
                     node_info = nodes.get(node_name, {})
                     method = node_info.get('preferred_method', 'ssh')
                     user = node_info.get('ssh_user', 'root')
+                    sos_path = node_info.get('sosreport_path')
 
                     # Check if resource agent is installed (indicates majority maker)
                     # sap-hana-ha: RHEL 9/10 (Scale-Up & Scale-Out), required for RHEL 10
                     # resource-agents-sap-hana: legacy Scale-Up (RHEL 8/9)
                     # resource-agents-sap-hana-scaleout: legacy Scale-Out (RHEL 8/9)
-                    check_cmd = "rpm -q sap-hana-ha resource-agents-sap-hana resource-agents-sap-hana-scaleout 2>/dev/null | grep -v 'not installed' | head -1"
-                    success, output = self.rules_engine._execute_command(check_cmd, node_name, method, user)
+                    has_resource_agent = False
+                    agent_name = ""
 
-                    if success and output.strip():
+                    if method == 'sosreport' and sos_path:
+                        # Check installed-rpms file in sosreport
+                        # Majority maker has resource-agents-sap-hana-scaleout but NOT sap-hana-ha
+                        installed_rpms = Path(sos_path) / 'installed-rpms'
+                        if installed_rpms.exists():
+                            try:
+                                rpms_content = installed_rpms.read_text()
+                                has_sap_hana_ha = 'sap-hana-ha' in rpms_content
+                                has_scaleout_agent = 'resource-agents-sap-hana-scaleout' in rpms_content
+
+                                # Majority maker: has scaleout agent but NOT sap-hana-ha
+                                if has_scaleout_agent and not has_sap_hana_ha:
+                                    has_resource_agent = True
+                                    for line in rpms_content.split('\n'):
+                                        if 'resource-agents-sap-hana-scaleout' in line:
+                                            agent_name = line.split()[0] if line.split() else 'resource-agents-sap-hana-scaleout'
+                                            break
+                            except Exception:
+                                pass
+                    else:
+                        # Use live command
+                        check_cmd = "rpm -q sap-hana-ha resource-agents-sap-hana resource-agents-sap-hana-scaleout 2>/dev/null | grep -v 'not installed' | head -1"
+                        success, output = self.rules_engine._execute_command(check_cmd, node_name, method, user)
+                        if success and output.strip():
+                            has_resource_agent = True
+                            agent_name = output.strip()
+
+                    if has_resource_agent:
                         majority_makers.append(node_name)
-                        self._debug_print(f"Node {node_name} is a majority maker (has resource agent: {output.strip()})")
+                        self._debug_print(f"Node {node_name} is a majority maker (has resource agent: {agent_name})")
 
                         # Update the CHK_HANA_INSTALLED result for this majority maker to PASSED
                         for result in self.check_results:
@@ -1170,6 +1181,25 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                         print(f"[INFO] Nodes without HANA: {', '.join(non_majority_without_hana)}")
                 else:
                     print(f"[INFO] Nodes without HANA (not majority makers): {', '.join(nodes_without_hana)}")
+
+            # After majority maker check, if no HANA installed, skip SAP checks
+            if not hana_installed:
+                print("[SKIP] SAP HANA not installed - skipping HANA-specific checks")
+                # Add skipped results for other SAP checks
+                sap_checks_skip = ['CHK_HANA_SR_STATUS', 'CHK_REPLICATION_MODE', 'CHK_HADR_HOOKS',
+                                   'CHK_HANA_AUTOSTART', 'CHK_SYSTEMD_SAP', 'CHK_SITE_ROLES']
+                for check_id in sap_checks_skip:
+                    rule = next((r for r in self.rules_engine.rules if r.check_id == check_id), None)
+                    if rule:
+                        self.check_results.append(CheckResult(
+                            check_id=check_id,
+                            description=rule.description if rule else check_id,
+                            status=CheckStatus.SKIPPED,
+                            severity=Severity.INFO,
+                            message="SAP HANA not installed",
+                            node="all"
+                        ))
+                return True
 
         # HANA is installed on some nodes, run SAP checks only on those nodes
         sap_checks = ['CHK_HANA_SR_STATUS', 'CHK_REPLICATION_MODE', 'CHK_HADR_HOOKS',
