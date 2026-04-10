@@ -8,12 +8,20 @@ Supports both live command execution and SOSreport parsing.
 
 import os
 import re
+import sys
 import yaml
 import subprocess
 from pathlib import Path
 from typing import List, Dict, Optional, Any, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from enum import Enum
+
+# Add parent directory to path for lib imports
+SCRIPT_DIR = Path(__file__).parent.parent.resolve()
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from lib import CIBParser
 
 # Python 3.6 compatibility for dataclasses
 try:
@@ -160,6 +168,38 @@ class RulesEngine:
             'used_cib_xml': self._used_cib_xml,
             'description': description
         }
+
+    def get_cluster_resources_config(self) -> Dict[str, Any]:
+        """Extract cluster resource configuration for the report.
+
+        Uses the unified CIBParser library to parse cib.xml from either:
+        - SOSreport directory
+        - Live system (if cluster stopped but cib.xml exists)
+
+        Returns dict with report summary from CIBParser.
+        """
+        # Find cib.xml from sosreport or live system
+        nodes = self.access_config.get('nodes', {})
+        parser = None
+
+        # Try SOSreport paths first
+        for node_name, node_info in nodes.items():
+            sos_path = node_info.get('sosreport_path')
+            if sos_path:
+                parser = CIBParser.from_sosreport(sos_path)
+                if parser and parser.is_available():
+                    break
+                parser = None
+
+        # Fall back to live system cib.xml
+        if not parser:
+            parser = CIBParser.from_live_system()
+
+        if not parser or not parser.is_available():
+            return {'available': False}
+
+        # Use unified parser to get report summary
+        return parser.get_report_summary()
 
     def load_rules(self) -> List[RuleDefinition]:
         """Load all CHK_*.yaml rule files."""

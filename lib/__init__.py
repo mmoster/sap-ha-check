@@ -5,6 +5,7 @@ This package contains modular components:
 - utils: Utility functions (resource scanning, SOSreport extraction, update checking)
 - installation: Installation guides and step suggestions
 - interactive: Interactive startup and usage scanning
+- cib_parser: Unified CIB (cib.xml) parser for cluster configuration
 """
 
 from .utils import (
@@ -26,6 +27,8 @@ from .interactive import (
     print_usage_help,
 )
 
+from .cib_parser import CIBParser
+
 __all__ = [
     # utils
     'scan_for_resources',
@@ -40,4 +43,6 @@ __all__ = [
     'interactive_startup',
     'run_usage_scan',
     'print_usage_help',
+    # cib_parser
+    'CIBParser',
 ]

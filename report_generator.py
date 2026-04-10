@@ -613,6 +613,101 @@ def generate_health_check_report(
         pdf.ln(5)
 
     # =========================================================================
+    # CONFIGURED RESOURCES (from cib.xml)
+    # =========================================================================
+    resource_config = cluster_info.get('resource_config')
+    if resource_config and resource_config.get('available'):
+        pdf.add_page()
+        pdf.chapter_title("Configured Resources (from cib.xml)")
+
+        # Resources summary
+        resources = resource_config.get('resources', {})
+        if resources.get('list'):
+            pdf.sub_section("Cluster Resources")
+            pdf.set_font('Courier', '', 8)
+            for resource in resources.get('list', [])[:20]:  # Limit to 20 resources
+                pdf.cell(5, 4, "-")
+                pdf.multi_cell(0, 4, resource[:100])  # Truncate long lines
+            if len(resources.get('list', [])) > 20:
+                pdf.set_font('Helvetica', 'I', 8)
+                pdf.cell(0, 4, f"  ... and {len(resources['list']) - 20} more resources", ln=True)
+            pdf.ln(3)
+
+        # SAP HANA specific configuration
+        sap_hana = resource_config.get('sap_hana', {})
+        if sap_hana:
+            pdf.sub_section("SAP HANA Resource Configuration")
+            for resource_name, attrs in sap_hana.items():
+                pdf.set_font('Helvetica', 'B', 9)
+                pdf.cell(0, 5, resource_name[:60], ln=True)
+                pdf.set_font('Courier', '', 8)
+                for key, value in attrs.items():
+                    pdf.cell(10, 4, "")
+                    pdf.cell(0, 4, f"{key}={value}", ln=True)
+                pdf.ln(2)
+
+        # Constraints summary
+        constraints = resource_config.get('constraints', {})
+
+        # Location constraints with resource-discovery
+        resource_discovery = constraints.get('resource_discovery', [])
+        if resource_discovery:
+            pdf.sub_section("Resource Discovery Settings")
+            pdf.set_font('Courier', '', 8)
+            for rd in resource_discovery[:15]:
+                pdf.multi_cell(0, 4, rd[:120])
+            if len(resource_discovery) > 15:
+                pdf.set_font('Helvetica', 'I', 8)
+                pdf.cell(0, 4, f"  ... and {len(resource_discovery) - 15} more", ln=True)
+            pdf.ln(3)
+
+        # Location constraints
+        location = constraints.get('location', [])
+        if location:
+            pdf.sub_section("Location Constraints")
+            pdf.set_font('Courier', '', 7)
+            shown = 0
+            for loc in location:
+                if shown >= 20:
+                    break
+                if loc.startswith('resource') or loc.startswith('Resource'):
+                    pdf.multi_cell(0, 3.5, loc[:140])
+                    shown += 1
+            if len([l for l in location if l.startswith('resource') or l.startswith('Resource')]) > 20:
+                pdf.set_font('Helvetica', 'I', 8)
+                pdf.cell(0, 4, "  ... more constraints in full output", ln=True)
+            pdf.ln(3)
+
+        # Colocation constraints
+        colocation = constraints.get('colocation', [])
+        if colocation:
+            pdf.sub_section("Colocation Constraints")
+            pdf.set_font('Courier', '', 8)
+            for col in colocation[:10]:
+                pdf.multi_cell(0, 4, col[:120])
+            pdf.ln(3)
+
+        # Order constraints
+        order = constraints.get('order', [])
+        if order:
+            pdf.sub_section("Order Constraints")
+            pdf.set_font('Courier', '', 8)
+            for ord_c in order[:10]:
+                pdf.multi_cell(0, 4, ord_c[:120])
+            pdf.ln(3)
+
+        # STONITH info from cib
+        stonith = resource_config.get('stonith', {})
+        if stonith.get('devices'):
+            pdf.sub_section("STONITH Devices (from cib.xml)")
+            pdf.set_font('Courier', '', 8)
+            for device in stonith.get('devices', [])[:10]:
+                pdf.multi_cell(0, 4, device[:120])
+            pdf.ln(3)
+
+        pdf.ln(5)
+
+    # =========================================================================
     # CHECK RESULTS
     # =========================================================================
     pdf.add_page()

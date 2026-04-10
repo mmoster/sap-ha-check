@@ -1410,6 +1410,12 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                 except Exception:
                     install_status = None
 
+                # Get cluster resource configuration from cib.xml
+                if self.rules_engine:
+                    resource_config = self.rules_engine.get_cluster_resources_config()
+                    if resource_config.get('available'):
+                        cluster_info['resource_config'] = resource_config
+
                 # PDF filename format: YYYYMMDD_health_check_report_clustername_HHMM.pdf
                 pdf_timestamp = datetime.now().strftime('%Y%m%d')
                 pdf_time = datetime.now().strftime('%H%M')
@@ -1688,6 +1694,12 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                                 install_status = self.check_install_status()
                             except Exception:
                                 install_status = None
+
+                            # Get cluster resource configuration from cib.xml
+                            if self.rules_engine:
+                                resource_config = self.rules_engine.get_cluster_resources_config()
+                                if resource_config.get('available'):
+                                    cluster_info['resource_config'] = resource_config
 
                             generate_health_check_report(results_dict, summary, cluster_info, str(pdf_file), install_status)
                             print(f"\n  PDF report saved: {pdf_file}")
@@ -2858,6 +2870,12 @@ Examples:
                             install_status = health_check.check_install_status()
                         except Exception:
                             install_status = None
+
+                        # Get cluster resource configuration from cib.xml
+                        if health_check.rules_engine:
+                            resource_config = health_check.rules_engine.get_cluster_resources_config()
+                            if resource_config.get('available'):
+                                cluster_info['resource_config'] = resource_config
 
                         generate_health_check_report(results_dict, summary, cluster_info, str(pdf_file), install_status)
                         print(f"\n  PDF report saved: {pdf_file}")
