@@ -8,7 +8,10 @@ optional: true  # Fencing optional in non-strict mode (lab/test environments)
 
 source_definitions:
   live_cmd: "pcs property 2>/dev/null | grep -E 'stonith|cluster-name'; echo '---'; pcs status 2>/dev/null | grep -iE 'stonith|fence' || true"
-  sos_path: "sos_commands/pacemaker/crm_mon_-1"
+  sos_path: "sos_commands/pacemaker/crm_mon_-1*"
+  # Fallback: run pcs -f cib.xml locally when cluster was stopped
+  sos_cmd: "pcs -f {file} property config 2>/dev/null; echo '---'; pcs -f {file} stonith config 2>/dev/null"
+  sos_cmd_file: "sos_commands/pacemaker/crm_report/*/cib.xml"
 
 parser:
   type: regex

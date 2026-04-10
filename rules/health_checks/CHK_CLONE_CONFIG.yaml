@@ -12,6 +12,9 @@ enabled: true
 
 source_definitions:
   # Get detailed clone config for SAPHana resources
+  # NOTE: For sosreport analysis with stopped cluster, install 'pcs' package locally:
+  #   Fedora/RHEL: dnf install pcs
+  #   This enables parsing cib.xml with: pcs -f cib.xml resource config
   live_cmd: |
     echo "=== HANA_NODES ===" && \
     pcs resource config 2>/dev/null | grep -A20 'SAPHanaController.*clone' | grep -E 'clone-max|clone-node-max|interleave|promotable' | head -5 && \
@@ -20,31 +23,36 @@ source_definitions:
     echo "=== NODE_COUNT ===" && \
     pcs status nodes 2>/dev/null | grep -c 'Online:' || echo "0"
   sos_path: "sos_commands/pacemaker/pcs_config"
+  # Fallback: run pcs -f cib.xml locally when pcs_config shows error (cluster stopped)
+  sos_cmd: "pcs -f {file} resource config 2>/dev/null"
+  sos_cmd_file: "sos_commands/pacemaker/crm_report/*/cib.xml"
 
 parser:
   type: regex
   multiline: true
   search_patterns:
+    # For pcs_config output: clone-max=4
+    # For cib.xml: name="clone-max" value="4"
     - name: controller_clone_max
-      regex: "=== HANA_NODES ===\\s+clone-max=(\\d+)"
+      regex: "SAPHanaController[\\s\\S]*?clone-max[=\"]+(\\d+)"
       group: 1
     - name: controller_clone_node_max
-      regex: "=== HANA_NODES ===[\\s\\S]*?clone-node-max=(\\d+)"
+      regex: "SAPHanaController[\\s\\S]*?clone-node-max[=\"]+(\\d+)"
       group: 1
     - name: controller_interleave
-      regex: "=== HANA_NODES ===[\\s\\S]*?interleave=(true|false)"
+      regex: "SAPHanaController[\\s\\S]*?interleave[=\"]+(true|false)"
       group: 1
     - name: controller_promotable
-      regex: "=== HANA_NODES ===[\\s\\S]*?promotable=(true|false)"
+      regex: "SAPHanaController[\\s\\S]*?promotable[=\"]+(true|false)"
       group: 1
     - name: topology_clone_max
-      regex: "=== TOPOLOGY ===\\s+clone-max=(\\d+)"
+      regex: "SAPHanaTopology[\\s\\S]*?clone-max[=\"]+(\\d+)"
       group: 1
     - name: topology_clone_node_max
-      regex: "=== TOPOLOGY ===[\\s\\S]*?clone-node-max=(\\d+)"
+      regex: "SAPHanaTopology[\\s\\S]*?clone-node-max[=\"]+(\\d+)"
       group: 1
     - name: topology_interleave
-      regex: "=== TOPOLOGY ===[\\s\\S]*?interleave=(true|false)"
+      regex: "SAPHanaTopology[\\s\\S]*?interleave[=\"]+(true|false)"
       group: 1
     - name: saphana_resource
       regex: "(SAPHanaController|SAPHanaTopology)"

@@ -269,6 +269,65 @@ class RulesEngine:
         # Execute the original command
         return self._execute_command_raw(cmd, node, method, user)
 
+    def _run_sos_cmd(self, sos_cmd: str, sos_cmd_file: str, node: str, sos_base: str) -> Tuple[bool, str]:
+        """Run a local command using a file from the sosreport.
+
+        This allows running commands like 'pcs -f {file} resource config'
+        where {file} is replaced with the full path to a file in the sosreport.
+        """
+        import glob as glob_module
+        import shutil
+
+        # Check if the command tool exists locally
+        cmd_tool = sos_cmd.split()[0]
+        if not shutil.which(cmd_tool):
+            return False, f"Command '{cmd_tool}' not found locally"
+
+        # Find the file in the sosreport
+        sos_base_path = Path(sos_base)
+
+        # Determine the node's sosreport directory
+        if (sos_base_path / "etc").exists():
+            node_sos = sos_base_path
+        else:
+            node_sos = sos_base_path / node
+            if not node_sos.exists():
+                for item in sos_base_path.iterdir():
+                    if item.is_dir() and node in item.name:
+                        node_sos = item
+                        break
+
+        # Find the file (supports glob patterns)
+        if '*' in sos_cmd_file or '?' in sos_cmd_file:
+            pattern = str(node_sos / sos_cmd_file)
+            matches = glob_module.glob(pattern)
+            if not matches:
+                return False, f"No files matching pattern: {pattern}"
+            file_path = matches[0]
+        else:
+            file_path = str(node_sos / sos_cmd_file)
+            if not Path(file_path).exists():
+                return False, f"File not found: {file_path}"
+
+        # Replace {file} placeholder with actual path
+        full_cmd = sos_cmd.replace('{file}', file_path)
+
+        # Execute locally
+        try:
+            result = subprocess.run(
+                full_cmd,
+                shell=True,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                universal_newlines=True,
+                timeout=self.CMD_TIMEOUT
+            )
+            return result.returncode == 0, result.stdout
+        except subprocess.TimeoutExpired:
+            return False, f"Command timed out after {self.CMD_TIMEOUT}s"
+        except Exception as e:
+            return False, str(e)
+
     def _read_sosreport(self, sos_path: str, node: str, sos_base: str) -> Tuple[bool, str]:
         """Read data from SOSreport directory."""
         import glob as glob_module
@@ -661,14 +720,26 @@ class RulesEngine:
         if method == 'sosreport' and sos_base:
             sos_path = source_defs.get('sos_path')
             alternates = source_defs.get('sos_path_alternates', [])
+            sos_cmd = source_defs.get('sos_cmd')
+            sos_cmd_file = source_defs.get('sos_cmd_file')
+
             success, output = self._read_sosreport(sos_path, node, sos_base)
-            # Also try alternates if output contains error indicators (cluster was stopped)
+
+            # If output contains error indicators (cluster was stopped), try alternatives
             if not success or (success and output.strip().startswith('Error:')):
-                for alt_path in alternates:
-                    alt_success, alt_output = self._read_sosreport(alt_path, node, sos_base)
-                    if alt_success and not alt_output.strip().startswith('Error:'):
-                        success, output = alt_success, alt_output
-                        break
+                # First try sos_cmd if defined (e.g., pcs -f cib.xml)
+                if sos_cmd and sos_cmd_file:
+                    cmd_success, cmd_output = self._run_sos_cmd(sos_cmd, sos_cmd_file, node, sos_base)
+                    if cmd_success and cmd_output.strip():
+                        success, output = cmd_success, cmd_output
+
+                # Then try file alternates if still no success
+                if not success or (success and output.strip().startswith('Error:')):
+                    for alt_path in alternates:
+                        alt_success, alt_output = self._read_sosreport(alt_path, node, sos_base)
+                        if alt_success and not alt_output.strip().startswith('Error:'):
+                            success, output = alt_success, alt_output
+                            break
         else:
             cmd = source_defs.get('live_cmd')
             if not cmd:
@@ -809,7 +880,8 @@ class RulesEngine:
                 method = node_info.get('preferred_method')
                 if method:
                     user = node_info.get('ssh_user') or node_info.get('ansible_user')
-                    sos_base = self.access_config.get('sosreport_directory')
+                    # Use node's specific sosreport_path if available, otherwise fall back to sosreport_directory
+                    sos_base = node_info.get('sosreport_path') or self.access_config.get('sosreport_directory')
                     result = self._run_check_on_node(rule, node_name, method, user, sos_base)
                     result.node = f"{node_name} (cluster)"
                     return [result]
