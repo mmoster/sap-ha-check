@@ -2087,7 +2087,7 @@ Examples:
     )
     parser.add_argument(
         '--sosreport-dir', '-s',
-        help='Directory containing SOSreport archives/directories'
+        help='Directory containing SOSreport archives/directories (default: ./sosreports)'
     )
     parser.add_argument(
         '--group', '-g',
@@ -2099,7 +2099,7 @@ Examples:
     )
     parser.add_argument(
         '--config-dir', '-c',
-        help='Directory to store configuration (default: script directory)'
+        help='Directory to store configuration (default: ./)'
     )
 
     # Actions
@@ -2131,7 +2131,7 @@ Examples:
         '--fetch-sosreports', '-F',
         nargs='*',
         metavar='CLUSTER_OR_NODE',
-        help='Fetch latest sosreports from cluster nodes via SCP. Saves to ./sosreports/ by default. Usage: --fetch-sosreports [CLUSTER|node1 node2...]'
+        help='Fetch latest sosreports from cluster nodes via SCP (default output: ./sosreports/). Usage: -F [CLUSTER|node1 node2...]'
     )
     parser.add_argument(
         '--force', '-f',
@@ -2150,7 +2150,7 @@ Examples:
     # Rules
     parser.add_argument(
         '--rules-path', '-r',
-        help='Path to CHK_*.yaml rules directory (default: cluster_health_check rules)'
+        help='Path to CHK_*.yaml rules directory (default: ./rules/health_checks)'
     )
     parser.add_argument(
         '--list-rules', '-L',
