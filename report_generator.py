@@ -626,10 +626,11 @@ def generate_health_check_report(
             pdf.sub_section("Cluster Resources")
             pdf.set_font('Courier', '', 8)
             for resource in resources.get('list', [])[:20]:  # Limit to 20 resources
-                pdf.cell(5, 4, "-")
-                pdf.multi_cell(0, 4, resource[:100])  # Truncate long lines
+                pdf.set_x(10)  # Reset to left margin
+                pdf.multi_cell(0, 4, f"- {resource[:90]}")  # Truncate long lines
             if len(resources.get('list', [])) > 20:
                 pdf.set_font('Helvetica', 'I', 8)
+                pdf.set_x(10)
                 pdf.cell(0, 4, f"  ... and {len(resources['list']) - 20} more resources", ln=True)
             pdf.ln(3)
 
@@ -642,8 +643,9 @@ def generate_health_check_report(
                 pdf.cell(0, 5, resource_name[:60], ln=True)
                 pdf.set_font('Courier', '', 8)
                 for key, value in attrs.items():
-                    pdf.cell(10, 4, "")
-                    pdf.cell(0, 4, f"{key}={value}", ln=True)
+                    # Truncate long values to prevent layout issues
+                    val_str = str(value)[:80]
+                    pdf.cell(0, 4, f"  {key}={val_str}", ln=True)
                 pdf.ln(2)
 
         # Constraints summary
@@ -655,9 +657,11 @@ def generate_health_check_report(
             pdf.sub_section("Resource Discovery Settings")
             pdf.set_font('Courier', '', 8)
             for rd in resource_discovery[:15]:
-                pdf.multi_cell(0, 4, rd[:120])
+                pdf.set_x(10)
+                pdf.multi_cell(0, 4, rd[:100])
             if len(resource_discovery) > 15:
                 pdf.set_font('Helvetica', 'I', 8)
+                pdf.set_x(10)
                 pdf.cell(0, 4, f"  ... and {len(resource_discovery) - 15} more", ln=True)
             pdf.ln(3)
 
@@ -671,10 +675,12 @@ def generate_health_check_report(
                 if shown >= 20:
                     break
                 if loc.startswith('resource') or loc.startswith('Resource'):
-                    pdf.multi_cell(0, 3.5, loc[:140])
+                    pdf.set_x(10)
+                    pdf.multi_cell(0, 3.5, loc[:100])
                     shown += 1
-            if len([l for l in location if l.startswith('resource') or l.startswith('Resource')]) > 20:
+            if len([ln for ln in location if ln.startswith('resource') or ln.startswith('Resource')]) > 20:
                 pdf.set_font('Helvetica', 'I', 8)
+                pdf.set_x(10)
                 pdf.cell(0, 4, "  ... more constraints in full output", ln=True)
             pdf.ln(3)
 
@@ -684,7 +690,8 @@ def generate_health_check_report(
             pdf.sub_section("Colocation Constraints")
             pdf.set_font('Courier', '', 8)
             for col in colocation[:10]:
-                pdf.multi_cell(0, 4, col[:120])
+                pdf.set_x(10)
+                pdf.multi_cell(0, 4, col[:100])
             pdf.ln(3)
 
         # Order constraints
@@ -693,7 +700,8 @@ def generate_health_check_report(
             pdf.sub_section("Order Constraints")
             pdf.set_font('Courier', '', 8)
             for ord_c in order[:10]:
-                pdf.multi_cell(0, 4, ord_c[:120])
+                pdf.set_x(10)
+                pdf.multi_cell(0, 4, ord_c[:100])
             pdf.ln(3)
 
         # STONITH info from cib
@@ -702,7 +710,8 @@ def generate_health_check_report(
             pdf.sub_section("STONITH Devices (from cib.xml)")
             pdf.set_font('Courier', '', 8)
             for device in stonith.get('devices', [])[:10]:
-                pdf.multi_cell(0, 4, device[:120])
+                pdf.set_x(10)
+                pdf.multi_cell(0, 4, device[:100])
             pdf.ln(3)
 
         pdf.ln(5)
