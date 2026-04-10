@@ -476,6 +476,49 @@ class AccessDiscovery:
 
         return nodes
 
+    def _discover_cluster_from_sosreports(self, available_sosreports: Dict[str, str]) -> Dict[str, str]:
+        """
+        From the SOSreports of nodes we already have, discover other cluster nodes
+        and find their matching SOSreports.
+
+        Args:
+            available_sosreports: Dict of hostname -> sosreport_path for all available sosreports
+
+        Returns:
+            Dict of newly discovered hostname -> sosreport_path
+        """
+        discovered = {}
+
+        # Get cluster nodes from existing node's sosreport
+        for hostname, node_info in self.config.nodes.items():
+            sos_path = node_info.get('sosreport_path')
+            if not sos_path:
+                continue
+
+            # Get cluster nodes from this sosreport
+            cluster_nodes = self.get_cluster_nodes_from_sosreport(sos_path)
+            if not cluster_nodes:
+                continue
+
+            # Find matching sosreports for cluster nodes
+            for cluster_node in cluster_nodes:
+                if cluster_node in self.config.nodes:
+                    continue  # Already have this node
+                if cluster_node in discovered:
+                    continue  # Already discovered
+
+                # Look for matching sosreport
+                if cluster_node in available_sosreports:
+                    discovered[cluster_node] = available_sosreports[cluster_node]
+                else:
+                    # Try partial match (hostname might be short vs FQDN)
+                    for sos_hostname, sos_path in available_sosreports.items():
+                        if cluster_node in sos_hostname or sos_hostname in cluster_node:
+                            discovered[cluster_node] = sos_path
+                            break
+
+        return discovered
+
     def discover_sosreports_with_clusters(self) -> Dict[str, Dict[str, Any]]:
         """
         Discover SOSreports and group them by cluster.
@@ -1385,9 +1428,26 @@ class AccessDiscovery:
             for hostname, node_info in self.config.nodes.items():
                 if not node_info.get('sosreport_path') and hostname in local_sosreports:
                     node_info['sosreport_path'] = local_sosreports[hostname]
+                    # Set preferred_method to sosreport if no other access method
+                    if not node_info.get('preferred_method'):
+                        node_info['preferred_method'] = 'sosreport'
                     updated_count += 1
             if updated_count > 0:
                 print(f"\n  [INFO] Found {updated_count} matching SOSreport(s) in subdirectories")
+
+            # Discover cluster nodes from SOSreports and find their sosreports
+            discovered_nodes = self._discover_cluster_from_sosreports(local_sosreports)
+            if discovered_nodes:
+                for hostname, sos_path in discovered_nodes.items():
+                    if hostname not in self.config.nodes:
+                        node_info = {
+                            'hostname': hostname,
+                            'sosreport_path': sos_path,
+                            'preferred_method': 'sosreport',
+                            'last_checked': datetime.now().isoformat()
+                        }
+                        self.config.nodes[hostname] = node_info
+                        print(f"  [CLUSTER] Discovered {hostname} from SOSreport cluster info")
 
         self.config.discovery_complete = True
         self.save_config()
