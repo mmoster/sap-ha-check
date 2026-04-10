@@ -271,6 +271,8 @@ class RulesEngine:
 
     def _read_sosreport(self, sos_path: str, node: str, sos_base: str) -> Tuple[bool, str]:
         """Read data from SOSreport directory."""
+        import glob as glob_module
+
         sos_base_path = Path(sos_base)
 
         # If sos_base is a direct sosreport path (contains etc/ dir), use it directly
@@ -285,6 +287,20 @@ class RulesEngine:
                     if item.is_dir() and node in item.name:
                         node_sos = item
                         break
+
+        # Check if sos_path contains glob patterns
+        if '*' in sos_path or '?' in sos_path:
+            # Use glob to find matching files
+            pattern = str(node_sos / sos_path)
+            matches = glob_module.glob(pattern)
+            if matches:
+                # Use first matching file
+                try:
+                    with open(matches[0], 'r') as f:
+                        return True, f.read()
+                except Exception as e:
+                    return False, str(e)
+            return False, f"No files matching pattern: {pattern}"
 
         file_path = node_sos / sos_path
         if file_path.exists():
@@ -646,10 +662,12 @@ class RulesEngine:
             sos_path = source_defs.get('sos_path')
             alternates = source_defs.get('sos_path_alternates', [])
             success, output = self._read_sosreport(sos_path, node, sos_base)
-            if not success:
+            # Also try alternates if output contains error indicators (cluster was stopped)
+            if not success or (success and output.strip().startswith('Error:')):
                 for alt_path in alternates:
-                    success, output = self._read_sosreport(alt_path, node, sos_base)
-                    if success:
+                    alt_success, alt_output = self._read_sosreport(alt_path, node, sos_base)
+                    if alt_success and not alt_output.strip().startswith('Error:'):
+                        success, output = alt_success, alt_output
                         break
         else:
             cmd = source_defs.get('live_cmd')
