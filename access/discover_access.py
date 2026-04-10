@@ -479,7 +479,7 @@ class AccessDiscovery:
     def _discover_cluster_from_sosreports(self, available_sosreports: Dict[str, str]) -> Dict[str, str]:
         """
         From the SOSreports of nodes we already have, discover other cluster nodes
-        and find their matching SOSreports.
+        and find their matching SOSreports. Also extracts cluster name.
 
         Args:
             available_sosreports: Dict of hostname -> sosreport_path for all available sosreports
@@ -488,12 +488,28 @@ class AccessDiscovery:
             Dict of newly discovered hostname -> sosreport_path
         """
         discovered = {}
+        cluster_name = None
 
         # Get cluster nodes from existing node's sosreport
         for hostname, node_info in self.config.nodes.items():
             sos_path = node_info.get('sosreport_path')
             if not sos_path:
                 continue
+
+            # Get cluster name from this sosreport (if not already found)
+            if not cluster_name:
+                cluster_name = self.get_cluster_name_from_sosreport(sos_path)
+                if cluster_name:
+                    # Add cluster to config
+                    if cluster_name not in self.config.clusters:
+                        self.config.clusters[cluster_name] = {
+                            'nodes': [hostname],
+                            'discovered_from': f'sosreport:{hostname}'
+                        }
+                        print(f"  [CLUSTER] Detected cluster name: {cluster_name}")
+                    # Add existing node to cluster
+                    if hostname not in self.config.clusters[cluster_name].get('nodes', []):
+                        self.config.clusters[cluster_name].setdefault('nodes', []).append(hostname)
 
             # Get cluster nodes from this sosreport
             cluster_nodes = self.get_cluster_nodes_from_sosreport(sos_path)
@@ -510,11 +526,19 @@ class AccessDiscovery:
                 # Look for matching sosreport
                 if cluster_node in available_sosreports:
                     discovered[cluster_node] = available_sosreports[cluster_node]
+                    # Add to cluster nodes list
+                    if cluster_name and cluster_name in self.config.clusters:
+                        if cluster_node not in self.config.clusters[cluster_name].get('nodes', []):
+                            self.config.clusters[cluster_name].setdefault('nodes', []).append(cluster_node)
                 else:
                     # Try partial match (hostname might be short vs FQDN)
-                    for sos_hostname, sos_path in available_sosreports.items():
+                    for sos_hostname, sos_path_match in available_sosreports.items():
                         if cluster_node in sos_hostname or sos_hostname in cluster_node:
-                            discovered[cluster_node] = sos_path
+                            discovered[cluster_node] = sos_path_match
+                            # Add to cluster nodes list
+                            if cluster_name and cluster_name in self.config.clusters:
+                                if cluster_node not in self.config.clusters[cluster_name].get('nodes', []):
+                                    self.config.clusters[cluster_name].setdefault('nodes', []).append(cluster_node)
                             break
 
         return discovered
