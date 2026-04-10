@@ -1350,11 +1350,17 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                 else:
                     cluster_type = 'Scale-Up'
 
+                # Get data source info from engine
+                data_source_info = self.rules_engine.get_data_source_info() if self.rules_engine else {}
+
                 cluster_info = {
                     'cluster_name': cluster_name,
                     'nodes': node_list,
                     'cluster_type': cluster_type,
                     'majority_makers': self.majority_makers,
+                    'data_source': data_source_info.get('description', 'Unknown'),
+                    'access_method': data_source_info.get('primary_method', 'unknown'),
+                    'used_cib_xml': data_source_info.get('used_cib_xml', False),
                 }
 
                 # Add SAP HANA HA parameters from cluster config
@@ -1526,6 +1532,13 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
             print("\nHealth Check Results:")
             print(f"  PASSED:  {len(passed):3d}  FAILED: {len(failed_checks):3d}  SKIPPED: {len(skipped):3d}  ERROR: {len(errors):3d}")
 
+            # Show data source information
+            if self.rules_engine:
+                data_source_info = self.rules_engine.get_data_source_info()
+                data_source = data_source_info.get('description', '')
+                if data_source:
+                    print(f"\n  Data Source: {data_source}")
+
             # Check for installation issues
             # Essential commands for RHEL clusters
             essential_commands = ['pacemaker', 'corosync', 'pcs', 'crm_mon']  # noqa: F841
@@ -1604,11 +1617,17 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                             else:
                                 cluster_type = 'Scale-Up'
 
+                            # Get data source info from engine
+                            data_source_info = self.rules_engine.get_data_source_info() if self.rules_engine else {}
+
                             cluster_info = {
                                 'cluster_name': cluster_name,
                                 'nodes': node_list,
                                 'cluster_type': cluster_type,
                                 'majority_makers': self.majority_makers,
+                                'data_source': data_source_info.get('description', 'Unknown'),
+                                'access_method': data_source_info.get('primary_method', 'unknown'),
+                                'used_cib_xml': data_source_info.get('used_cib_xml', False),
                             }
 
                             # Add SAP HANA HA parameters from cluster config
@@ -2761,11 +2780,17 @@ Examples:
                         else:
                             cluster_type = 'Scale-Up'
 
+                        # Get data source info from engine
+                        data_source_info = health_check.rules_engine.get_data_source_info() if health_check.rules_engine else {}
+
                         cluster_info = {
                             'cluster_name': cluster_name,
                             'nodes': node_list,
                             'cluster_type': cluster_type,
                             'majority_makers': health_check.majority_makers,
+                            'data_source': data_source_info.get('description', 'Unknown'),
+                            'access_method': data_source_info.get('primary_method', 'unknown'),
+                            'used_cib_xml': data_source_info.get('used_cib_xml', False),
                         }
 
                         # Add SAP HANA HA parameters from cluster config

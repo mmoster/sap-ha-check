@@ -111,6 +111,55 @@ class RulesEngine:
         # Track cluster running state and cib.xml availability per node
         self._cluster_running: Dict[str, bool] = {}
         self._cib_available: Dict[str, bool] = {}
+        # Track data source information
+        self._access_methods_used: Dict[str, str] = {}  # node -> method (ssh, sosreport, local, ansible)
+        self._used_cib_xml: bool = False  # True if sos_cmd with cib.xml was used
+
+    def get_data_source_info(self) -> Dict[str, Any]:
+        """Get summary of data sources used for checks.
+
+        Returns dict with:
+        - access_methods: dict of node -> method used
+        - primary_method: most common access method
+        - used_cib_xml: whether cib.xml was parsed (cluster not running)
+        - description: human-readable description of data source
+        """
+        methods = self._access_methods_used
+        if not methods:
+            return {
+                'access_methods': {},
+                'primary_method': 'unknown',
+                'used_cib_xml': False,
+                'description': 'No data collected'
+            }
+
+        # Find most common method
+        method_counts: Dict[str, int] = {}
+        for method in methods.values():
+            method_counts[method] = method_counts.get(method, 0) + 1
+        primary_method = max(method_counts, key=method_counts.get)
+
+        # Build description
+        if primary_method == 'sosreport':
+            if self._used_cib_xml:
+                description = "SOSreport analysis (cluster was stopped - using cib.xml)"
+            else:
+                description = "SOSreport analysis (offline data)"
+        elif primary_method == 'ssh':
+            description = "Live cluster via SSH"
+        elif primary_method == 'local':
+            description = "Local execution on cluster node"
+        elif primary_method == 'ansible':
+            description = "Live cluster via Ansible"
+        else:
+            description = f"Data source: {primary_method}"
+
+        return {
+            'access_methods': methods,
+            'primary_method': primary_method,
+            'used_cib_xml': self._used_cib_xml,
+            'description': description
+        }
 
     def load_rules(self) -> List[RuleDefinition]:
         """Load all CHK_*.yaml rule files."""
@@ -724,6 +773,7 @@ class RulesEngine:
             sos_cmd_file = source_defs.get('sos_cmd_file')
 
             success, output = self._read_sosreport(sos_path, node, sos_base)
+            self._access_methods_used[node] = 'sosreport'
 
             # If output contains error indicators (cluster was stopped), try alternatives
             if not success or (success and output.strip().startswith('Error:')):
@@ -732,6 +782,7 @@ class RulesEngine:
                     cmd_success, cmd_output = self._run_sos_cmd(sos_cmd, sos_cmd_file, node, sos_base)
                     if cmd_success and cmd_output.strip():
                         success, output = cmd_success, cmd_output
+                        self._used_cib_xml = True  # Track that we used cib.xml parsing
 
                 # Then try file alternates if still no success
                 if not success or (success and output.strip().startswith('Error:')):
@@ -767,6 +818,7 @@ class RulesEngine:
                     )
 
             success, output = self._execute_command(cmd, node, method, user)
+            self._access_methods_used[node] = method
 
         if not success:
             return CheckResult(

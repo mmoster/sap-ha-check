@@ -342,24 +342,77 @@ def generate_health_check_report(
     pdf.set_text_color(*RedHatColors.BLACK)
     pdf.ln(4)
 
-    pdf.info_table({
+    # Build info table with data source information
+    data_source = cluster_info.get('data_source', 'Unknown')
+    used_cib_xml = cluster_info.get('used_cib_xml', False)
+
+    info_data = {
         "Cluster Name": cluster_name,
         "Nodes": ", ".join(nodes) if nodes else "N/A",
+        "Data Source": data_source,
         "Report Date": datetime.now().strftime("%d %B %Y, %H:%M"),
         "Total Checks": str(total),
         "Passed": str(passed),
         "Failed": str(failed),
         "Critical Issues": str(critical),
         "Warnings": str(warnings),
-    })
+    }
+
+    pdf.info_table(info_data)
 
     pdf.ln(5)
 
     # =========================================================================
-    # CLUSTER NOT RUNNING WARNING
+    # DATA SOURCE INFO BOX (SOSreport / cib.xml usage)
+    # =========================================================================
+    access_method = cluster_info.get('access_method', 'unknown')
+
+    if access_method == 'sosreport':
+        # Info box for sosreport analysis
+        if used_cib_xml:
+            # Yellow warning - cluster was stopped when sosreport was taken
+            pdf.set_fill_color(255, 243, 205)  # Light yellow background
+            pdf.set_draw_color(255, 193, 7)    # Yellow border
+            pdf.set_text_color(133, 100, 4)    # Dark yellow/brown text
+            box_title = "INFO: Analyzing SOSreport (cluster was stopped)"
+            box_text = (
+                "This analysis is based on SOSreport data. The cluster was not running when "
+                "the SOSreport was collected, so cluster configuration was read from cib.xml. "
+                "Some checks (node status, quorum, resource status) reflect the offline state."
+            )
+        else:
+            # Blue info - sosreport analysis
+            pdf.set_fill_color(217, 237, 247)  # Light blue background
+            pdf.set_draw_color(49, 112, 143)   # Blue border
+            pdf.set_text_color(31, 78, 121)    # Dark blue text
+            box_title = "INFO: Analyzing SOSreport (offline data)"
+            box_text = (
+                "This analysis is based on SOSreport data collected from cluster nodes. "
+                "No live SSH access was used. Results reflect the cluster state at the time "
+                "the SOSreport was collected."
+            )
+
+        pdf.set_line_width(0.5)
+        pdf.set_font('Helvetica', 'B', 11)
+
+        y_start = pdf.get_y()
+        pdf.rect(10, y_start, 190, 24, 'DF')
+        pdf.set_xy(15, y_start + 3)
+        pdf.cell(0, 6, box_title, ln=True)
+
+        pdf.set_xy(15, y_start + 10)
+        pdf.set_font('Helvetica', '', 9)
+        pdf.multi_cell(180, 4, box_text)
+
+        pdf.set_text_color(*RedHatColors.BLACK)
+        pdf.set_line_width(0.2)
+        pdf.ln(8)
+
+    # =========================================================================
+    # CLUSTER NOT RUNNING WARNING (for live access)
     # =========================================================================
     cluster_running = True
-    if install_status:
+    if install_status and access_method != 'sosreport':
         # Check if cluster is configured but not running
         has_config = install_status.get('corosync_conf_exists') or install_status.get('cib_exists')
         pacemaker_running = install_status.get('pacemaker_running')
