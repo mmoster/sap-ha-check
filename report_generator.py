@@ -914,7 +914,7 @@ def generate_health_check_report(
 
 
 def load_yaml_report(yaml_path: str) -> tuple:
-    """Load results from YAML report file"""
+    """Load results from YAML report file (legacy format)"""
     import yaml
 
     with open(yaml_path, 'r') as f:
@@ -926,26 +926,151 @@ def load_yaml_report(yaml_path: str) -> tuple:
     return results, summary
 
 
+def load_unified_yaml_report(yaml_path: str) -> tuple:
+    """
+    Load report data from unified YAML format.
+
+    This function supports both the new unified format (with version field)
+    and the legacy format (only results and summary).
+
+    Args:
+        yaml_path: Path to YAML report file
+
+    Returns:
+        Tuple of (results, summary, cluster_info, install_status)
+        - results: List of check result dicts
+        - summary: Summary statistics dict
+        - cluster_info: Cluster information dict for PDF generation
+        - install_status: Installation status dict (or None)
+    """
+    import yaml
+
+    with open(yaml_path, 'r') as f:
+        data = yaml.safe_load(f)
+
+    # Check if this is the unified format (has version field)
+    if 'version' in data:
+        # Unified format - extract all components
+        results = data.get('results', [])
+        summary = data.get('summary', {})
+
+        # Build cluster_info from unified data
+        cluster_info = {
+            'cluster_name': data.get('cluster_name', 'Unknown'),
+            'nodes': data.get('nodes', []),
+            'cluster_type': data.get('cluster_type', 'Scale-Up'),
+            'majority_makers': data.get('majority_makers', []),
+
+            # Data source
+            'data_source': data.get('data_source', 'Unknown'),
+            'access_method': data.get('access_method', 'unknown'),
+            'used_cib_xml': data.get('used_cib_xml', False),
+
+            # OS/Software versions
+            'rhel_version': data.get('rhel_version'),
+            'pacemaker_version': data.get('pacemaker_version'),
+
+            # SAP HANA config
+            'sid': data.get('sid'),
+            'instance_number': data.get('instance_number'),
+            'virtual_ip': data.get('virtual_ip'),
+            'secondary_vip': data.get('secondary_vip'),
+            'replication_mode': data.get('replication_mode'),
+            'operation_mode': data.get('operation_mode'),
+            'secondary_read': data.get('secondary_read'),
+
+            # Node config
+            'node1_hostname': data.get('node1_hostname'),
+            'node1_ip': data.get('node1_ip'),
+            'node2_hostname': data.get('node2_hostname'),
+            'node2_ip': data.get('node2_ip'),
+            'sites': data.get('sites'),
+
+            # HA parameters
+            'prefer_site_takeover': data.get('prefer_site_takeover'),
+            'automated_register': data.get('automated_register'),
+            'duplicate_primary_timeout': data.get('duplicate_primary_timeout'),
+            'migration_threshold': data.get('migration_threshold'),
+
+            # Resource config
+            'resource_type': data.get('resource_type'),
+            'resource_name': data.get('resource_name'),
+            'topology_resource': data.get('topology_resource'),
+            'vip_resource': data.get('vip_resource'),
+            'secondary_vip_resource': data.get('secondary_vip_resource'),
+
+            # STONITH
+            'stonith_device': data.get('stonith_device'),
+            'stonith_params': data.get('stonith_params'),
+
+            # CIB resource config
+            'resource_config': data.get('resource_config'),
+        }
+
+        install_status = data.get('install_status')
+
+        return results, summary, cluster_info, install_status
+
+    else:
+        # Legacy format - only has results and summary
+        results = data.get('results', [])
+        summary = data.get('summary', {})
+
+        # Build minimal cluster_info
+        cluster_info = {
+            'cluster_name': 'Unknown',
+            'nodes': [],
+            'cluster_type': 'Scale-Up',
+            'data_source': 'Legacy YAML report',
+        }
+
+        return results, summary, cluster_info, None
+
+
 if __name__ == "__main__":
-    # Test/demo mode
+    # Standalone mode - convert YAML to PDF
     import argparse
 
-    parser = argparse.ArgumentParser(description="Generate PDF health check report")
-    parser.add_argument('yaml_report', nargs='?', help='YAML report file to convert')
+    parser = argparse.ArgumentParser(
+        description="Generate PDF health check report from YAML",
+        epilog="""
+Examples:
+  # Generate PDF from unified YAML report
+  python report_generator.py 20260410_120000_mycluster.yaml
+
+  # Generate PDF with custom output path
+  python report_generator.py report.yaml -o custom_report.pdf
+
+  # Generate demo PDF (no YAML input)
+  python report_generator.py --demo
+        """
+    )
+    parser.add_argument('yaml_report', nargs='?', help='YAML report file to convert to PDF')
     parser.add_argument('-o', '--output', help='Output PDF path')
-    parser.add_argument('--cluster', default='Test Cluster', help='Cluster name')
-    parser.add_argument('--nodes', nargs='+', default=['node1', 'node2'], help='Node names')
+    parser.add_argument('--cluster', default='Test Cluster', help='Cluster name (for legacy YAML or demo)')
+    parser.add_argument('--nodes', nargs='+', default=['node1', 'node2'], help='Node names (for legacy YAML or demo)')
+    parser.add_argument('--demo', action='store_true', help='Generate a demo PDF with sample data')
 
     args = parser.parse_args()
 
+    install_status = None
+
     if args.yaml_report:
-        # Load from YAML
-        results, summary = load_yaml_report(args.yaml_report)
-        cluster_info = {
-            'cluster_name': args.cluster,
-            'nodes': args.nodes,
-        }
-    else:
+        # Load from YAML using unified loader
+        results, summary, cluster_info, install_status = load_unified_yaml_report(args.yaml_report)
+
+        # Override cluster name and nodes if provided via CLI
+        if args.cluster != 'Test Cluster':
+            cluster_info['cluster_name'] = args.cluster
+        if args.nodes != ['node1', 'node2']:
+            cluster_info['nodes'] = args.nodes
+
+        print(f"Loaded report from: {args.yaml_report}")
+        print(f"  Cluster: {cluster_info.get('cluster_name', 'Unknown')}")
+        print(f"  Data source: {cluster_info.get('data_source', 'Unknown')}")
+        print(f"  Checks: {summary.get('total', 0)} total, {summary.get('passed', 0)} passed, {summary.get('failed', 0)} failed")
+
+    elif args.demo:
         # Demo data
         results = [
             {'check_id': 'CHK_NODE_STATUS', 'description': 'Verify all cluster nodes are online',
@@ -960,7 +1085,14 @@ if __name__ == "__main__":
             'cluster_name': args.cluster,
             'nodes': args.nodes,
             'cluster_type': 'Scale-Up',
+            'data_source': 'Demo data',
         }
+        print("Generating demo PDF report...")
 
-    output = generate_health_check_report(results, summary, cluster_info, args.output)
+    else:
+        parser.print_help()
+        print("\nError: Please provide a YAML report file or use --demo")
+        exit(1)
+
+    output = generate_health_check_report(results, summary, cluster_info, args.output, install_status)
     print(f"PDF report generated: {output}")
