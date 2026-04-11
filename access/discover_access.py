@@ -372,7 +372,69 @@ class AccessDiscovery:
                     print(f"  Found: {hostname} -> {item}")
 
         print(f"Found {len(sosreports)} SOSreports")
+
+        # Check for extended SAP HANA HA data and suggest configuration if missing
+        if sosreports:
+            self._check_sosreport_extended_data(sosreports)
+
         return sosreports
+
+    def _check_sosreport_extended_data(self, sosreports: Dict[str, str]) -> None:
+        """
+        Check if SOSreports have extended SAP HANA HA data.
+        Print suggestions if the data is missing.
+        """
+        missing_extended = []
+        has_extended = []
+
+        for hostname, sos_path in sosreports.items():
+            extras_path = Path(sos_path) / "sos_commands/sos_extras/sap_hana_ha"
+            saphana_path = Path(sos_path) / "sos_commands/saphana"
+
+            # Check for SAPHanaSR-showAttr in extras
+            has_sr_attr = (extras_path / "SAPHanaSR-showAttr").exists() if extras_path.exists() else False
+
+            if has_sr_attr:
+                has_extended.append(hostname)
+            else:
+                missing_extended.append(hostname)
+
+        if missing_extended and not has_extended:
+            # All SOSreports are missing extended data
+            print("\n" + "=" * 63)
+            print(" [SUGGESTION] SOSreports missing extended SAP HANA HA data")
+            print("=" * 63)
+            print("""
+  The SOSreports do not contain SAPHanaSR-showAttr output, which is
+  critical for analyzing SAP HANA System Replication cluster state.
+
+  To collect extended SAP HANA HA data in future SOSreports, deploy
+  the following configuration to all cluster nodes:
+
+  1. Update /etc/sos/sos.conf:
+     ─────────────────────────────────────────────────────────────
+     [report]
+     enable-plugins = saphana, sapnw, pacemaker, corosync, sos_extras
+
+     [plugin_options]
+     pacemaker.crm-scrub = on
+     ─────────────────────────────────────────────────────────────
+
+  2. Create /etc/sos/extras.d/sap_hana_ha:
+     ─────────────────────────────────────────────────────────────
+     SAPHanaSR-showAttr
+     SAPHanaSR-showAttr --format=script
+     crm_mon -1 -r -n
+     pcs status --full
+     pcs resource config
+     pcs constraint config
+     cibadmin --query --scope resources
+     cibadmin --query --scope constraints
+     ─────────────────────────────────────────────────────────────
+
+  Then regenerate SOSreports with: sos report --batch
+""")
+            print("=" * 63)
 
     def scan_sosreports_recursive(self, base_dir: str = ".") -> Dict[str, str]:
         """
