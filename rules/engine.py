@@ -290,12 +290,19 @@ class RulesEngine:
 
         Majority maker node should NOT have sap-hana-ha or resource-agents-sap-hana-scaleout.
         If it does, location constraints and resource-discovery=never must be configured.
+
+        Scale-Out validation: uses hdbnsutil -sr_state to verify 2+ hosts per site.
         """
         # Extract parsed values
         node_count_str = parsed.get('node_count')
         saphana_resource = parsed.get('saphana_resource')  # SAPHana_* = Scale-Up
         saphana_controller = parsed.get('saphana_controller')  # SAPHanaController_* = Scale-Out
         majority_maker = parsed.get('majority_maker')
+
+        # hdbnsutil -sr_state output for Scale-Out validation
+        site_hosts_count_str = parsed.get('site_hosts_count')  # Number of hosts per site
+        sidadm_user = parsed.get('sidadm_user')
+        hdbnsutil_failed = parsed.get('hdbnsutil_failed')
 
         # Count nodes
         try:
@@ -308,6 +315,17 @@ class RulesEngine:
         has_controller = saphana_controller is not None  # Scale-Out uses SAPHanaController
         has_majority_maker = majority_maker is not None and majority_maker != 'none'
 
+        # Validate Scale-Out using hdbnsutil -sr_state
+        # True Scale-Out has multiple hosts per site (site_hosts_count > 1)
+        hdbnsutil_confirms_scaleout = False
+        hdbnsutil_host_count = 0
+        if site_hosts_count_str:
+            try:
+                hdbnsutil_host_count = int(site_hosts_count_str)
+                hdbnsutil_confirms_scaleout = hdbnsutil_host_count >= 2
+            except (ValueError, TypeError):
+                hdbnsutil_host_count = 0
+
         # Determine cluster type
         cluster_type = "Unknown"
         details = {
@@ -315,6 +333,9 @@ class RulesEngine:
             'has_saphana_resource': has_saphana,
             'has_saphana_controller': has_controller,
             'has_majority_maker': has_majority_maker,
+            'hdbnsutil_host_count': hdbnsutil_host_count,
+            'hdbnsutil_confirms_scaleout': hdbnsutil_confirms_scaleout,
+            'sidadm_user': sidadm_user,
             'parsed': parsed
         }
 
@@ -327,9 +348,21 @@ class RulesEngine:
             if has_majority_maker:
                 # Expected: 4+ HANA nodes + 1 majority maker = 5+ total
                 hana_nodes = node_count - 1  # Subtract majority maker
-                message = f"Scale-Out configuration ({hana_nodes} HANA nodes + majority maker)"
+                base_message = f"Scale-Out configuration ({hana_nodes} HANA nodes + majority maker)"
             else:
-                message = f"Scale-Out configuration ({node_count} nodes) - WARNING: no majority maker detected"
+                base_message = f"Scale-Out configuration ({node_count} nodes) - WARNING: no majority maker detected"
+
+            # Validate with hdbnsutil -sr_state
+            if hdbnsutil_failed:
+                message = f"{base_message} - NOTE: could not verify with hdbnsutil ({hdbnsutil_failed})"
+            elif hdbnsutil_confirms_scaleout:
+                message = f"{base_message} - verified: {hdbnsutil_host_count} HANA instances per site"
+            elif hdbnsutil_host_count == 1:
+                # WARNING: SAPHanaController detected but only 1 host per site
+                message = f"{base_message} - WARNING: hdbnsutil shows only 1 HANA instance per site (not true Scale-Out)"
+                cluster_type = "Scale-Out (unverified)"
+            else:
+                message = base_message
         elif has_saphana:
             # SAPHana resource = Scale-Up (exactly 2 nodes, no majority maker)
             cluster_type = "Scale-Up"

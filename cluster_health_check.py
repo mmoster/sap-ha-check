@@ -1005,7 +1005,7 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
         # Filter relevant checks
         config_checks = ['CHK_NODE_STATUS', 'CHK_CLUSTER_QUORUM', 'CHK_QUORUM_CONFIG',
                         'CHK_CLONE_CONFIG', 'CHK_SETUP_VALIDATION', 'CHK_CIB_TIME_SYNC',
-                        'CHK_PACKAGE_CONSISTENCY']
+                        'CHK_PACKAGE_CONSISTENCY', 'CHK_CLUSTER_TYPE']
 
         rules_to_run = [r for r in self.rules_engine.rules if r.check_id in config_checks]
 

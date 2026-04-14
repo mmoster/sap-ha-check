@@ -1,6 +1,6 @@
 # CHK_CLUSTER_TYPE - Detect SAP HANA HA configuration type
 check_id: CHK_CLUSTER_TYPE
-version: "1.0"
+version: "1.1"
 severity: INFO
 description: Detect SAP HANA HA cluster configuration (Scale-Up vs Scale-Out)
 enabled: true
@@ -9,7 +9,34 @@ source_definitions:
   live_cmd: |
     echo "=== NODES ===" && crm_node -l 2>/dev/null | wc -l && crm_node -l 2>/dev/null;
     echo "=== HANA_RESOURCES ===" && pcs resource show 2>/dev/null | grep -E 'SAPHana|SAPHanaController|SAPHanaTopology' || crm_mon -1 2>/dev/null | grep -E 'SAPHana|SAPHanaController';
-    echo "=== MAJORITY_MAKER ===" && pcs resource show 2>/dev/null | grep -iE 'majority|qdevice' || crm_node -l 2>/dev/null | grep -i majority || echo "none"
+    echo "=== MAJORITY_MAKER ===" && pcs resource show 2>/dev/null | grep -iE 'majority|qdevice' || crm_node -l 2>/dev/null | grep -i majority || echo "none";
+    echo "=== HDBNSUTIL_SR_STATE ===";
+    # Get HANA sidadm user - must have home in /usr/sap/<SID>/home (actual DB admin)
+    SIDADM=$(grep -E '^[a-z0-9]{3}adm:.*:/usr/sap/[A-Z0-9]{3}/home:' /etc/passwd 2>/dev/null | head -1 | cut -d: -f1);
+    if [ -z "$SIDADM" ]; then
+      # Fallback: derive from /usr/sap/*/HDB* directory structure
+      SID=$(ls -d /usr/sap/*/HDB[0-9][0-9] 2>/dev/null | head -1 | cut -d/ -f4);
+      if [ -n "$SID" ]; then
+        SIDADM=$(echo "$SID" | tr '[:upper:]' '[:lower:]')adm;
+      fi
+    fi
+    if [ -n "$SIDADM" ] && id "$SIDADM" >/dev/null 2>&1; then
+      echo "sidadm_user=$SIDADM";
+      # Run hdbnsutil -sr_state as sidadm to get HANA topology
+      # Count hosts per site from Host Mappings section
+      SR_OUTPUT=$(su - "$SIDADM" -c "hdbnsutil -sr_state" 2>/dev/null);
+      if [ -n "$SR_OUTPUT" ]; then
+        echo "$SR_OUTPUT";
+        # Count unique hosts per site from "hostname -> [SITE] target" lines
+        # Scale-Out: multiple hosts map to same site; Scale-Up: one host per site
+        echo "=== HOSTS_PER_SITE ===";
+        echo "$SR_OUTPUT" | grep -E '^\S+\s+->\s+\[' | sed 's/.*\[\([^]]*\)\].*/\1/' | sort | uniq -c | awk '{print "site_" $2 "_hosts=" $1}';
+      else
+        echo "hdbnsutil_failed";
+      fi
+    else
+      echo "no_sidadm_user";
+    fi
   sos_path: "sos_commands/pacemaker/crm_mon_-1"
 
 parser:
@@ -34,6 +61,18 @@ parser:
     - name: majority_maker
       regex: "(majority|qdevice|Majority)"
       group: 0
+    # Parse hdbnsutil -sr_state output for host count per site
+    # site_<NAME>_hosts=<count> from HOSTS_PER_SITE section
+    - name: site_hosts_count
+      # Matches "site_DC1_hosts=1" or "site_DC2_hosts=2" - value > 1 means Scale-Out
+      regex: "site_\\w+_hosts=(\\d+)"
+      group: 1
+    - name: sidadm_user
+      regex: "sidadm_user=(\\S+)"
+      group: 1
+    - name: hdbnsutil_failed
+      regex: "(hdbnsutil_failed|no_sidadm_user)"
+      group: 1
 
 validation_logic:
   scope: cluster  # Cluster-wide detection, only needs one node
