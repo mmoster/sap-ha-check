@@ -131,12 +131,23 @@ class ClusterHealthCheck:
         # Get node list
         node_list = list(self.access_config.nodes.keys()) if self.access_config else []
 
-        # Determine cluster type
-        resource_type = cluster_config.get('resource_type', '')
-        if resource_type == 'SAPHanaController' or len(node_list) > 2:
-            cluster_type = 'Scale-Out'
+        # Determine cluster type from CHK_CLUSTER_TYPE result (uses clone-max)
+        cluster_type = 'Scale-Up'  # Default
+        cluster_type_result = next(
+            (r for r in self.check_results if r.check_id == 'CHK_CLUSTER_TYPE'),
+            None
+        )
+        if cluster_type_result and cluster_type_result.details:
+            cluster_type = cluster_type_result.details.get('cluster_type', 'Scale-Up')
         else:
-            cluster_type = 'Scale-Up'
+            # Fallback if no check result - use clone-max from resource config
+            clone_max = cluster_config.get('clone_max', 2)
+            try:
+                clone_max = int(clone_max) if clone_max else 2
+            except (ValueError, TypeError):
+                clone_max = 2
+            if clone_max > 2:
+                cluster_type = 'Scale-Out'
 
         # Get data source info from rules engine
         data_source_info = {}
@@ -1300,10 +1311,25 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
             self._debug_print(f"Nodes with HANA: {nodes_with_hana}, Nodes without: {nodes_without_hana}")
             self._debug_print(f"HANA installed: {hana_installed}")
 
-            # Check for majority maker nodes FIRST (have resource agent but no HANA)
+            # Check cluster type to determine if majority makers are applicable
+            # Majority makers are ONLY used in Scale-Out clusters (clone-max > 2)
+            # Scale-Up clusters with extra nodes (app servers) should NOT have majority makers
+            is_scale_out = False
+            clone_max = 2
+            cluster_type_result = next(
+                (r for r in self.check_results if r.check_id == 'CHK_CLUSTER_TYPE'),
+                None
+            )
+            if cluster_type_result and cluster_type_result.details:
+                clone_max = cluster_type_result.details.get('clone_max', 2)
+                cluster_type = cluster_type_result.details.get('cluster_type', 'Unknown')
+                is_scale_out = cluster_type == 'Scale-Out' and clone_max > 2
+                self._debug_print(f"Cluster type: {cluster_type}, clone-max: {clone_max}, is_scale_out: {is_scale_out}")
+
+            # Check for majority maker nodes ONLY for Scale-Out clusters
             # This must happen before the early return for "no HANA installed"
             majority_makers = []
-            if nodes_without_hana:
+            if nodes_without_hana and is_scale_out:
                 for node_name in nodes_without_hana:
                     node_info = nodes.get(node_name, {})
                     method = node_info.get('preferred_method', 'ssh')
@@ -1311,9 +1337,7 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                     sos_path = node_info.get('sosreport_path')
 
                     # Check if resource agent is installed (indicates majority maker)
-                    # sap-hana-ha: RHEL 9/10 (Scale-Up & Scale-Out), required for RHEL 10
-                    # resource-agents-sap-hana: legacy Scale-Up (RHEL 8/9)
-                    # resource-agents-sap-hana-scaleout: legacy Scale-Out (RHEL 8/9)
+                    # resource-agents-sap-hana-scaleout: Scale-Out specific
                     has_resource_agent = False
                     agent_name = ""
 
@@ -1337,8 +1361,8 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                             except Exception:
                                 pass
                     else:
-                        # Use live command
-                        check_cmd = "rpm -q sap-hana-ha resource-agents-sap-hana resource-agents-sap-hana-scaleout 2>/dev/null | grep -v 'not installed' | head -1"
+                        # Use live command - only check for scaleout agent on Scale-Out clusters
+                        check_cmd = "rpm -q resource-agents-sap-hana-scaleout 2>/dev/null | grep -v 'not installed' | head -1"
                         success, output = self.rules_engine._execute_command(check_cmd, node_name, method, user)
                         if success and output.strip():
                             has_resource_agent = True
@@ -1364,6 +1388,9 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                         print(f"[INFO] Nodes without HANA: {', '.join(non_majority_without_hana)}")
                 else:
                     print(f"[INFO] Nodes without HANA (not majority makers): {', '.join(nodes_without_hana)}")
+            elif nodes_without_hana:
+                # Scale-Up cluster with extra nodes - these are NOT majority makers
+                print(f"[INFO] Nodes without HANA (Scale-Up cluster, not majority makers): {', '.join(nodes_without_hana)}")
 
             # After majority maker check, if no HANA installed, skip SAP checks
             if not hana_installed:

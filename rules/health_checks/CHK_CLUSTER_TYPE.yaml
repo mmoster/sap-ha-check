@@ -1,14 +1,21 @@
 # CHK_CLUSTER_TYPE - Detect SAP HANA HA configuration type
 check_id: CHK_CLUSTER_TYPE
-version: "1.0"
+version: "2.0"
 severity: INFO
 description: Detect SAP HANA HA cluster configuration (Scale-Up vs Scale-Out)
 enabled: true
 
+# Scale-Up: 2 HANA instances (1 per site), uses SAPHana or SAPHanaController with clone-max=2
+# Scale-Out: 4+ HANA instances (2+ per site), uses SAPHanaController with clone-max=4+, has majority maker
+#
+# Key insight: SAPHanaController can be used for BOTH Scale-Up and Scale-Out
+# The clone-max value tells us how many HANA nodes are in the cluster
+
 source_definitions:
   live_cmd: |
     echo "=== NODES ===" && crm_node -l 2>/dev/null | wc -l && crm_node -l 2>/dev/null;
-    echo "=== HANA_RESOURCES ===" && pcs resource show 2>/dev/null | grep -E 'SAPHana|SAPHanaController|SAPHanaTopology' || crm_mon -1 2>/dev/null | grep -E 'SAPHana|SAPHanaController';
+    echo "=== HANA_RESOURCES ===" && pcs resource show 2>/dev/null | grep -E 'SAPHana|SAPHanaController|SAPHanaTopology' || crm_mon -1 2>/dev/null | grep -E 'SAPHana|SAPHanaController' || cat /var/lib/pacemaker/cib/cib.xml 2>/dev/null | grep -oE 'SAPHana[^"]*' | head -1;
+    echo "=== CLONE_MAX ===" && (pcs resource config 2>/dev/null | grep -A10 'SAPHanaController\|SAPHana_' | grep -E 'clone-max' | head -1 || cat /var/lib/pacemaker/cib/cib.xml 2>/dev/null | grep -oE 'clone-max.*value="[0-9]+"' | grep -oE '[0-9]+' | head -1 | sed 's/^/clone-max=/') || echo "clone-max=2";
     echo "=== MAJORITY_MAKER ===" && pcs resource show 2>/dev/null | grep -iE 'majority|qdevice' || crm_node -l 2>/dev/null | grep -i majority || echo "none"
   sos_path: "sos_commands/pacemaker/crm_mon_-1"
 
@@ -30,6 +37,9 @@ parser:
       group: 1
     - name: saphana_topology
       regex: "(SAPHanaTopology\\S*)"
+      group: 1
+    - name: clone_max
+      regex: "clone-max[=:\"].*?(\\d+)"
       group: 1
     - name: majority_maker
       regex: "(majority|qdevice|Majority)"
