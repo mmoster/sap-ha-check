@@ -7,7 +7,10 @@ enabled: true
 
 source_definitions:
   live_cmd: "crm_mon -1 2>/dev/null | head -20"
-  sos_path: "sos_commands/pacemaker/crm_mon_-1"
+  sos_path: "sos_commands/pacemaker/crm_mon_-1*"
+  # Fallback: run pcs -f cib.xml locally when cluster was stopped
+  sos_cmd: "pcs -f {file} status 2>/dev/null | head -20"
+  sos_cmd_file: "sos_commands/pacemaker/crm_report/*/cib.xml"
 
 parser:
   type: regex

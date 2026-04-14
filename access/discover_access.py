@@ -372,7 +372,69 @@ class AccessDiscovery:
                     print(f"  Found: {hostname} -> {item}")
 
         print(f"Found {len(sosreports)} SOSreports")
+
+        # Check for extended SAP HANA HA data and suggest configuration if missing
+        if sosreports:
+            self._check_sosreport_extended_data(sosreports)
+
         return sosreports
+
+    def _check_sosreport_extended_data(self, sosreports: Dict[str, str]) -> None:
+        """
+        Check if SOSreports have extended SAP HANA HA data.
+        Print suggestions if the data is missing.
+        """
+        missing_extended = []
+        has_extended = []
+
+        for hostname, sos_path in sosreports.items():
+            extras_path = Path(sos_path) / "sos_commands/sos_extras/sap_hana_ha"
+            saphana_path = Path(sos_path) / "sos_commands/saphana"
+
+            # Check for SAPHanaSR-showAttr in extras
+            has_sr_attr = (extras_path / "SAPHanaSR-showAttr").exists() if extras_path.exists() else False
+
+            if has_sr_attr:
+                has_extended.append(hostname)
+            else:
+                missing_extended.append(hostname)
+
+        if missing_extended and not has_extended:
+            # All SOSreports are missing extended data
+            print("\n" + "=" * 63)
+            print(" [SUGGESTION] SOSreports missing extended SAP HANA HA data")
+            print("=" * 63)
+            print("""
+  The SOSreports do not contain SAPHanaSR-showAttr output, which is
+  critical for analyzing SAP HANA System Replication cluster state.
+
+  To collect extended SAP HANA HA data in future SOSreports, deploy
+  the following configuration to all cluster nodes:
+
+  1. Update /etc/sos/sos.conf:
+     ─────────────────────────────────────────────────────────────
+     [report]
+     enable-plugins = saphana, sapnw, pacemaker, corosync, sos_extras
+
+     [plugin_options]
+     pacemaker.crm-scrub = on
+     ─────────────────────────────────────────────────────────────
+
+  2. Create /etc/sos/extras.d/sap_hana_ha:
+     ─────────────────────────────────────────────────────────────
+     SAPHanaSR-showAttr
+     SAPHanaSR-showAttr --format=script
+     crm_mon -1 -r -n
+     pcs status --full
+     pcs resource config
+     pcs constraint config
+     cibadmin --query --scope resources
+     cibadmin --query --scope constraints
+     ─────────────────────────────────────────────────────────────
+
+  Then regenerate SOSreports with: sos report --batch
+""")
+            print("=" * 63)
 
     def scan_sosreports_recursive(self, base_dir: str = ".") -> Dict[str, str]:
         """
@@ -476,6 +538,73 @@ class AccessDiscovery:
 
         return nodes
 
+    def _discover_cluster_from_sosreports(self, available_sosreports: Dict[str, str]) -> Dict[str, str]:
+        """
+        From the SOSreports of nodes we already have, discover other cluster nodes
+        and find their matching SOSreports. Also extracts cluster name.
+
+        Args:
+            available_sosreports: Dict of hostname -> sosreport_path for all available sosreports
+
+        Returns:
+            Dict of newly discovered hostname -> sosreport_path
+        """
+        discovered = {}
+        cluster_name = None
+
+        # Get cluster nodes from existing node's sosreport
+        for hostname, node_info in self.config.nodes.items():
+            sos_path = node_info.get('sosreport_path')
+            if not sos_path:
+                continue
+
+            # Get cluster name from this sosreport (if not already found)
+            if not cluster_name:
+                cluster_name = self.get_cluster_name_from_sosreport(sos_path)
+                if cluster_name:
+                    # Add cluster to config
+                    if cluster_name not in self.config.clusters:
+                        self.config.clusters[cluster_name] = {
+                            'nodes': [hostname],
+                            'discovered_from': f'sosreport:{hostname}'
+                        }
+                        print(f"  [CLUSTER] Detected cluster name: {cluster_name}")
+                    # Add existing node to cluster
+                    if hostname not in self.config.clusters[cluster_name].get('nodes', []):
+                        self.config.clusters[cluster_name].setdefault('nodes', []).append(hostname)
+
+            # Get cluster nodes from this sosreport
+            cluster_nodes = self.get_cluster_nodes_from_sosreport(sos_path)
+            if not cluster_nodes:
+                continue
+
+            # Find matching sosreports for cluster nodes
+            for cluster_node in cluster_nodes:
+                if cluster_node in self.config.nodes:
+                    continue  # Already have this node
+                if cluster_node in discovered:
+                    continue  # Already discovered
+
+                # Look for matching sosreport
+                if cluster_node in available_sosreports:
+                    discovered[cluster_node] = available_sosreports[cluster_node]
+                    # Add to cluster nodes list
+                    if cluster_name and cluster_name in self.config.clusters:
+                        if cluster_node not in self.config.clusters[cluster_name].get('nodes', []):
+                            self.config.clusters[cluster_name].setdefault('nodes', []).append(cluster_node)
+                else:
+                    # Try partial match (hostname might be short vs FQDN)
+                    for sos_hostname, sos_path_match in available_sosreports.items():
+                        if cluster_node in sos_hostname or sos_hostname in cluster_node:
+                            discovered[cluster_node] = sos_path_match
+                            # Add to cluster nodes list
+                            if cluster_name and cluster_name in self.config.clusters:
+                                if cluster_node not in self.config.clusters[cluster_name].get('nodes', []):
+                                    self.config.clusters[cluster_name].setdefault('nodes', []).append(cluster_node)
+                            break
+
+        return discovered
+
     def discover_sosreports_with_clusters(self) -> Dict[str, Dict[str, Any]]:
         """
         Discover SOSreports and group them by cluster.
@@ -509,17 +638,28 @@ class AccessDiscovery:
         if unassigned and clusters:
             for cluster_name, cluster_info in clusters.items():
                 # Get expected nodes from first sosreport in this cluster
+                # Use CIBParser for accurate node list from cib.xml
                 first_sos_path = list(cluster_info['nodes'].values())[0]
                 expected_nodes = self.get_cluster_nodes_from_sosreport(first_sos_path)
 
+                # Also try to get nodes from cib.xml for more accurate matching
+                try:
+                    from lib.cib_parser import CIBParser
+                    parser = CIBParser.from_sosreport(first_sos_path)
+                    if parser and parser.is_available():
+                        cib_nodes = parser.get_nodes()
+                        if cib_nodes.get('success') and cib_nodes.get('nodes'):
+                            expected_nodes = cib_nodes['nodes']
+                except Exception:
+                    pass  # Fall back to corosync.conf nodes
+
                 for hostname, sos_path in list(unassigned.items()):
-                    # Check if hostname matches any expected node
-                    for expected in expected_nodes:
-                        if hostname in expected or expected in hostname:
-                            clusters[cluster_name]['nodes'][hostname] = sos_path
-                            del unassigned[hostname]
-                            print(f"  {hostname}: matched to cluster '{cluster_name}' (from nodelist)")
-                            break
+                    # Check if hostname exactly matches any expected node
+                    if hostname in expected_nodes:
+                        clusters[cluster_name]['nodes'][hostname] = sos_path
+                        del unassigned[hostname]
+                        print(f"  {hostname}: matched to cluster '{cluster_name}' (from nodelist)")
+                        continue
 
         # Put remaining unassigned in 'unknown' cluster
         if unassigned:
@@ -601,6 +741,211 @@ class AccessDiscovery:
                 continue
 
         return None
+
+    def discover_hana_info(self, host: str, user: str = None, cluster_nodes: list = None) -> dict:
+        """
+        Discover SAP HANA cluster configuration parameters.
+
+        Returns Ansible-compatible parameters for sap_hana_ha_pacemaker role:
+        - Core: sid, instance_number
+        - Nodes: node1_fqdn, node1_ip, node2_fqdn, node2_ip
+        - VIP: virtual_ip, secondary_vip
+        - Cluster: cluster_name, secondary_read
+        - Resources: resource_name, topology_resource, vip_resource
+        - STONITH: stonith_device, stonith_type
+        - Replication: replication_mode, operation_mode, sites
+        """
+        ssh_user = user or 'root'
+        sudo_prefix = "sudo " if ssh_user != 'root' else ""
+        hana_info = {}
+
+        def run_ssh_cmd(cmd: str, target_host: str = None) -> str:
+            """Helper to run SSH command and return output."""
+            target = target_host or host
+            try:
+                ssh_cmd = [
+                    "ssh", "-o", "BatchMode=yes",
+                    "-o", f"ConnectTimeout={self.SSH_TIMEOUT}",
+                    "-o", "StrictHostKeyChecking=no",
+                    f"{ssh_user}@{target}",
+                    f"{sudo_prefix}{cmd}"
+                ]
+                result = subprocess.run(ssh_cmd, stdin=subprocess.DEVNULL,
+                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                       universal_newlines=True, timeout=self.SSH_TIMEOUT + 2)
+                if result.returncode == 0:
+                    return result.stdout.strip()
+            except Exception:
+                pass
+            return ""
+
+        import re
+
+        # === Core SAP HANA Parameters ===
+        # Discover SID and instance from resource names
+        resource_commands = [
+            "pcs resource status 2>/dev/null | grep -oE 'SAPHana_[A-Z0-9]+_[0-9]+' | head -1",
+            "pcs resource status 2>/dev/null | grep -oE 'SAPHanaController_[A-Z0-9]+_[0-9]+' | head -1",
+            "crm resource status 2>/dev/null | grep -oE 'SAPHana_[A-Z0-9]+_[0-9]+' | head -1",
+        ]
+
+        for cmd in resource_commands:
+            output = run_ssh_cmd(cmd)
+            if output:
+                match = re.match(r'(SAPHana(?:Controller)?)_([A-Z0-9]+)_(\d+)', output)
+                if match:
+                    hana_info['resource_type'] = match.group(1)
+                    hana_info['sid'] = match.group(2)
+                    hana_info['instance_number'] = match.group(3)
+                    hana_info['resource_name'] = output
+                    break
+
+        # Get topology resource
+        topo_output = run_ssh_cmd("pcs resource status 2>/dev/null | grep -oE 'SAPHanaTopology_[A-Z0-9]+_[0-9]+' | head -1")
+        if topo_output:
+            hana_info['topology_resource'] = topo_output
+
+        # === Cluster Node Information ===
+        nodes = cluster_nodes or []
+        if len(nodes) >= 2:
+            # Get FQDN for node1
+            node1_fqdn = run_ssh_cmd("hostname -f 2>/dev/null || hostname", nodes[0])
+            if node1_fqdn:
+                hana_info['node1_fqdn'] = node1_fqdn
+            hana_info['node1_hostname'] = nodes[0]
+
+            # Get IP for node1
+            node1_ip = run_ssh_cmd("hostname -i 2>/dev/null | awk '{print $1}'", nodes[0])
+            if node1_ip:
+                hana_info['node1_ip'] = node1_ip
+
+            # Get FQDN for node2
+            node2_fqdn = run_ssh_cmd("hostname -f 2>/dev/null || hostname", nodes[1])
+            if node2_fqdn:
+                hana_info['node2_fqdn'] = node2_fqdn
+            hana_info['node2_hostname'] = nodes[1]
+
+            # Get IP for node2
+            node2_ip = run_ssh_cmd("hostname -i 2>/dev/null | awk '{print $1}'", nodes[1])
+            if node2_ip:
+                hana_info['node2_ip'] = node2_ip
+
+        # === Virtual IP Configuration ===
+        # Get all VIP resources and addresses
+        vip_output = run_ssh_cmd("pcs resource config 2>/dev/null | grep -B2 -A5 'IPaddr2' | grep -oE 'ip=[0-9.]+' | cut -d= -f2")
+        if vip_output:
+            vips = [v.strip() for v in vip_output.split('\n') if v.strip()]
+            if vips:
+                hana_info['virtual_ip'] = vips[0]
+                if len(vips) > 1:
+                    hana_info['secondary_vip'] = vips[1]
+
+        # Get VIP resource names
+        vip_names = run_ssh_cmd("pcs resource status 2>/dev/null | grep -oE 'vip[-_][A-Za-z0-9_]+|rsc_ip_[A-Za-z0-9_]+|ip[-_][A-Za-z0-9_]+'")
+        if vip_names:
+            vip_list = [v.strip() for v in vip_names.split('\n') if v.strip()]
+            if vip_list:
+                hana_info['vip_resource'] = vip_list[0]
+                if len(vip_list) > 1:
+                    hana_info['secondary_vip_resource'] = vip_list[1]
+
+        # Check if secondary read is enabled (look for second VIP or AUTOMATED_REGISTER)
+        auto_reg = run_ssh_cmd("pcs resource config 2>/dev/null | grep -i 'AUTOMATED_REGISTER' | grep -oE 'true|false' | head -1")
+        if auto_reg:
+            hana_info['automated_register'] = auto_reg.lower() == 'true'
+
+        # Check for secondary read (multiple VIPs or specific config)
+        hana_info['secondary_read'] = 'secondary_vip' in hana_info
+
+        # === STONITH/Fencing Configuration ===
+        # Get STONITH device name and type
+        stonith_name = run_ssh_cmd("pcs stonith status 2>/dev/null | grep -oE '^[[:space:]]*\\*[[:space:]]+[A-Za-z0-9_-]+' | awk '{print $2}' | head -1")
+        if stonith_name:
+            hana_info['stonith_device'] = stonith_name
+
+        # Get STONITH device type (agent)
+        stonith_type = run_ssh_cmd(f"pcs stonith config {stonith_name} 2>/dev/null | grep -oE 'stonith:[a-z_]+' | head -1" if stonith_name else "echo ''")
+        if stonith_type:
+            hana_info['stonith_type'] = stonith_type.replace('stonith:', '')
+
+        # Get fence device parameters (for VMware, Azure, etc.)
+        if stonith_name:
+            fence_params = run_ssh_cmd(f"pcs stonith config {stonith_name} 2>/dev/null | grep -E 'ipaddr|login|passwd|ssl|pcmk_host' | head -5")
+            if fence_params:
+                params = {}
+                for line in fence_params.split('\n'):
+                    if '=' in line or ':' in line:
+                        # Parse key=value or key: value
+                        parts = re.split(r'[=:]', line.strip(), 1)
+                        if len(parts) == 2:
+                            key = parts[0].strip()
+                            val = parts[1].strip()
+                            # Don't store passwords
+                            if 'pass' not in key.lower():
+                                params[key] = val
+                if params:
+                    hana_info['stonith_params'] = params
+
+        # === Cluster Properties ===
+        # Get resource-stickiness
+        stickiness = run_ssh_cmd("pcs property show 2>/dev/null | grep -i 'resource-stickiness' | grep -oE '[0-9]+' | head -1")
+        if stickiness:
+            hana_info['resource_stickiness'] = int(stickiness)
+
+        # Get migration-threshold
+        migration = run_ssh_cmd("pcs resource config 2>/dev/null | grep -i 'migration-threshold' | grep -oE '[0-9]+' | head -1")
+        if migration:
+            hana_info['migration_threshold'] = int(migration)
+
+        # === SAP HANA System Replication ===
+        # Get replication mode from SAPHanaSR
+        repl_mode = run_ssh_cmd("SAPHanaSR-showAttr 2>/dev/null | grep -oE 'sync|syncmem|async' | head -1")
+        if repl_mode:
+            hana_info['replication_mode'] = repl_mode
+
+        # Get operation mode
+        op_mode = run_ssh_cmd("SAPHanaSR-showAttr 2>/dev/null | grep -oE 'logreplay|delta_datashipping' | head -1")
+        if op_mode:
+            hana_info['operation_mode'] = op_mode
+
+        # Get site names from SAPHanaSR or crm_attribute
+        sites_output = run_ssh_cmd("SAPHanaSR-showAttr 2>/dev/null | awk '/^Host/ {next} /^-/ {next} {print $4}' | sort -u | head -2")
+        if not sites_output:
+            # Try alternative: get from pcs resource config
+            sid = hana_info.get('sid', '')
+            if sid:
+                sites_output = run_ssh_cmd("pcs resource config 2>/dev/null | grep -oE 'PREFER_SITE_TAKEOVER|site=[A-Za-z0-9]+' | grep -oE '[A-Z][A-Z0-9]+' | sort -u | head -2")
+        if sites_output:
+            # Filter out non-site values and extract clean site names
+            sites = []
+            for s in sites_output.split('\n'):
+                s = s.strip()
+                # Extract just the site name (e.g., DC1, DC2, SITE1, etc.)
+                if s and s not in ['', '-', 'true', 'false', 'PREFER', 'SITE', 'TAKEOVER']:
+                    # If it contains 'value=', extract just the value
+                    if 'value=' in s:
+                        s = s.split('value=')[-1].strip()
+                    if s and len(s) <= 20:  # Reasonable site name length
+                        sites.append(s)
+            sites = list(dict.fromkeys(sites))  # Remove duplicates while preserving order
+            if sites:
+                hana_info['sites'] = sites
+                if len(sites) >= 1:
+                    hana_info['site1_name'] = sites[0]
+                if len(sites) >= 2:
+                    hana_info['site2_name'] = sites[1]
+
+        # Get PREFER_SITE_TAKEOVER
+        prefer_takeover = run_ssh_cmd("pcs resource config 2>/dev/null | grep -i 'PREFER_SITE_TAKEOVER' | grep -oE 'true|false' | head -1")
+        if prefer_takeover:
+            hana_info['prefer_site_takeover'] = prefer_takeover.lower() == 'true'
+
+        # Get DUPLICATE_PRIMARY_TIMEOUT
+        dup_timeout = run_ssh_cmd("pcs resource config 2>/dev/null | grep -i 'DUPLICATE_PRIMARY_TIMEOUT' | grep -oE '[0-9]+' | head -1")
+        if dup_timeout:
+            hana_info['duplicate_primary_timeout'] = int(dup_timeout)
+
+        return hana_info
 
     def get_local_hostname(self) -> str:
         """Get the local hostname (short form)."""
@@ -765,13 +1110,28 @@ class AccessDiscovery:
             print(f"  Using {seed_host} as only node")
             cluster_nodes = [seed_host]
 
+        # Discover SAP HANA info (pass cluster_nodes for node IP/FQDN discovery)
+        hana_info = self.discover_hana_info(seed_host, ssh_user, cluster_nodes)
+        if hana_info:
+            sid = hana_info.get('sid', '')
+            inst = hana_info.get('instance_number', '')
+            vip = hana_info.get('virtual_ip', '')
+            if sid:
+                print(f"  SAP HANA SID: {sid}, Instance: {inst}")
+            if vip:
+                print(f"  Virtual IP: {vip}")
+
         # Store cluster info
         if cluster_name:
-            self.config.clusters[cluster_name] = {
+            cluster_data = {
                 'nodes': cluster_nodes,
                 'discovered_from': seed_host,
                 'discovered_at': datetime.now().isoformat()
             }
+            # Add HANA info if discovered
+            if hana_info:
+                cluster_data.update(hana_info)
+            self.config.clusters[cluster_name] = cluster_data
 
         return cluster_name, cluster_nodes
 
@@ -1074,8 +1434,14 @@ class AccessDiscovery:
                 if reachable:
                     # Discover cluster members (returns cluster_name, nodes)
                     discovered_name, cluster_nodes = self.discover_cluster_nodes(seed_host, ssh_user)
-                    # Use cluster nodes instead of just the specified hosts
-                    file_hosts = cluster_nodes
+                    # Only use discovered nodes if we found more than what was specified
+                    # or if we successfully discovered the cluster
+                    if cluster_nodes and len(cluster_nodes) >= len(file_hosts):
+                        file_hosts = cluster_nodes
+                    elif not cluster_nodes or len(cluster_nodes) < len(file_hosts):
+                        # Cluster discovery failed or incomplete, keep original hosts
+                        if self.debug:
+                            print(f"  [DEBUG] Cluster discovery incomplete, keeping specified hosts")
                     break
                 else:
                     if self.debug:
@@ -1159,9 +1525,26 @@ class AccessDiscovery:
             for hostname, node_info in self.config.nodes.items():
                 if not node_info.get('sosreport_path') and hostname in local_sosreports:
                     node_info['sosreport_path'] = local_sosreports[hostname]
+                    # Set preferred_method to sosreport if no other access method
+                    if not node_info.get('preferred_method'):
+                        node_info['preferred_method'] = 'sosreport'
                     updated_count += 1
             if updated_count > 0:
                 print(f"\n  [INFO] Found {updated_count} matching SOSreport(s) in subdirectories")
+
+            # Discover cluster nodes from SOSreports and find their sosreports
+            discovered_nodes = self._discover_cluster_from_sosreports(local_sosreports)
+            if discovered_nodes:
+                for hostname, sos_path in discovered_nodes.items():
+                    if hostname not in self.config.nodes:
+                        node_info = {
+                            'hostname': hostname,
+                            'sosreport_path': sos_path,
+                            'preferred_method': 'sosreport',
+                            'last_checked': datetime.now().isoformat()
+                        }
+                        self.config.nodes[hostname] = node_info
+                        print(f"  [CLUSTER] Discovered {hostname} from SOSreport cluster info")
 
         self.config.discovery_complete = True
         self.save_config()
@@ -1329,6 +1712,113 @@ def show_config(config_path: Path, cluster_or_node: str = None):
                 print(f"\n  Cluster: {name}")
             print(f"    Nodes: {', '.join(cluster_nodes)}")
             print(f"    Discovered from: {discovered_from}")
+
+            # Show SAP HANA info if available (Ansible-compatible parameters)
+            sid = info.get('sid')
+            if sid:
+                inst = info.get('instance_number', '??')
+                resource_type = info.get('resource_type', 'SAPHana')
+
+                print("\n    SAP HANA HA Configuration (Ansible-compatible):")
+                print("    " + "-" * 40)
+
+                # Cluster name and nodes
+                print(f"      cluster_name: {name}")
+                print(f"      cluster_nodes: [{', '.join(cluster_nodes)}]")
+
+                # Core Parameters
+                print(f"      hana_sid: {sid}")
+                print(f"      hana_instance_number: \"{inst}\"")
+
+                # Cluster type
+                cluster_type = "Scale-Up" if resource_type == "SAPHana" else "Scale-Out"
+                print(f"      cluster_type: {cluster_type}")
+
+                # Node Information
+                node1_fqdn = info.get('node1_fqdn', '')
+                node1_ip = info.get('node1_ip', '')
+                node2_fqdn = info.get('node2_fqdn', '')
+                node2_ip = info.get('node2_ip', '')
+                if node1_fqdn or node1_ip:
+                    print("\n      # Node 1")
+                    if node1_fqdn:
+                        print(f"      node1_fqdn: {node1_fqdn}")
+                    if node1_ip:
+                        print(f"      node1_ip: {node1_ip}")
+                if node2_fqdn or node2_ip:
+                    print("\n      # Node 2")
+                    if node2_fqdn:
+                        print(f"      node2_fqdn: {node2_fqdn}")
+                    if node2_ip:
+                        print(f"      node2_ip: {node2_ip}")
+
+                # Virtual IP
+                virtual_ip = info.get('virtual_ip', '')
+                vip_resource = info.get('vip_resource', '')
+                secondary_vip = info.get('secondary_vip', '')
+                if virtual_ip:
+                    print("\n      # Virtual IP Configuration")
+                    print(f"      vip: {virtual_ip}")
+                    if vip_resource:
+                        print(f"      vip_resource: {vip_resource}")
+                    if secondary_vip:
+                        print(f"      secondary_vip: {secondary_vip}")
+                        print("      secondary_read: true")
+
+                # System Replication
+                repl_mode = info.get('replication_mode', '')
+                op_mode = info.get('operation_mode', '')
+                sites = info.get('sites', [])
+                site1 = info.get('site1_name', '')
+                site2 = info.get('site2_name', '')
+                if repl_mode or op_mode or sites:
+                    print("\n      # System Replication")
+                    if repl_mode:
+                        print(f"      replication_mode: {repl_mode}")
+                    if op_mode:
+                        print(f"      operation_mode: {op_mode}")
+                    if site1:
+                        print(f"      site1_name: {site1}")
+                    if site2:
+                        print(f"      site2_name: {site2}")
+                    elif sites:
+                        print(f"      sites: {', '.join(sites)}")
+
+                # Resource Names
+                resource_name = info.get('resource_name', '')
+                topology_resource = info.get('topology_resource', '')
+                if resource_name or topology_resource:
+                    print("\n      # Pacemaker Resources")
+                    if resource_name:
+                        print(f"      hana_resource: {resource_name}")
+                    if topology_resource:
+                        print(f"      topology_resource: {topology_resource}")
+
+                # STONITH
+                stonith_device = info.get('stonith_device', '')
+                stonith_type = info.get('stonith_type', '')
+                if stonith_device:
+                    print("\n      # STONITH/Fencing")
+                    print(f"      stonith_device: {stonith_device}")
+                    if stonith_type:
+                        print(f"      stonith_type: {stonith_type}")
+
+                # Cluster Properties
+                stickiness = info.get('resource_stickiness')
+                migration = info.get('migration_threshold')
+                auto_reg = info.get('automated_register')
+                prefer_takeover = info.get('prefer_site_takeover')
+                if stickiness or migration or auto_reg is not None or prefer_takeover is not None:
+                    print("\n      # Cluster Properties")
+                    if stickiness:
+                        print(f"      resource_stickiness: {stickiness}")
+                    if migration:
+                        print(f"      migration_threshold: {migration}")
+                    if auto_reg is not None:
+                        print(f"      automated_register: {str(auto_reg).lower()}")
+                    if prefer_takeover is not None:
+                        print(f"      prefer_site_takeover: {str(prefer_takeover).lower()}")
+
             print("\n    To check this cluster:")
             print(f"      ./cluster_health_check.py -C {name}")
     else:
@@ -1393,6 +1883,154 @@ def show_config(config_path: Path, cluster_or_node: str = None):
     return True
 
 
+def export_ansible_vars(config_path: Path, cluster_name: str, output_file: str = None):
+    """
+    Export cluster configuration as Ansible group_vars YAML file.
+
+    Args:
+        config_path: Path to the configuration file
+        cluster_name: Name of the cluster to export
+        output_file: Optional output file path. If not provided, prints to stdout.
+    """
+    if not config_path.exists():
+        print(f"No configuration file found at {config_path}")
+        return False
+
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
+
+    clusters = config.get('clusters', {})
+
+    if cluster_name not in clusters:
+        print(f"Cluster '{cluster_name}' not found in configuration.")
+        print(f"Available clusters: {', '.join(clusters.keys())}")
+        return False
+
+    info = clusters[cluster_name]
+    cluster_nodes = info.get('nodes', [])
+    sid = info.get('sid', '')
+
+    if not sid:
+        print(f"No SAP HANA configuration found for cluster '{cluster_name}'.")
+        print("Run discovery with: ./cluster_health_check.py -f <node>")
+        return False
+
+    # Build Ansible vars dictionary
+    ansible_vars = {
+        '# SAP HANA HA Pacemaker Configuration': None,
+        f'# Cluster: {cluster_name}': None,
+        f'# Generated from: {config_path}': None,
+        '': None,
+        '# Core SAP HANA Parameters': None,
+        'sap_hana_ha_pacemaker_hana_sid': sid,
+        'sap_hana_ha_pacemaker_hana_instance_number': f'"{info.get("instance_number", "00")}"',
+    }
+
+    # Cluster name
+    ansible_vars['sap_hana_ha_pacemaker_cluster_name'] = cluster_name
+
+    # Node information
+    if len(cluster_nodes) >= 2:
+        ansible_vars['\n# Cluster Node Information'] = None
+        node1_fqdn = info.get('node1_fqdn', cluster_nodes[0])
+        node1_ip = info.get('node1_ip', '')
+        node2_fqdn = info.get('node2_fqdn', cluster_nodes[1])
+        node2_ip = info.get('node2_ip', '')
+
+        ansible_vars['sap_hana_ha_pacemaker_node1_fqdn'] = node1_fqdn
+        if node1_ip:
+            ansible_vars['sap_hana_ha_pacemaker_node1_ip'] = node1_ip
+        ansible_vars['sap_hana_ha_pacemaker_node2_fqdn'] = node2_fqdn
+        if node2_ip:
+            ansible_vars['sap_hana_ha_pacemaker_node2_ip'] = node2_ip
+
+    # Virtual IP
+    vip = info.get('virtual_ip', '')
+    if vip:
+        ansible_vars['\n# Virtual IP Configuration'] = None
+        ansible_vars['sap_hana_ha_pacemaker_vip'] = vip
+        secondary_vip = info.get('secondary_vip', '')
+        if secondary_vip:
+            ansible_vars['sap_hana_ha_pacemaker_secondary_vip'] = secondary_vip
+            ansible_vars['sap_hana_ha_pacemaker_secondary_read'] = 'true'
+
+    # Cluster password placeholder
+    ansible_vars['\n# Pacemaker & HA Service Setup'] = None
+    ansible_vars['sap_hana_ha_pacemaker_hacluster_password'] = '"{{ vault_hacluster_password }}"  # Store in Ansible Vault'
+
+    # System Replication
+    repl_mode = info.get('replication_mode', '')
+    op_mode = info.get('operation_mode', '')
+    site1 = info.get('site1_name', '')
+    site2 = info.get('site2_name', '')
+    if repl_mode or op_mode or site1:
+        ansible_vars['\n# SAP HANA System Replication'] = None
+        if repl_mode:
+            ansible_vars['sap_hana_ha_pacemaker_replication_mode'] = repl_mode
+        if op_mode:
+            ansible_vars['sap_hana_ha_pacemaker_operation_mode'] = op_mode
+        if site1:
+            ansible_vars['sap_hana_ha_pacemaker_site1_name'] = site1
+        if site2:
+            ansible_vars['sap_hana_ha_pacemaker_site2_name'] = site2
+
+    # Cluster Properties
+    auto_reg = info.get('automated_register')
+    prefer_takeover = info.get('prefer_site_takeover')
+    stickiness = info.get('resource_stickiness')
+    migration = info.get('migration_threshold')
+    if auto_reg is not None or prefer_takeover is not None or stickiness or migration:
+        ansible_vars['\n# Cluster Properties'] = None
+        if auto_reg is not None:
+            ansible_vars['sap_hana_ha_pacemaker_automated_register'] = str(auto_reg).lower()
+        if prefer_takeover is not None:
+            ansible_vars['sap_hana_ha_pacemaker_prefer_site_takeover'] = str(prefer_takeover).lower()
+        if stickiness:
+            ansible_vars['sap_hana_ha_pacemaker_resource_stickiness'] = stickiness
+        if migration:
+            ansible_vars['sap_hana_ha_pacemaker_migration_threshold'] = migration
+
+    # STONITH
+    stonith = info.get('stonith_device', '')
+    stonith_type = info.get('stonith_type', '')
+    if stonith:
+        ansible_vars['\n# STONITH/Fencing Configuration'] = None
+        ansible_vars['sap_hana_ha_pacemaker_stonith_device'] = stonith
+        if stonith_type:
+            ansible_vars['sap_hana_ha_pacemaker_stonith_type'] = stonith_type
+        ansible_vars['# Add fencing credentials as needed:'] = None
+        ansible_vars['# sap_hana_ha_pacemaker_fence_user'] = '"{{ vault_fence_user }}"'
+        ansible_vars['# sap_hana_ha_pacemaker_fence_password'] = '"{{ vault_fence_password }}"'
+
+    # Format output
+    output_lines = ['---']
+    for key, value in ansible_vars.items():
+        if key.startswith('#') or key.startswith('\n#'):
+            output_lines.append(key.lstrip('\n'))
+        elif key == '':
+            output_lines.append('')
+        elif value is None:
+            continue
+        else:
+            output_lines.append(f'{key}: {value}')
+
+    yaml_content = '\n'.join(output_lines)
+
+    if output_file:
+        output_path = Path(output_file)
+        with open(output_path, 'w') as f:
+            f.write(yaml_content + '\n')
+        print(f"Ansible vars exported to: {output_path}")
+        print("\nUsage:")
+        print(f"  1. Move to your Ansible inventory: group_vars/{cluster_name}.yml")
+        print("  2. Store passwords in Ansible Vault")
+        print("  3. Run playbook: ansible-playbook -i inventory sap_hana_ha.yml --ask-vault-pass")
+    else:
+        print(yaml_content)
+
+    return True
+
+
 def delete_config(config_path: Path):
     """Delete health check reports and status files (keeps node access config)."""
     import glob
@@ -1450,6 +2088,169 @@ def delete_config(config_path: Path):
     else:
         print("\nNo files deleted.")
         return False
+
+
+def fetch_sosreports(config_path: Path, cluster_name: str = None, nodes: list = None,
+                     output_dir: str = None, ssh_user: str = 'root'):
+    """
+    Fetch the latest sosreports from cluster nodes via SCP.
+
+    Args:
+        config_path: Path to the configuration file
+        cluster_name: Name of the cluster to fetch sosreports from
+        nodes: List of specific node hostnames (alternative to cluster_name)
+        output_dir: Directory to save sosreports (default: ./sosreports)
+        ssh_user: SSH user for connecting to nodes (default: root)
+
+    Returns:
+        List of downloaded file paths, or empty list on failure
+    """
+    import subprocess
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    # Determine output directory
+    if output_dir:
+        sos_dir = Path(output_dir)
+    else:
+        sos_dir = config_path.parent / 'sosreports'
+
+    sos_dir.mkdir(parents=True, exist_ok=True)
+
+    # Get list of nodes to fetch from
+    target_nodes = []
+
+    if nodes:
+        # Use specified nodes directly
+        target_nodes = nodes
+    elif cluster_name:
+        # Load nodes from cluster config
+        if not config_path.exists():
+            print(f"[ERROR] Configuration file not found: {config_path}")
+            return []
+
+        with open(config_path, 'r') as f:
+            config = yaml.safe_load(f)
+
+        clusters = config.get('clusters', {})
+        if cluster_name not in clusters:
+            print(f"[ERROR] Cluster '{cluster_name}' not found in configuration.")
+            print(f"Available clusters: {', '.join(clusters.keys())}")
+            return []
+
+        target_nodes = clusters[cluster_name].get('nodes', [])
+    else:
+        print("[ERROR] Either cluster_name or nodes must be specified.")
+        return []
+
+    if not target_nodes:
+        print("[ERROR] No nodes found to fetch sosreports from.")
+        return []
+
+    print(f"\n{'='*60}")
+    print(" Fetching SOSreports from cluster nodes")
+    print(f"{'='*60}")
+    print(f"  Nodes: {', '.join(target_nodes)}")
+    print(f"  Output: {sos_dir}")
+    print(f"  SSH user: {ssh_user}")
+    print()
+
+    downloaded_files = []
+
+    def fetch_from_node(hostname: str) -> tuple:
+        """Find and download latest sosreport from a single node."""
+        try:
+            # Find latest sosreport in /var/tmp
+            find_cmd = [
+                "ssh", "-o", "BatchMode=yes",
+                "-o", "ConnectTimeout=10",
+                "-o", "StrictHostKeyChecking=no",
+                f"{ssh_user}@{hostname}",
+                "ls -t /var/tmp/sosreport-*.tar.xz 2>/dev/null | head -1"
+            ]
+
+            result = subprocess.run(
+                find_cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=30,
+                text=True
+            )
+
+            if result.returncode != 0 or not result.stdout.strip():
+                # Try .tar.gz format
+                find_cmd[-1] = "ls -t /var/tmp/sosreport-*.tar.gz 2>/dev/null | head -1"
+                result = subprocess.run(
+                    find_cmd,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    timeout=30,
+                    text=True
+                )
+
+            if result.returncode != 0 or not result.stdout.strip():
+                return (hostname, None, "No sosreport found in /var/tmp")
+
+            remote_path = result.stdout.strip()
+            filename = os.path.basename(remote_path)
+            local_path = sos_dir / filename
+
+            # Check if already downloaded
+            if local_path.exists():
+                return (hostname, str(local_path), "Already exists (skipped)")
+
+            # Download via SCP
+            scp_cmd = [
+                "scp", "-o", "BatchMode=yes",
+                "-o", "ConnectTimeout=10",
+                "-o", "StrictHostKeyChecking=no",
+                f"{ssh_user}@{hostname}:{remote_path}",
+                str(local_path)
+            ]
+
+            result = subprocess.run(
+                scp_cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=300,  # 5 minutes for large files
+                text=True
+            )
+
+            if result.returncode == 0:
+                # Get file size
+                size_mb = local_path.stat().st_size / (1024 * 1024)
+                return (hostname, str(local_path), f"Downloaded ({size_mb:.1f} MB)")
+            else:
+                return (hostname, None, f"SCP failed: {result.stderr.strip()}")
+
+        except subprocess.TimeoutExpired:
+            return (hostname, None, "Timeout")
+        except Exception as e:
+            return (hostname, None, f"Error: {str(e)}")
+
+    # Fetch from all nodes in parallel
+    with ThreadPoolExecutor(max_workers=min(len(target_nodes), 5)) as executor:
+        futures = {executor.submit(fetch_from_node, node): node for node in target_nodes}
+
+        for future in as_completed(futures):
+            hostname, filepath, message = future.result()
+            if filepath:
+                downloaded_files.append(filepath)
+                print(f"  [{hostname}] {message}")
+            else:
+                print(f"  [{hostname}] {message}")
+
+    print()
+    if downloaded_files:
+        print(f"Downloaded {len(downloaded_files)} sosreport(s) to: {sos_dir}")
+        print("\nTo analyze with health check:")
+        print(f"  ./cluster_health_check.py -s {sos_dir}")
+    else:
+        print("No sosreports were downloaded.")
+
+    return downloaded_files
 
 
 def main():

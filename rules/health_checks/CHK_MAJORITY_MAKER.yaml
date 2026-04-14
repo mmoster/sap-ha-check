@@ -39,7 +39,10 @@ source_definitions:
     pcs constraint location show 2>/dev/null | grep -iE 'SAPHana|Controller' || echo "none"
     echo "=== RESOURCE_DISCOVERY ==="
     pcs constraint location show --full 2>/dev/null | grep -i 'resource-discovery' || echo "none"
-  sos_path: "sos_commands/pacemaker/pcs_constraint_--full"
+  sos_path: "sos_commands/pacemaker/pcs_config"
+  # Fallback: run pcs -f cib.xml locally when cluster was stopped
+  sos_cmd: "pcs -f {file} constraint location show --full 2>/dev/null"
+  sos_cmd_file: "sos_commands/pacemaker/crm_report/*/cib.xml"
 
 parser:
   type: regex

@@ -342,18 +342,113 @@ def generate_health_check_report(
     pdf.set_text_color(*RedHatColors.BLACK)
     pdf.ln(4)
 
-    pdf.info_table({
+    # Build info table with data source information
+    data_source = cluster_info.get('data_source', 'Unknown')
+    used_cib_xml = cluster_info.get('used_cib_xml', False)
+
+    info_data = {
         "Cluster Name": cluster_name,
         "Nodes": ", ".join(nodes) if nodes else "N/A",
+        "Data Source": data_source,
         "Report Date": datetime.now().strftime("%d %B %Y, %H:%M"),
         "Total Checks": str(total),
         "Passed": str(passed),
         "Failed": str(failed),
         "Critical Issues": str(critical),
         "Warnings": str(warnings),
-    })
+    }
+
+    pdf.info_table(info_data)
 
     pdf.ln(5)
+
+    # =========================================================================
+    # DATA SOURCE INFO BOX (SOSreport / cib.xml usage)
+    # =========================================================================
+    access_method = cluster_info.get('access_method', 'unknown')
+
+    if access_method == 'sosreport':
+        # Info box for sosreport analysis
+        if used_cib_xml:
+            # Yellow warning - cluster was stopped when sosreport was taken
+            pdf.set_fill_color(255, 243, 205)  # Light yellow background
+            pdf.set_draw_color(255, 193, 7)    # Yellow border
+            pdf.set_text_color(133, 100, 4)    # Dark yellow/brown text
+            box_title = "INFO: Analyzing SOSreport (cluster was stopped)"
+            box_text = (
+                "This analysis is based on SOSreport data. The cluster was not running when "
+                "the SOSreport was collected, so cluster configuration was read from cib.xml. "
+                "Some checks (node status, quorum, resource status) reflect the offline state."
+            )
+        else:
+            # Blue info - sosreport analysis
+            pdf.set_fill_color(217, 237, 247)  # Light blue background
+            pdf.set_draw_color(49, 112, 143)   # Blue border
+            pdf.set_text_color(31, 78, 121)    # Dark blue text
+            box_title = "INFO: Analyzing SOSreport (offline data)"
+            box_text = (
+                "This analysis is based on SOSreport data collected from cluster nodes. "
+                "No live SSH access was used. Results reflect the cluster state at the time "
+                "the SOSreport was collected."
+            )
+
+        pdf.set_line_width(0.5)
+        pdf.set_font('Helvetica', 'B', 11)
+
+        y_start = pdf.get_y()
+        pdf.rect(10, y_start, 190, 24, 'DF')
+        pdf.set_xy(15, y_start + 3)
+        pdf.cell(0, 6, box_title, ln=True)
+
+        pdf.set_xy(15, y_start + 10)
+        pdf.set_font('Helvetica', '', 9)
+        pdf.multi_cell(180, 4, box_text)
+
+        pdf.set_text_color(*RedHatColors.BLACK)
+        pdf.set_line_width(0.2)
+        pdf.ln(8)
+
+    # =========================================================================
+    # CLUSTER NOT RUNNING WARNING (for live access)
+    # =========================================================================
+    cluster_running = True
+    if install_status and access_method != 'sosreport':
+        # Check if cluster is configured but not running
+        has_config = install_status.get('corosync_conf_exists') or install_status.get('cib_exists')
+        pacemaker_running = install_status.get('pacemaker_running')
+        if has_config and not pacemaker_running:
+            cluster_running = False
+            # Add prominent warning box
+            pdf.set_fill_color(255, 243, 205)  # Light yellow background
+            pdf.set_draw_color(255, 193, 7)    # Yellow border
+            pdf.set_line_width(0.5)
+            pdf.set_font('Helvetica', 'B', 11)
+            pdf.set_text_color(133, 100, 4)    # Dark yellow/brown text
+
+            # Warning box
+            y_start = pdf.get_y()
+            pdf.rect(10, y_start, 190, 38, 'DF')
+            pdf.set_xy(15, y_start + 3)
+            pdf.cell(0, 6, "WARNING: Cluster Services Not Running", ln=True)
+
+            pdf.set_xy(15, y_start + 10)
+            pdf.set_font('Helvetica', '', 9)
+            pdf.multi_cell(180, 4,
+                "The cluster is configured but Pacemaker is not running. Health check results "
+                "may be incomplete or inaccurate. Checks that require live cluster data (quorum, "
+                "node status, resource status, replication status) will report ERROR status."
+            )
+            pdf.set_xy(15, y_start + 22)
+            pdf.set_font('Helvetica', 'B', 9)
+            pdf.cell(0, 4, "To start the cluster and rerun the health check:")
+            pdf.set_xy(15, y_start + 28)
+            pdf.set_font('Courier', '', 9)
+            pdf.set_fill_color(245, 245, 245)
+            pdf.cell(180, 5, "  pcs cluster start --all", fill=True)
+
+            pdf.set_text_color(*RedHatColors.BLACK)
+            pdf.set_line_width(0.2)
+            pdf.ln(20)
 
     # =========================================================================
     # CLUSTER CONFIGURATION
@@ -371,12 +466,255 @@ def generate_health_check_report(
 
     # Node list
     pdf.sub_section("Cluster Nodes")
+    majority_makers = cluster_info.get('majority_makers', [])
     for node in nodes:
         pdf.set_font('Helvetica', '', 10)
         pdf.cell(5, 6, "-")  # Bullet point
-        pdf.cell(0, 6, node, new_x="LMARGIN", new_y="NEXT")
+        if node in majority_makers:
+            pdf.set_font('Helvetica', 'I', 10)
+            pdf.cell(0, 6, f"{node} (MajorityMaker)", new_x="LMARGIN", new_y="NEXT")
+        else:
+            pdf.cell(0, 6, node, new_x="LMARGIN", new_y="NEXT")
+
+    # Note about MajorityMaker constraints for Scale-Out
+    if majority_makers and cluster_info.get('cluster_type') == 'Scale-Out':
+        pdf.ln(2)
+        pdf.set_font('Helvetica', 'I', 8)
+        pdf.set_text_color(100, 100, 100)
+        pdf.multi_cell(0, 4,
+            f"Note: MajorityMaker node(s) have location constraints with resource-discovery=never "
+            f"to prevent SAPHanaTopology and SAPHanaController from running on these nodes."
+        )
+        pdf.set_text_color(*RedHatColors.BLACK)
 
     pdf.ln(5)
+
+    # SAP HANA HA Parameters (Ansible-compatible)
+    sid = cluster_info.get('sid')
+    if sid:
+        pdf.sub_section("SAP HANA Configuration")
+        hana_config = {}
+        if sid:
+            hana_config["SID"] = sid
+        if cluster_info.get('instance_number'):
+            hana_config["Instance Number"] = cluster_info.get('instance_number')
+        if cluster_info.get('virtual_ip'):
+            hana_config["Virtual IP (Primary)"] = cluster_info.get('virtual_ip')
+        if cluster_info.get('secondary_vip'):
+            hana_config["Virtual IP (Secondary)"] = cluster_info.get('secondary_vip')
+        if cluster_info.get('replication_mode'):
+            hana_config["Replication Mode"] = cluster_info.get('replication_mode')
+        if cluster_info.get('operation_mode'):
+            hana_config["Operation Mode"] = cluster_info.get('operation_mode')
+        if cluster_info.get('secondary_read') is not None:
+            hana_config["Secondary Read Enabled"] = str(cluster_info.get('secondary_read'))
+        if hana_config:
+            pdf.info_table(hana_config)
+        pdf.ln(3)
+
+        # HA Parameters
+        ha_config = {}
+        if cluster_info.get('prefer_site_takeover') is not None:
+            ha_config["Prefer Site Takeover"] = str(cluster_info.get('prefer_site_takeover'))
+        if cluster_info.get('automated_register') is not None:
+            ha_config["Automated Register"] = str(cluster_info.get('automated_register'))
+        if cluster_info.get('duplicate_primary_timeout') is not None:
+            ha_config["Duplicate Primary Timeout"] = str(cluster_info.get('duplicate_primary_timeout'))
+        if cluster_info.get('migration_threshold') is not None:
+            ha_config["Migration Threshold"] = str(cluster_info.get('migration_threshold'))
+        if ha_config:
+            pdf.sub_section("HA Parameters")
+            pdf.info_table(ha_config)
+        pdf.ln(3)
+
+        # SAPHanaTopology Resource (Scale-Out)
+        topology_resource = cluster_info.get('topology_resource')
+        if topology_resource:
+            pdf.sub_section("SAPHanaTopology Resource")
+            topo_config = {
+                "Resource Name": topology_resource,
+                "Resource Agent": "ocf:suse:SAPHanaTopology",
+                "Clone Type": "clone (runs on all HANA nodes)",
+                "interleave": "true",
+            }
+            # Add majority maker exclusion info
+            if majority_makers:
+                topo_config["Excluded Nodes"] = ", ".join(majority_makers) + " (resource-discovery=never)"
+            pdf.info_table(topo_config)
+            pdf.ln(3)
+
+        # SAPHanaController Resource (Scale-Out) / SAPHana Resource (Scale-Up)
+        res_config = {}
+        resource_type = cluster_info.get('resource_type')
+        resource_name = cluster_info.get('resource_name')
+        if resource_type and resource_name:
+            if resource_type == 'SAPHanaController':
+                pdf.sub_section("SAPHanaController Resource")
+                res_config["Resource Name"] = resource_name
+                res_config["Resource Agent"] = "ocf:suse:SAPHanaController"
+                res_config["Clone Type"] = "promotable (master/slave)"
+                res_config["interleave"] = "true"
+                # Add majority maker exclusion info
+                if majority_makers:
+                    res_config["Excluded Nodes"] = ", ".join(majority_makers) + " (resource-discovery=never)"
+            else:
+                pdf.sub_section("SAPHana Resource")
+                res_config["Resource Name"] = resource_name
+                res_config["Resource Agent"] = "ocf:suse:SAPHana"
+                res_config["Clone Type"] = "promotable (master/slave)"
+            pdf.info_table(res_config)
+            pdf.ln(3)
+
+        # VIP Resources
+        vip_config = {}
+        if cluster_info.get('vip_resource'):
+            vip_config["Primary VIP Resource"] = cluster_info.get('vip_resource')
+        if cluster_info.get('secondary_vip_resource'):
+            vip_config["Secondary VIP Resource"] = cluster_info.get('secondary_vip_resource')
+        if vip_config:
+            pdf.sub_section("Virtual IP Resources")
+            pdf.info_table(vip_config)
+        pdf.ln(3)
+
+        # STONITH Configuration
+        stonith_config = {}
+        if cluster_info.get('stonith_device'):
+            stonith_config["STONITH Device"] = cluster_info.get('stonith_device')
+        stonith_params = cluster_info.get('stonith_params')
+        if stonith_params:
+            if stonith_params.get('ssl'):
+                stonith_config["SSL Enabled"] = "Yes" if stonith_params.get('ssl') == '1' else "No"
+            if stonith_params.get('ssl_insecure'):
+                stonith_config["SSL Insecure"] = "Yes" if stonith_params.get('ssl_insecure') == '1' else "No"
+        if stonith_config:
+            pdf.sub_section("STONITH/Fencing Configuration")
+            pdf.info_table(stonith_config)
+            # Show pcmk_host_map in a formatted table
+            if stonith_params and stonith_params.get('pcmk_host_map'):
+                pdf.ln(3)
+                pdf.set_font('Helvetica', 'B', 9)
+                pdf.cell(0, 5, "STONITH Host Mapping (pcmk_host_map):", ln=True)
+                pdf.ln(1)
+                # Table header
+                pdf.set_fill_color(240, 240, 240)
+                pdf.set_font('Helvetica', 'B', 8)
+                pdf.cell(60, 5, "Cluster Node", border=1, fill=True)
+                pdf.cell(80, 5, "STONITH Target", border=1, fill=True, ln=True)
+                # Table rows
+                pdf.set_font('Helvetica', '', 8)
+                host_map = stonith_params.get('pcmk_host_map', '')
+                hosts = host_map.split(';')
+                for host in hosts:
+                    if host.strip() and ':' in host:
+                        node, target = host.strip().split(':', 1)
+                        pdf.cell(60, 5, node, border=1)
+                        pdf.cell(80, 5, target, border=1, ln=True)
+
+        pdf.ln(5)
+
+    # =========================================================================
+    # CONFIGURED RESOURCES (from cib.xml)
+    # =========================================================================
+    resource_config = cluster_info.get('resource_config')
+    if resource_config and resource_config.get('available'):
+        pdf.add_page()
+        pdf.chapter_title("Configured Resources (from cib.xml)")
+
+        # Resources summary
+        resources = resource_config.get('resources', {})
+        if resources.get('list'):
+            pdf.sub_section("Cluster Resources")
+            pdf.set_font('Courier', '', 8)
+            for resource in resources.get('list', [])[:20]:  # Limit to 20 resources
+                pdf.set_x(10)  # Reset to left margin
+                pdf.multi_cell(0, 4, f"- {resource[:90]}")  # Truncate long lines
+            if len(resources.get('list', [])) > 20:
+                pdf.set_font('Helvetica', 'I', 8)
+                pdf.set_x(10)
+                pdf.cell(0, 4, f"  ... and {len(resources['list']) - 20} more resources", ln=True)
+            pdf.ln(3)
+
+        # SAP HANA specific configuration
+        sap_hana = resource_config.get('sap_hana', {})
+        if sap_hana:
+            pdf.sub_section("SAP HANA Resource Configuration")
+            for resource_name, attrs in sap_hana.items():
+                pdf.set_font('Helvetica', 'B', 9)
+                pdf.cell(0, 5, resource_name[:60], ln=True)
+                pdf.set_font('Courier', '', 8)
+                for key, value in attrs.items():
+                    # Truncate long values to prevent layout issues
+                    val_str = str(value)[:80]
+                    pdf.cell(0, 4, f"  {key}={val_str}", ln=True)
+                pdf.ln(2)
+
+        # Constraints summary
+        constraints = resource_config.get('constraints', {})
+
+        # Location constraints with resource-discovery
+        resource_discovery = constraints.get('resource_discovery', [])
+        if resource_discovery:
+            pdf.sub_section("Resource Discovery Settings")
+            pdf.set_font('Courier', '', 8)
+            for rd in resource_discovery[:15]:
+                pdf.set_x(10)
+                pdf.multi_cell(0, 4, rd[:100])
+            if len(resource_discovery) > 15:
+                pdf.set_font('Helvetica', 'I', 8)
+                pdf.set_x(10)
+                pdf.cell(0, 4, f"  ... and {len(resource_discovery) - 15} more", ln=True)
+            pdf.ln(3)
+
+        # Location constraints
+        location = constraints.get('location', [])
+        if location:
+            pdf.sub_section("Location Constraints")
+            pdf.set_font('Courier', '', 7)
+            shown = 0
+            for loc in location:
+                if shown >= 20:
+                    break
+                if loc.startswith('resource') or loc.startswith('Resource'):
+                    pdf.set_x(10)
+                    pdf.multi_cell(0, 3.5, loc[:100])
+                    shown += 1
+            if len([ln for ln in location if ln.startswith('resource') or ln.startswith('Resource')]) > 20:
+                pdf.set_font('Helvetica', 'I', 8)
+                pdf.set_x(10)
+                pdf.cell(0, 4, "  ... more constraints in full output", ln=True)
+            pdf.ln(3)
+
+        # Colocation constraints
+        colocation = constraints.get('colocation', [])
+        if colocation:
+            pdf.sub_section("Colocation Constraints")
+            pdf.set_font('Courier', '', 8)
+            for col in colocation[:10]:
+                pdf.set_x(10)
+                pdf.multi_cell(0, 4, col[:100])
+            pdf.ln(3)
+
+        # Order constraints
+        order = constraints.get('order', [])
+        if order:
+            pdf.sub_section("Order Constraints")
+            pdf.set_font('Courier', '', 8)
+            for ord_c in order[:10]:
+                pdf.set_x(10)
+                pdf.multi_cell(0, 4, ord_c[:100])
+            pdf.ln(3)
+
+        # STONITH info from cib
+        stonith = resource_config.get('stonith', {})
+        if stonith.get('devices'):
+            pdf.sub_section("STONITH Devices (from cib.xml)")
+            pdf.set_font('Courier', '', 8)
+            for device in stonith.get('devices', [])[:10]:
+                pdf.set_x(10)
+                pdf.multi_cell(0, 4, device[:100])
+            pdf.ln(3)
+
+        pdf.ln(5)
 
     # =========================================================================
     # CHECK RESULTS
@@ -394,6 +732,28 @@ def generate_health_check_report(
     # Critical/Failed checks first
     if failed_checks or error_checks:
         pdf.sub_section("Failed Checks")
+
+        # Add prominent note when cluster is stopped and there are errors
+        if error_checks and not cluster_running:
+            pdf.set_fill_color(255, 243, 205)  # Light yellow background
+            pdf.set_draw_color(255, 193, 7)    # Yellow border
+            pdf.set_line_width(0.3)
+            y_note = pdf.get_y()
+            pdf.rect(10, y_note, 190, 16, 'DF')
+            pdf.set_xy(15, y_note + 2)
+            pdf.set_font('Helvetica', 'B', 9)
+            pdf.set_text_color(133, 100, 4)
+            pdf.cell(0, 5, "Cluster Not Running - Some checks cannot retrieve live data", ln=True)
+            pdf.set_xy(15, y_note + 8)
+            pdf.set_font('Helvetica', '', 8)
+            pdf.multi_cell(180, 4,
+                "ERROR status below may be caused by the stopped cluster. Start the cluster "
+                "with 'pcs cluster start --all' and rerun the health check for accurate results."
+            )
+            pdf.set_text_color(*RedHatColors.BLACK)
+            pdf.set_line_width(0.2)
+            pdf.ln(5)
+
         for check in failed_checks + error_checks:
             pdf.check_result_row(
                 check.get('check_id', 'N/A'),
@@ -402,6 +762,18 @@ def generate_health_check_report(
                 check.get('message', ''),
                 check.get('node', '')
             )
+
+        # Add note about errors when cluster is stopped (for running cluster case)
+        if error_checks and cluster_running:
+            pdf.ln(3)
+            pdf.set_font('Helvetica', 'I', 9)
+            pdf.set_text_color(*RedHatColors.GRAY)
+            pdf.multi_cell(0, 5,
+                "Note: Some checks report ERROR status when data could not be retrieved. "
+                "This may indicate a problem with the cluster configuration or services."
+            )
+            pdf.set_text_color(0, 0, 0)
+            pdf.ln(3)
 
     # Warnings
     if warning_checks:
@@ -542,7 +914,7 @@ def generate_health_check_report(
 
 
 def load_yaml_report(yaml_path: str) -> tuple:
-    """Load results from YAML report file"""
+    """Load results from YAML report file (legacy format)"""
     import yaml
 
     with open(yaml_path, 'r') as f:
@@ -554,26 +926,151 @@ def load_yaml_report(yaml_path: str) -> tuple:
     return results, summary
 
 
+def load_unified_yaml_report(yaml_path: str) -> tuple:
+    """
+    Load report data from unified YAML format.
+
+    This function supports both the new unified format (with version field)
+    and the legacy format (only results and summary).
+
+    Args:
+        yaml_path: Path to YAML report file
+
+    Returns:
+        Tuple of (results, summary, cluster_info, install_status)
+        - results: List of check result dicts
+        - summary: Summary statistics dict
+        - cluster_info: Cluster information dict for PDF generation
+        - install_status: Installation status dict (or None)
+    """
+    import yaml
+
+    with open(yaml_path, 'r') as f:
+        data = yaml.safe_load(f)
+
+    # Check if this is the unified format (has version field)
+    if 'version' in data:
+        # Unified format - extract all components
+        results = data.get('results', [])
+        summary = data.get('summary', {})
+
+        # Build cluster_info from unified data
+        cluster_info = {
+            'cluster_name': data.get('cluster_name', 'Unknown'),
+            'nodes': data.get('nodes', []),
+            'cluster_type': data.get('cluster_type', 'Scale-Up'),
+            'majority_makers': data.get('majority_makers', []),
+
+            # Data source
+            'data_source': data.get('data_source', 'Unknown'),
+            'access_method': data.get('access_method', 'unknown'),
+            'used_cib_xml': data.get('used_cib_xml', False),
+
+            # OS/Software versions
+            'rhel_version': data.get('rhel_version'),
+            'pacemaker_version': data.get('pacemaker_version'),
+
+            # SAP HANA config
+            'sid': data.get('sid'),
+            'instance_number': data.get('instance_number'),
+            'virtual_ip': data.get('virtual_ip'),
+            'secondary_vip': data.get('secondary_vip'),
+            'replication_mode': data.get('replication_mode'),
+            'operation_mode': data.get('operation_mode'),
+            'secondary_read': data.get('secondary_read'),
+
+            # Node config
+            'node1_hostname': data.get('node1_hostname'),
+            'node1_ip': data.get('node1_ip'),
+            'node2_hostname': data.get('node2_hostname'),
+            'node2_ip': data.get('node2_ip'),
+            'sites': data.get('sites'),
+
+            # HA parameters
+            'prefer_site_takeover': data.get('prefer_site_takeover'),
+            'automated_register': data.get('automated_register'),
+            'duplicate_primary_timeout': data.get('duplicate_primary_timeout'),
+            'migration_threshold': data.get('migration_threshold'),
+
+            # Resource config
+            'resource_type': data.get('resource_type'),
+            'resource_name': data.get('resource_name'),
+            'topology_resource': data.get('topology_resource'),
+            'vip_resource': data.get('vip_resource'),
+            'secondary_vip_resource': data.get('secondary_vip_resource'),
+
+            # STONITH
+            'stonith_device': data.get('stonith_device'),
+            'stonith_params': data.get('stonith_params'),
+
+            # CIB resource config
+            'resource_config': data.get('resource_config'),
+        }
+
+        install_status = data.get('install_status')
+
+        return results, summary, cluster_info, install_status
+
+    else:
+        # Legacy format - only has results and summary
+        results = data.get('results', [])
+        summary = data.get('summary', {})
+
+        # Build minimal cluster_info
+        cluster_info = {
+            'cluster_name': 'Unknown',
+            'nodes': [],
+            'cluster_type': 'Scale-Up',
+            'data_source': 'Legacy YAML report',
+        }
+
+        return results, summary, cluster_info, None
+
+
 if __name__ == "__main__":
-    # Test/demo mode
+    # Standalone mode - convert YAML to PDF
     import argparse
 
-    parser = argparse.ArgumentParser(description="Generate PDF health check report")
-    parser.add_argument('yaml_report', nargs='?', help='YAML report file to convert')
+    parser = argparse.ArgumentParser(
+        description="Generate PDF health check report from YAML",
+        epilog="""
+Examples:
+  # Generate PDF from unified YAML report
+  python report_generator.py 20260410_120000_mycluster.yaml
+
+  # Generate PDF with custom output path
+  python report_generator.py report.yaml -o custom_report.pdf
+
+  # Generate demo PDF (no YAML input)
+  python report_generator.py --demo
+        """
+    )
+    parser.add_argument('yaml_report', nargs='?', help='YAML report file to convert to PDF')
     parser.add_argument('-o', '--output', help='Output PDF path')
-    parser.add_argument('--cluster', default='Test Cluster', help='Cluster name')
-    parser.add_argument('--nodes', nargs='+', default=['node1', 'node2'], help='Node names')
+    parser.add_argument('--cluster', default='Test Cluster', help='Cluster name (for legacy YAML or demo)')
+    parser.add_argument('--nodes', nargs='+', default=['node1', 'node2'], help='Node names (for legacy YAML or demo)')
+    parser.add_argument('--demo', action='store_true', help='Generate a demo PDF with sample data')
 
     args = parser.parse_args()
 
+    install_status = None
+
     if args.yaml_report:
-        # Load from YAML
-        results, summary = load_yaml_report(args.yaml_report)
-        cluster_info = {
-            'cluster_name': args.cluster,
-            'nodes': args.nodes,
-        }
-    else:
+        # Load from YAML using unified loader
+        results, summary, cluster_info, install_status = load_unified_yaml_report(args.yaml_report)
+
+        # Override cluster name and nodes if provided via CLI
+        if args.cluster != 'Test Cluster':
+            cluster_info['cluster_name'] = args.cluster
+        if args.nodes != ['node1', 'node2']:
+            cluster_info['nodes'] = args.nodes
+
+        print(f"Loaded report from: {args.yaml_report}")
+        print(f"  Cluster: {cluster_info.get('cluster_name', 'Unknown')}")
+        print(f"  Data source: {cluster_info.get('data_source', 'Unknown')}")
+        print(f"  Checks: {summary.get('total', 0)} total, {summary.get('passed', 0)} passed, {summary.get('failed', 0)} failed")
+
+    elif args.demo:
         # Demo data
         results = [
             {'check_id': 'CHK_NODE_STATUS', 'description': 'Verify all cluster nodes are online',
@@ -588,7 +1085,14 @@ if __name__ == "__main__":
             'cluster_name': args.cluster,
             'nodes': args.nodes,
             'cluster_type': 'Scale-Up',
+            'data_source': 'Demo data',
         }
+        print("Generating demo PDF report...")
 
-    output = generate_health_check_report(results, summary, cluster_info, args.output)
+    else:
+        parser.print_help()
+        print("\nError: Please provide a YAML report file or use --demo")
+        exit(1)
+
+    output = generate_health_check_report(results, summary, cluster_info, args.output, install_status)
     print(f"PDF report generated: {output}")

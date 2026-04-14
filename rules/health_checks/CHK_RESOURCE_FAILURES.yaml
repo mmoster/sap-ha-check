@@ -14,7 +14,10 @@ source_definitions:
     else
       echo "NO_FAILURES"
     fi
-  sos_path: "sos_commands/pacemaker/crm_mon_-1_-Arf"
+  sos_path: "sos_commands/pacemaker/crm_mon_-1*"
+  # Fallback: run pcs -f cib.xml locally when cluster was stopped
+  sos_cmd: "pcs -f {file} status --full 2>/dev/null | grep -iE 'FAILED|fail-count=[1-9]|Failed Actions' || echo 'NO_FAILURES'"
+  sos_cmd_file: "sos_commands/pacemaker/crm_report/*/cib.xml"
 
 parser:
   type: regex

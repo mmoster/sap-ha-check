@@ -36,7 +36,7 @@ SCRIPT_DIR = Path(__file__).parent.resolve()
 sys.path.insert(0, str(SCRIPT_DIR / "access"))
 sys.path.insert(0, str(SCRIPT_DIR / "rules"))
 
-from discover_access import AccessDiscovery, show_config, delete_config  # noqa: E402
+from discover_access import AccessDiscovery, show_config, delete_config, export_ansible_vars, fetch_sosreports  # noqa: E402
 from engine import RulesEngine, CheckResult, CheckStatus, Severity  # noqa: E402
 
 # Import lib modules
@@ -46,6 +46,8 @@ from lib import (  # noqa: E402
     print_suggestions,
     interactive_startup,
     run_usage_scan,
+    ClusterReportData,
+    REPORT_VERSION,
 )
 
 
@@ -75,12 +77,205 @@ class ClusterHealthCheck:
         self.local_mode = local_mode
         self.strict_mode = strict_mode
         self.generate_pdf = generate_pdf
+        self.majority_makers = []  # Nodes that are majority makers (Scale-Out)
 
     def _debug_print(self, message: str):
         """Print debug message if debug mode is enabled."""
         if self.debug:
             timestamp = datetime.now().strftime('%H:%M:%S.%f')[:-3]
             print(f"  [DEBUG {timestamp}] {message}")
+
+    def _build_cluster_report_data(self, cluster_name: str = None,
+                                    summary: dict = None) -> ClusterReportData:
+        """
+        Build unified ClusterReportData from current state.
+
+        This is the single source of truth for all report data, consolidating
+        information from:
+        - AccessConfig (cluster configuration)
+        - RulesEngine (data source info, resource config from cib.xml)
+        - check_results (health check results)
+        - check_install_status (installation status)
+
+        Args:
+            cluster_name: Override cluster name (auto-detected if None)
+            summary: Pre-computed summary dict (computed if None)
+
+        Returns:
+            ClusterReportData instance with all fields populated
+        """
+        # Auto-detect cluster name if not provided
+        if cluster_name is None:
+            cluster_name = 'unknown'
+            if self.access_config and hasattr(self.access_config, 'clusters'):
+                # Find cluster name from nodes
+                for cname, cinfo in self.access_config.clusters.items():
+                    nodes = cinfo.get('nodes', [])
+                    if any(n in (self.access_config.nodes or {}) for n in nodes):
+                        cluster_name = cname
+                        break
+                # Fallback: use most recently discovered cluster
+                if cluster_name == 'unknown':
+                    latest = None
+                    for cname, cinfo in self.access_config.clusters.items():
+                        discovered_at = cinfo.get('discovered_at', '')
+                        if latest is None or discovered_at > latest:
+                            latest = discovered_at
+                            cluster_name = cname
+
+        # Get cluster configuration from access_config
+        cluster_config = {}
+        if self.access_config and hasattr(self.access_config, 'clusters'):
+            cluster_config = self.access_config.clusters.get(cluster_name, {})
+
+        # Get node list
+        node_list = list(self.access_config.nodes.keys()) if self.access_config else []
+
+        # Determine cluster type from CHK_CLUSTER_TYPE result (uses clone-max)
+        cluster_type = 'Scale-Up'  # Default
+        cluster_type_result = next(
+            (r for r in self.check_results if r.check_id == 'CHK_CLUSTER_TYPE'),
+            None
+        )
+        if cluster_type_result and cluster_type_result.details:
+            cluster_type = cluster_type_result.details.get('cluster_type', 'Scale-Up')
+        else:
+            # Fallback if no check result - use clone-max from resource config
+            clone_max = cluster_config.get('clone_max', 2)
+            try:
+                clone_max = int(clone_max) if clone_max else 2
+            except (ValueError, TypeError):
+                clone_max = 2
+            if clone_max > 2:
+                cluster_type = 'Scale-Out'
+
+        # Get data source info from rules engine
+        data_source_info = {}
+        if self.rules_engine:
+            data_source_info = self.rules_engine.get_data_source_info()
+
+        # Get resource configuration from cib.xml
+        resource_config = {}
+        majority_makers = list(self.majority_makers) if self.majority_makers else []
+        if self.rules_engine:
+            resource_config = self.rules_engine.get_cluster_resources_config()
+            # Extract majority maker from resource config if not already set
+            if resource_config.get('available') and resource_config.get('majority_maker'):
+                if resource_config['majority_maker'] not in majority_makers:
+                    majority_makers.append(resource_config['majority_maker'])
+
+        # Build results list from check_results
+        results_dict = [
+            {
+                'check_id': r.check_id,
+                'node': r.node,
+                'status': r.status.value,
+                'severity': r.severity.value,
+                'message': r.message,
+                'description': r.description
+            }
+            for r in self.check_results
+        ]
+
+        # Compute summary if not provided
+        if summary is None:
+            total = len(self.check_results)
+            passed = sum(1 for r in self.check_results if r.status == CheckStatus.PASSED)
+            failed = sum(1 for r in self.check_results if r.status == CheckStatus.FAILED)
+            skipped = sum(1 for r in self.check_results if r.status == CheckStatus.SKIPPED)
+            errors = sum(1 for r in self.check_results if r.status == CheckStatus.ERROR)
+            critical_failures = [r for r in self.check_results
+                                 if r.status == CheckStatus.FAILED and r.severity == Severity.CRITICAL]
+            warnings = [r for r in self.check_results
+                        if r.status == CheckStatus.FAILED and r.severity == Severity.WARNING]
+            summary = {
+                'total': total,
+                'passed': passed,
+                'failed': failed,
+                'skipped': skipped,
+                'errors': errors,
+                'critical_count': len(critical_failures),
+                'warning_count': len(warnings)
+            }
+
+        # Get installation status
+        install_status = None
+        try:
+            install_status = self.check_install_status()
+        except Exception:
+            pass
+
+        # Determine if cluster is running
+        cluster_running = True
+        if install_status:
+            has_config = install_status.get('corosync_conf_exists') or install_status.get('cib_exists')
+            pacemaker_running = install_status.get('pacemaker_running')
+            if has_config and not pacemaker_running:
+                cluster_running = False
+
+        # Build the unified report data
+        report_data = ClusterReportData(
+            # Metadata
+            version=REPORT_VERSION,
+            timestamp=datetime.now().isoformat(),
+
+            # Data source
+            data_source=data_source_info.get('description', 'Unknown'),
+            access_method=data_source_info.get('primary_method', 'unknown'),
+            used_cib_xml=data_source_info.get('used_cib_xml', False),
+            cluster_running=cluster_running,
+
+            # Cluster info
+            cluster_name=cluster_name,
+            cluster_type=cluster_type,
+            nodes=node_list,
+            majority_makers=majority_makers,
+
+            # SAP HANA config
+            sid=cluster_config.get('sid'),
+            instance_number=cluster_config.get('instance_number'),
+            virtual_ip=cluster_config.get('virtual_ip'),
+            secondary_vip=cluster_config.get('secondary_vip'),
+            replication_mode=cluster_config.get('replication_mode'),
+            operation_mode=cluster_config.get('operation_mode'),
+            secondary_read=cluster_config.get('secondary_read'),
+
+            # Node config
+            node1_hostname=cluster_config.get('node1_hostname'),
+            node1_ip=cluster_config.get('node1_ip'),
+            node2_hostname=cluster_config.get('node2_hostname'),
+            node2_ip=cluster_config.get('node2_ip'),
+            sites=cluster_config.get('sites'),
+
+            # HA parameters
+            prefer_site_takeover=cluster_config.get('prefer_site_takeover'),
+            automated_register=cluster_config.get('automated_register'),
+            duplicate_primary_timeout=cluster_config.get('duplicate_primary_timeout'),
+            migration_threshold=cluster_config.get('migration_threshold'),
+
+            # Resource config
+            resource_type=cluster_config.get('resource_type'),
+            resource_name=cluster_config.get('resource_name'),
+            topology_resource=cluster_config.get('topology_resource'),
+            vip_resource=cluster_config.get('vip_resource'),
+            secondary_vip_resource=cluster_config.get('secondary_vip_resource'),
+
+            # STONITH
+            stonith_device=cluster_config.get('stonith_device'),
+            stonith_params=cluster_config.get('stonith_params'),
+
+            # CIB resource config
+            resource_config=resource_config if resource_config.get('available') else {},
+
+            # Installation status
+            install_status=install_status or {},
+
+            # Results
+            results=results_dict,
+            summary=summary,
+        )
+
+        return report_data
 
     def check_install_status_sosreport(self, node: str, sosreport_path: str) -> dict:
         """
@@ -101,6 +296,7 @@ class ClusterHealthCheck:
             # Phase 2: Cluster Creation
             'nodes_authenticated': None,
             'corosync_conf_exists': None,
+            'cib_exists': None,
             'cluster_configured': None,
             'corosync_running': None,
             'pacemaker_running': None,
@@ -124,6 +320,10 @@ class ClusterHealthCheck:
         # Check if corosync.conf exists
         corosync_conf = sos_path / "etc/corosync/corosync.conf"
         status['corosync_conf_exists'] = corosync_conf.exists()
+
+        # Check if cib.xml exists (cluster configuration exists)
+        cib_xml = sos_path / "var/lib/pacemaker/cib/cib.xml"
+        status['cib_exists'] = cib_xml.exists()
 
         # Extract cluster name from corosync.conf
         if corosync_conf.exists():
@@ -269,6 +469,7 @@ class ClusterHealthCheck:
             # Phase 2: Cluster Creation
             'nodes_authenticated': None,
             'corosync_conf_exists': None,
+            'cib_exists': None,
             'cluster_configured': None,
             'corosync_running': None,
             'pacemaker_running': None,
@@ -413,6 +614,13 @@ class ClusterHealthCheck:
             node, method, user
         )
         status['corosync_conf_exists'] = success and 'exists' in output
+
+        # Check if cib.xml exists (cluster configuration exists - even if not running)
+        success, output = self._execute_check_cmd(
+            "test -f /var/lib/pacemaker/cib/cib.xml && echo 'exists'",
+            node, method, user
+        )
+        status['cib_exists'] = success and 'exists' in output
 
         # Check cluster configured and get cluster name
         success, output = self._execute_check_cmd(
@@ -567,6 +775,7 @@ class ClusterHealthCheck:
         print(f"    {status_icon(status['nodes_authenticated'])} Nodes authenticated (pcs host auth)")
         cluster_info = f" ({status['cluster_name']})" if status['cluster_name'] else ""
         print(f"    {status_icon(status.get('corosync_conf_exists'))} Cluster created (corosync.conf)")
+        print(f"    {status_icon(status.get('cib_exists'))} Cluster configured (cib.xml)")
         print(f"    {status_icon(status['cluster_configured'])} Cluster running{cluster_info}")
         print(f"    {status_icon(status['corosync_running'])} Corosync running (messaging)")
         print(f"    {status_icon(status['pacemaker_running'])} Pacemaker running (resource mgr)")
@@ -583,8 +792,8 @@ class ClusterHealthCheck:
         if status.get('offline_nodes'):
             print(f"        Offline: {', '.join(status['offline_nodes'])}")
 
-        # Warning if cluster is created but not running
-        if status.get('corosync_conf_exists') and not status['pacemaker_running']:
+        # Warning if cluster is configured but not running
+        if (status.get('corosync_conf_exists') or status.get('cib_exists')) and not status['pacemaker_running']:
             print("""
   ╔═════════════════════════════════════════════════════════════╗
   ║  [!] CLUSTER NOT RUNNING                                    ║
@@ -1102,12 +1311,94 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
             self._debug_print(f"Nodes with HANA: {nodes_with_hana}, Nodes without: {nodes_without_hana}")
             self._debug_print(f"HANA installed: {hana_installed}")
 
+            # Check cluster type to determine if majority makers are applicable
+            # Majority makers are ONLY used in Scale-Out clusters (clone-max > 2)
+            # Scale-Up clusters with extra nodes (app servers) should NOT have majority makers
+            is_scale_out = False
+            clone_max = 2
+            cluster_type_result = next(
+                (r for r in self.check_results if r.check_id == 'CHK_CLUSTER_TYPE'),
+                None
+            )
+            if cluster_type_result and cluster_type_result.details:
+                clone_max = cluster_type_result.details.get('clone_max', 2)
+                cluster_type = cluster_type_result.details.get('cluster_type', 'Unknown')
+                is_scale_out = cluster_type == 'Scale-Out' and clone_max > 2
+                self._debug_print(f"Cluster type: {cluster_type}, clone-max: {clone_max}, is_scale_out: {is_scale_out}")
+
+            # Check for majority maker nodes ONLY for Scale-Out clusters
+            # This must happen before the early return for "no HANA installed"
+            majority_makers = []
+            if nodes_without_hana and is_scale_out:
+                for node_name in nodes_without_hana:
+                    node_info = nodes.get(node_name, {})
+                    method = node_info.get('preferred_method', 'ssh')
+                    user = node_info.get('ssh_user', 'root')
+                    sos_path = node_info.get('sosreport_path')
+
+                    # Check if resource agent is installed (indicates majority maker)
+                    # resource-agents-sap-hana-scaleout: Scale-Out specific
+                    has_resource_agent = False
+                    agent_name = ""
+
+                    if method == 'sosreport' and sos_path:
+                        # Check installed-rpms file in sosreport
+                        # Majority maker has resource-agents-sap-hana-scaleout but NOT sap-hana-ha
+                        installed_rpms = Path(sos_path) / 'installed-rpms'
+                        if installed_rpms.exists():
+                            try:
+                                rpms_content = installed_rpms.read_text()
+                                has_sap_hana_ha = 'sap-hana-ha' in rpms_content
+                                has_scaleout_agent = 'resource-agents-sap-hana-scaleout' in rpms_content
+
+                                # Majority maker: has scaleout agent but NOT sap-hana-ha
+                                if has_scaleout_agent and not has_sap_hana_ha:
+                                    has_resource_agent = True
+                                    for line in rpms_content.split('\n'):
+                                        if 'resource-agents-sap-hana-scaleout' in line:
+                                            agent_name = line.split()[0] if line.split() else 'resource-agents-sap-hana-scaleout'
+                                            break
+                            except Exception:
+                                pass
+                    else:
+                        # Use live command - only check for scaleout agent on Scale-Out clusters
+                        check_cmd = "rpm -q resource-agents-sap-hana-scaleout 2>/dev/null | grep -v 'not installed' | head -1"
+                        success, output = self.rules_engine._execute_command(check_cmd, node_name, method, user)
+                        if success and output.strip():
+                            has_resource_agent = True
+                            agent_name = output.strip()
+
+                    if has_resource_agent:
+                        majority_makers.append(node_name)
+                        self._debug_print(f"Node {node_name} is a majority maker (has resource agent: {agent_name})")
+
+                        # Update the CHK_HANA_INSTALLED result for this majority maker to PASSED
+                        for result in self.check_results:
+                            if result.check_id == 'CHK_HANA_INSTALLED' and result.node == node_name:
+                                result.status = CheckStatus.PASSED
+                                result.message = "Majority maker node - HANA not required (resource agent installed)"
+                                break
+
+                if majority_makers:
+                    self.majority_makers = majority_makers  # Store for PDF report
+                    print(f"[OK] Majority maker node(s) detected: {', '.join(majority_makers)}")
+                    # Update nodes_without_hana to exclude majority makers for reporting
+                    non_majority_without_hana = [n for n in nodes_without_hana if n not in majority_makers]
+                    if non_majority_without_hana:
+                        print(f"[INFO] Nodes without HANA: {', '.join(non_majority_without_hana)}")
+                else:
+                    print(f"[INFO] Nodes without HANA (not majority makers): {', '.join(nodes_without_hana)}")
+            elif nodes_without_hana:
+                # Scale-Up cluster with extra nodes - these are NOT majority makers
+                print(f"[INFO] Nodes without HANA (Scale-Up cluster, not majority makers): {', '.join(nodes_without_hana)}")
+
+            # After majority maker check, if no HANA installed, skip SAP checks
             if not hana_installed:
                 print("[SKIP] SAP HANA not installed - skipping HANA-specific checks")
                 # Add skipped results for other SAP checks
-                sap_checks = ['CHK_HANA_SR_STATUS', 'CHK_REPLICATION_MODE', 'CHK_HADR_HOOKS',
-                             'CHK_HANA_AUTOSTART', 'CHK_SYSTEMD_SAP', 'CHK_SITE_ROLES']
-                for check_id in sap_checks:
+                sap_checks_skip = ['CHK_HANA_SR_STATUS', 'CHK_REPLICATION_MODE', 'CHK_HADR_HOOKS',
+                                   'CHK_HANA_AUTOSTART', 'CHK_SYSTEMD_SAP', 'CHK_SITE_ROLES']
+                for check_id in sap_checks_skip:
                     rule = next((r for r in self.rules_engine.rules if r.check_id == check_id), None)
                     if rule:
                         self.check_results.append(CheckResult(
@@ -1119,41 +1410,6 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                             node="all"
                         ))
                 return True
-
-            # Check for majority maker nodes (have resource agent but no HANA)
-            majority_makers = []
-            if nodes_without_hana:
-                for node_name in nodes_without_hana:
-                    node_info = nodes.get(node_name, {})
-                    method = node_info.get('preferred_method', 'ssh')
-                    user = node_info.get('ssh_user', 'root')
-
-                    # Check if resource agent is installed (indicates majority maker)
-                    # sap-hana-ha: RHEL 9/10 (Scale-Up & Scale-Out), required for RHEL 10
-                    # resource-agents-sap-hana: legacy Scale-Up (RHEL 8/9)
-                    # resource-agents-sap-hana-scaleout: legacy Scale-Out (RHEL 8/9)
-                    check_cmd = "rpm -q sap-hana-ha resource-agents-sap-hana resource-agents-sap-hana-scaleout 2>/dev/null | grep -v 'not installed' | head -1"
-                    success, output = self.rules_engine._execute_command(check_cmd, node_name, method, user)
-
-                    if success and output.strip():
-                        majority_makers.append(node_name)
-                        self._debug_print(f"Node {node_name} is a majority maker (has resource agent: {output.strip()})")
-
-                        # Update the CHK_HANA_INSTALLED result for this majority maker to PASSED
-                        for result in self.check_results:
-                            if result.check_id == 'CHK_HANA_INSTALLED' and result.node == node_name:
-                                result.status = CheckStatus.PASSED
-                                result.message = "Majority maker node - HANA not required (resource agent installed)"
-                                break
-
-                if majority_makers:
-                    print(f"[OK] Majority maker node(s) detected: {', '.join(majority_makers)}")
-                    # Update nodes_without_hana to exclude majority makers for reporting
-                    non_majority_without_hana = [n for n in nodes_without_hana if n not in majority_makers]
-                    if non_majority_without_hana:
-                        print(f"[INFO] Nodes without HANA: {', '.join(non_majority_without_hana)}")
-                else:
-                    print(f"[INFO] Nodes without HANA (not majority makers): {', '.join(nodes_without_hana)}")
 
         # HANA is installed on some nodes, run SAP checks only on those nodes
         sap_checks = ['CHK_HANA_SR_STATUS', 'CHK_REPLICATION_MODE', 'CHK_HADR_HOOKS',
@@ -1231,57 +1487,37 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
             if len(warnings) > 10:
                 print(f"    ... and {len(warnings) - 10} more warnings")
 
-        # Determine cluster name for report filename
-        # Find the cluster that contains the nodes we checked
-        cluster_name = 'unknown'
-        if self.access_config and self.access_config.clusters:
-            current_nodes = set(self.access_config.nodes.keys())
-            for cname, cinfo in self.access_config.clusters.items():
-                cluster_nodes = set(cinfo.get('nodes', []))
-                # If current nodes match or are subset of cluster nodes, use this cluster
-                if current_nodes and current_nodes.issubset(cluster_nodes):
-                    cluster_name = cname
-                    break
-            # Fallback: use most recently discovered cluster
-            if cluster_name == 'unknown':
-                latest = None
-                for cname, cinfo in self.access_config.clusters.items():
-                    discovered_at = cinfo.get('discovered_at', '')
-                    if latest is None or discovered_at > latest:
-                        latest = discovered_at
-                        cluster_name = cname
-        # Sanitize cluster name for filename (replace spaces and special chars)
-        cluster_name_safe = "".join(c if c.isalnum() or c in '-_' else '_' for c in cluster_name)
-
-        # Save report to file with format: YYYYMMDD_HHMMSS_clustername.yaml
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        report_file = self.config_dir / f"{timestamp}_{cluster_name_safe}.yaml"
-        report_data = {
-            'timestamp': datetime.now().isoformat(),
-            'summary': {
-                'total': total,
-                'passed': passed,
-                'failed': failed,
-                'skipped': skipped,
-                'errors': errors,
-                'critical_count': len(critical_failures),
-                'warning_count': len(warnings)
-            },
-            'results': [
-                {
-                    'check_id': r.check_id,
-                    'node': r.node,
-                    'status': r.status.value,
-                    'severity': r.severity.value,
-                    'message': r.message,
-                    'description': r.description
-                }
-                for r in self.check_results
-            ]
+        # Build unified report data using single source of truth
+        # Use pre-computed summary to avoid recalculating
+        summary = {
+            'total': total,
+            'passed': passed,
+            'failed': failed,
+            'skipped': skipped,
+            'errors': errors,
+            'critical_count': len(critical_failures),
+            'warning_count': len(warnings)
         }
 
+        # Use cluster_name override if explicitly set
+        cluster_name_override = self.cluster_name if self.cluster_name else None
+        report_data = self._build_cluster_report_data(
+            cluster_name=cluster_name_override,
+            summary=summary
+        )
+
+        # Sanitize cluster name for filename
+        cluster_name = report_data.cluster_name
+        cluster_name_safe = "".join(c if c.isalnum() or c in '-_' else '_' for c in cluster_name)
+
+        # Save unified report to YAML with format: YYYYMMDD_HHMMSS_clustername.yaml
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        report_file = self.config_dir / f"{timestamp}_{cluster_name_safe}.yaml"
+
+        # Serialize unified data to YAML
+        yaml_data = report_data.to_dict()
         with open(report_file, 'w') as f:
-            yaml.dump(report_data, f, default_flow_style=False)
+            yaml.dump(yaml_data, f, default_flow_style=False, sort_keys=False)
 
         print(f"\n  Report saved: {report_file}")
 
@@ -1290,31 +1526,11 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
             try:
                 from report_generator import generate_health_check_report
 
-                # Gather cluster info (reuse cluster_name from above)
-                cluster_info = {
-                    'cluster_name': cluster_name,
-                    'nodes': list(self.access_config.nodes.keys()) if self.access_config else [],
-                    'cluster_type': 'Scale-Up',
-                }
-
-                # Convert results to dict format
-                results_dict = [
-                    {
-                        'check_id': r.check_id,
-                        'node': r.node,
-                        'status': r.status.value,
-                        'severity': r.severity.value,
-                        'message': r.message,
-                        'description': r.description
-                    }
-                    for r in self.check_results
-                ]
-
-                # Get installation status for PDF
-                try:
-                    install_status = self.check_install_status()
-                except Exception:
-                    install_status = None
+                # Use unified data for PDF generation
+                cluster_info = report_data.to_cluster_info()
+                results_dict = report_data.get_results_list()
+                summary_dict = report_data.get_summary_dict()
+                install_status = report_data.get_install_status()
 
                 # PDF filename format: YYYYMMDD_health_check_report_clustername_HHMM.pdf
                 pdf_timestamp = datetime.now().strftime('%Y%m%d')
@@ -1322,10 +1538,10 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                 pdf_file = self.config_dir / f"{pdf_timestamp}_health_check_report_{cluster_name_safe}_{pdf_time}.pdf"
                 generate_health_check_report(
                     results_dict,
-                    report_data['summary'],
+                    summary_dict,
                     cluster_info,
                     str(pdf_file),
-                    install_status
+                    install_status if install_status else None
                 )
                 print(f"  PDF report: {pdf_file}")
             except ImportError:
@@ -1438,6 +1654,13 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
             print("\nHealth Check Results:")
             print(f"  PASSED:  {len(passed):3d}  FAILED: {len(failed_checks):3d}  SKIPPED: {len(skipped):3d}  ERROR: {len(errors):3d}")
 
+            # Show data source information
+            if self.rules_engine:
+                data_source_info = self.rules_engine.get_data_source_info()
+                data_source = data_source_info.get('description', '')
+                if data_source:
+                    print(f"\n  Data Source: {data_source}")
+
             # Check for installation issues
             # Essential commands for RHEL clusters
             essential_commands = ['pacemaker', 'corosync', 'pcs', 'crm_mon']  # noqa: F841
@@ -1499,52 +1722,23 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                     try:
                         from report_generator import generate_health_check_report, is_pdf_available
                         if is_pdf_available():
-                            # Get cluster name
-                            cluster_name = self.cluster_name or 'unknown'
-                            if self.access_config and hasattr(self.access_config, 'clusters'):
-                                clusters = self.access_config.clusters or {}
-                                if clusters:
-                                    cluster_name = list(clusters.keys())[0]
+                            # Use unified data model for PDF generation
+                            report_data = self._build_cluster_report_data()
+                            cluster_name = report_data.cluster_name
                             cluster_name_safe = re.sub(r'[^\w\-]', '_', cluster_name)
-
-                            # Prepare report data
-                            cluster_info = {
-                                'cluster_name': cluster_name,
-                                'nodes': list(self.access_config.nodes.keys()) if self.access_config else [],
-                                'cluster_type': 'Scale-Up',
-                            }
-                            results_dict = [
-                                {
-                                    'check_id': r.check_id,
-                                    'node': r.node,
-                                    'status': r.status.value,
-                                    'severity': r.severity.value,
-                                    'message': r.message,
-                                    'description': r.description
-                                }
-                                for r in self.check_results
-                            ]
-                            summary = {
-                                'total': len(self.check_results),
-                                'passed': len(passed),
-                                'failed': 0,
-                                'skipped': len(skipped),
-                                'error': len(errors),
-                                'critical_count': 0,
-                                'warning_count': 0,
-                            }
 
                             # Generate PDF with default name
                             pdf_timestamp = datetime.now().strftime('%Y%m%d')
                             pdf_time = datetime.now().strftime('%H%M')
                             pdf_file = self.config_dir / f"{pdf_timestamp}_health_check_report_{cluster_name_safe}_{pdf_time}.pdf"
 
-                            try:
-                                install_status = self.check_install_status()
-                            except Exception:
-                                install_status = None
-
-                            generate_health_check_report(results_dict, summary, cluster_info, str(pdf_file), install_status)
+                            generate_health_check_report(
+                                report_data.get_results_list(),
+                                report_data.get_summary_dict(),
+                                report_data.to_cluster_info(),
+                                str(pdf_file),
+                                report_data.get_install_status() or None
+                            )
                             print(f"\n  PDF report saved: {pdf_file}")
                     except ImportError:
                         pass  # fpdf2 not installed, skip silently on success
@@ -1842,11 +2036,11 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                 # Many errors with packages installed - check if cluster exists
                 try:
                     install_status = self.check_install_status()
-                    if not install_status.get('corosync_conf_exists'):
-                        # corosync.conf doesn't exist - cluster not created (pcs cluster setup not run)
+                    if not install_status.get('corosync_conf_exists') and not install_status.get('cib_exists'):
+                        # Neither corosync.conf nor cib.xml exist - cluster not created
                         cluster_not_created = True
                     elif not install_status.get('pacemaker_running'):
-                        # corosync.conf exists but cluster not running
+                        # Cluster config exists (corosync.conf or cib.xml) but not running
                         cluster_not_running = True
                 except Exception:
                     # Fallback - assume cluster might not be running
@@ -1991,7 +2185,7 @@ Examples:
     )
     parser.add_argument(
         '--sosreport-dir', '-s',
-        help='Directory containing SOSreport archives/directories'
+        help='Directory containing SOSreport archives/directories (default: ./sosreports)'
     )
     parser.add_argument(
         '--group', '-g',
@@ -2003,7 +2197,7 @@ Examples:
     )
     parser.add_argument(
         '--config-dir', '-c',
-        help='Directory to store configuration (default: script directory)'
+        help='Directory to store configuration (default: ./)'
     )
 
     # Actions
@@ -2026,6 +2220,18 @@ Examples:
         help='Delete report files (keeps node access config)'
     )
     parser.add_argument(
+        '--export-ansible', '-E',
+        nargs='+',
+        metavar=('CLUSTER', 'OUTPUT_FILE'),
+        help='Export cluster config as Ansible group_vars YAML. Usage: --export-ansible CLUSTER [output.yml]'
+    )
+    parser.add_argument(
+        '--fetch-sosreports', '-F',
+        nargs='*',
+        metavar='CLUSTER_OR_NODE',
+        help='Fetch latest sosreports from cluster nodes via SCP (default output: ./sosreports/). Usage: -F [CLUSTER|node1 node2...]'
+    )
+    parser.add_argument(
         '--force', '-f',
         action='store_true',
         help='Force rediscovery (ignore existing config)'
@@ -2042,7 +2248,7 @@ Examples:
     # Rules
     parser.add_argument(
         '--rules-path', '-r',
-        help='Path to CHK_*.yaml rules directory (default: cluster_health_check rules)'
+        help='Path to CHK_*.yaml rules directory (default: ./rules/health_checks)'
     )
     parser.add_argument(
         '--list-rules', '-L',
@@ -2221,7 +2427,7 @@ Examples:
             pass  # Silently ignore any errors in update check
 
     # Check for updates (skip if running non-interactively or with certain flags)
-    if sys.stdin.isatty() and not any([args.show_config, args.list_rules, args.guide, args.install, args.no_update_check]):
+    if sys.stdin.isatty() and not any([args.show_config, args.list_rules, args.guide, args.install, args.no_update_check, args.export_ansible, args.fetch_sosreports is not None]):
         check_for_updates()
 
     # Handle usage/scan action (-u)
@@ -2367,6 +2573,50 @@ Examples:
     config_dir = Path(args.config_dir) if args.config_dir else SCRIPT_DIR
     config_path = config_dir / AccessDiscovery.CONFIG_FILE
 
+    # Handle export-ansible action (before interactive mode)
+    if args.export_ansible:
+        cluster_name = args.export_ansible[0]
+        output_file = args.export_ansible[1] if len(args.export_ansible) > 1 else None
+        success = export_ansible_vars(config_path, cluster_name, output_file)
+        sys.exit(0 if success else 1)
+
+    # Handle fetch-sosreports action
+    if args.fetch_sosreports is not None:
+        # Check what was provided: cluster name or node names
+        fetch_args = args.fetch_sosreports
+
+        if not fetch_args:
+            # No arguments - use cluster from -C if provided
+            if args.cluster:
+                downloaded = fetch_sosreports(config_path, cluster_name=args.cluster)
+            else:
+                print("[ERROR] Please specify a cluster name or node names.")
+                print("Usage: --fetch-sosreports CLUSTER")
+                print("       --fetch-sosreports node1 node2 ...")
+                print("       -C CLUSTER --fetch-sosreports")
+                sys.exit(1)
+        elif len(fetch_args) == 1:
+            # Single argument - check if it's a cluster name or a node
+            arg = fetch_args[0]
+            # Load config to check if it's a cluster name
+            if config_path.exists():
+                with open(config_path, 'r') as f:
+                    config = yaml.safe_load(f)
+                clusters = config.get('clusters', {})
+                if arg in clusters:
+                    downloaded = fetch_sosreports(config_path, cluster_name=arg)
+                else:
+                    # Treat as node name
+                    downloaded = fetch_sosreports(config_path, nodes=[arg])
+            else:
+                # No config, treat as node name
+                downloaded = fetch_sosreports(config_path, nodes=[arg])
+        else:
+            # Multiple arguments - treat as node names
+            downloaded = fetch_sosreports(config_path, nodes=fetch_args)
+
+        sys.exit(0 if downloaded else 1)
+
     # Interactive mode: if no arguments provided, show intro and ask user
     local_mode = args.local
     interactive_hosts = None
@@ -2375,7 +2625,9 @@ Examples:
                           not args.sosreport_dir and not args.cluster and
                           not args.local and not args.access_only and
                           not args.show_config and not args.delete_reports and
-                          not args.list_rules and not args.force)
+                          not args.list_rules and not args.force and
+                          not args.export_ansible and
+                          args.fetch_sosreports is None)
 
     if no_input_specified:
         # Run interactive startup
@@ -2472,10 +2724,11 @@ Examples:
         print("  [4] Show configuration")
         print("  [5] Save PDF report and exit")
         print("  [6] Show suggestions")
+        print("  [7] Reset configuration (delete cached discovery)")
         print("  [q] Quit")
         print("-" * 63)
         try:
-            choice = input("  Enter choice [1-6/q] (default=1): ").strip().lower()
+            choice = input("  Enter choice [1-7/q] (default=1): ").strip().lower()
             return choice if choice else '1'  # Default to installation status
         except (EOFError, KeyboardInterrupt):
             return 'q'
@@ -2561,54 +2814,19 @@ Examples:
                         else:
                             pdf_file = health_check.config_dir / default_name
 
-                        # Generate PDF
+                        # Generate PDF using unified data model
                         from report_generator import generate_health_check_report
 
-                        cluster_info = {
-                            'cluster_name': cluster_name,
-                            'nodes': list(health_check.access_config.nodes.keys()) if health_check.access_config else [],
-                            'cluster_type': 'Scale-Up',
-                        }
+                        # Use unified data model for PDF generation
+                        report_data = health_check._build_cluster_report_data()
 
-                        results_dict = [
-                            {
-                                'check_id': r.check_id,
-                                'node': r.node,
-                                'status': r.status.value,
-                                'severity': r.severity.value,
-                                'message': r.message,
-                                'description': r.description
-                            }
-                            for r in health_check.check_results
-                        ]
-
-                        # Calculate summary
-                        from collections import Counter
-                        status_counts = Counter(r.status.value for r in health_check.check_results)
-
-                        # Count critical and warning failures
-                        critical_failures = [r for r in health_check.check_results
-                                           if r.status == CheckStatus.FAILED and r.severity == Severity.CRITICAL]
-                        warnings = [r for r in health_check.check_results
-                                  if r.status == CheckStatus.FAILED and r.severity == Severity.WARNING]
-
-                        summary = {
-                            'total': len(health_check.check_results),
-                            'passed': status_counts.get('PASSED', 0),
-                            'failed': status_counts.get('FAILED', 0),
-                            'skipped': status_counts.get('SKIPPED', 0),
-                            'error': status_counts.get('ERROR', 0),
-                            'critical_count': len(critical_failures),
-                            'warning_count': len(warnings),
-                        }
-
-                        # Get installation status
-                        try:
-                            install_status = health_check.check_install_status()
-                        except Exception:
-                            install_status = None
-
-                        generate_health_check_report(results_dict, summary, cluster_info, str(pdf_file), install_status)
+                        generate_health_check_report(
+                            report_data.get_results_list(),
+                            report_data.get_summary_dict(),
+                            report_data.to_cluster_info(),
+                            str(pdf_file),
+                            report_data.get_install_status() or None
+                        )
                         print(f"\n  PDF report saved: {pdf_file}")
                         print("  Goodbye!")
                         break
@@ -2647,6 +2865,24 @@ Examples:
                             print(f"  Unknown topic: {topic}")
                     except (EOFError, KeyboardInterrupt):
                         pass
+                elif choice == '7' or choice == 'd':
+                    # Reset/delete configuration
+                    config_file = health_check.config_dir / 'cluster_access_config.yaml'
+                    if config_file.exists():
+                        try:
+                            confirm = input("  Delete saved configuration? This will force fresh discovery. [y/N]: ").strip().lower()
+                            if confirm == 'y' or confirm == 'yes':
+                                config_file.unlink()
+                                print("  Configuration deleted.")
+                                print("\n  To rediscover, run:")
+                                print("    ./cluster_health_check.py <hostname>")
+                                print("    ./cluster_health_check.py -s sosreports/")
+                            else:
+                                print("  Cancelled.")
+                        except (EOFError, KeyboardInterrupt):
+                            print("\n  Cancelled.")
+                    else:
+                        print("  No configuration file found.")
                 elif choice == 'q' or choice == 'quit' or choice == 'exit':
                     print("\n  Goodbye!")
                     break

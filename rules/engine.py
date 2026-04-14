@@ -8,12 +8,20 @@ Supports both live command execution and SOSreport parsing.
 
 import os
 import re
+import sys
 import yaml
 import subprocess
 from pathlib import Path
 from typing import List, Dict, Optional, Any, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from enum import Enum
+
+# Add parent directory to path for lib imports
+SCRIPT_DIR = Path(__file__).parent.parent.resolve()
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from lib import CIBParser
 
 # Python 3.6 compatibility for dataclasses
 try:
@@ -100,6 +108,7 @@ class RulesEngine:
     DEFAULT_RULES_PATH = str(Path(__file__).parent / "health_checks")
     CMD_TIMEOUT = 15  # Reduced from 30 to avoid long waits
     MAX_WORKERS = 5
+    CIB_PATH = "/var/lib/pacemaker/cib/cib.xml"
 
     def __init__(self, rules_path: str = None, access_config: dict = None, strict_mode: bool = False):
         self.rules_path = Path(rules_path) if rules_path else Path(self.DEFAULT_RULES_PATH)
@@ -107,6 +116,90 @@ class RulesEngine:
         self.rules: List[RuleDefinition] = []
         self.results: List[CheckResult] = []
         self.strict_mode = strict_mode
+        # Track cluster running state and cib.xml availability per node
+        self._cluster_running: Dict[str, bool] = {}
+        self._cib_available: Dict[str, bool] = {}
+        # Track data source information
+        self._access_methods_used: Dict[str, str] = {}  # node -> method (ssh, sosreport, local, ansible)
+        self._used_cib_xml: bool = False  # True if sos_cmd with cib.xml was used
+
+    def get_data_source_info(self) -> Dict[str, Any]:
+        """Get summary of data sources used for checks.
+
+        Returns dict with:
+        - access_methods: dict of node -> method used
+        - primary_method: most common access method
+        - used_cib_xml: whether cib.xml was parsed (cluster not running)
+        - description: human-readable description of data source
+        """
+        methods = self._access_methods_used
+        if not methods:
+            return {
+                'access_methods': {},
+                'primary_method': 'unknown',
+                'used_cib_xml': False,
+                'description': 'No data collected'
+            }
+
+        # Find most common method
+        method_counts: Dict[str, int] = {}
+        for method in methods.values():
+            method_counts[method] = method_counts.get(method, 0) + 1
+        primary_method = max(method_counts, key=method_counts.get)
+
+        # Build description
+        if primary_method == 'sosreport':
+            if self._used_cib_xml:
+                description = "SOSreport analysis (cluster was stopped - using cib.xml)"
+            else:
+                description = "SOSreport analysis (offline data)"
+        elif primary_method == 'ssh':
+            description = "Live cluster via SSH"
+        elif primary_method == 'local':
+            description = "Local execution on cluster node"
+        elif primary_method == 'ansible':
+            description = "Live cluster via Ansible"
+        else:
+            description = f"Data source: {primary_method}"
+
+        return {
+            'access_methods': methods,
+            'primary_method': primary_method,
+            'used_cib_xml': self._used_cib_xml,
+            'description': description
+        }
+
+    def get_cluster_resources_config(self) -> Dict[str, Any]:
+        """Extract cluster resource configuration for the report.
+
+        Uses the unified CIBParser library to parse cib.xml from either:
+        - SOSreport directory
+        - Live system (if cluster stopped but cib.xml exists)
+
+        Returns dict with report summary from CIBParser.
+        """
+        # Find cib.xml from sosreport or live system
+        nodes = self.access_config.get('nodes', {})
+        parser = None
+
+        # Try SOSreport paths first
+        for node_name, node_info in nodes.items():
+            sos_path = node_info.get('sosreport_path')
+            if sos_path:
+                parser = CIBParser.from_sosreport(sos_path)
+                if parser and parser.is_available():
+                    break
+                parser = None
+
+        # Fall back to live system cib.xml
+        if not parser:
+            parser = CIBParser.from_live_system()
+
+        if not parser or not parser.is_available():
+            return {'available': False}
+
+        # Use unified parser to get report summary
+        return parser.get_report_summary()
 
     def load_rules(self) -> List[RuleDefinition]:
         """Load all CHK_*.yaml rule files."""
@@ -162,19 +255,62 @@ class RulesEngine:
             for r in self.rules
         ]
 
-    def _execute_command(self, cmd: str, node: str = None,
-                        method: str = 'ssh', user: str = None) -> Tuple[bool, str]:
-        """Execute a command locally, via SSH, or via Ansible."""
+    def _check_cluster_status(self, node: str, method: str = 'ssh', user: str = None) -> Tuple[bool, bool]:
+        """
+        Check if cluster is running and if cib.xml exists on a node.
+        Returns (cluster_running, cib_available) tuple.
+        Caches results per node.
+        """
+        if node in self._cluster_running:
+            return self._cluster_running[node], self._cib_available.get(node, False)
+
+        # Check if pacemaker is running
+        cluster_running = False
+        cib_available = False
+
+        check_cmd = "systemctl is-active pacemaker 2>/dev/null"
+        success, output = self._execute_command_raw(check_cmd, node, method, user)
+        # Check for exact 'active' status (not 'inactive')
+        cluster_running = success and output.strip() == 'active'
+
+        # Check if cib.xml exists
+        cib_check_cmd = f"test -f {self.CIB_PATH} && echo 'exists'"
+        success, output = self._execute_command_raw(cib_check_cmd, node, method, user)
+        cib_available = success and 'exists' in output
+
+        self._cluster_running[node] = cluster_running
+        self._cib_available[node] = cib_available
+
+        return cluster_running, cib_available
+
+    def _transform_pcs_for_cib(self, cmd: str) -> str:
+        """
+        Transform pcs commands to use -f cib.xml for offline cluster queries.
+        Only transforms commands that can work with -f flag.
+        """
+        # Commands that support -f flag for offline queries
+        pcs_offline_cmds = ['pcs property', 'pcs resource', 'pcs stonith', 'pcs constraint']
+
+        for pcs_cmd in pcs_offline_cmds:
+            if pcs_cmd in cmd:
+                # Insert -f cib.xml after 'pcs'
+                # Handle: pcs property -> pcs -f /path/cib.xml property
+                # Also handle: pcs resource config -> pcs -f /path/cib.xml resource config
+                transformed = cmd.replace(pcs_cmd, f"pcs -f {self.CIB_PATH} {pcs_cmd.split()[1]}")
+                return transformed
+
+        return None  # Command cannot be transformed
+
+    def _execute_command_raw(self, cmd: str, node: str = None,
+                             method: str = 'ssh', user: str = None) -> Tuple[bool, str]:
+        """Execute a command without fallback logic (internal use)."""
         try:
             if method == 'local':
-                # Execute command locally (when running on the cluster node itself)
                 full_cmd = cmd
             elif node and method == 'ssh':
                 ssh_user = user or os.environ.get('USER', 'root')
-                # Use sudo for non-root users (cluster commands need root)
                 if ssh_user != 'root':
                     cmd = f"sudo {cmd}"
-                # Escape single quotes in command: replace ' with '\''
                 escaped_cmd = cmd.replace("'", "'\"'\"'")
                 full_cmd = f"ssh -o BatchMode=yes -o ConnectTimeout=10 {ssh_user}@{node} '{escaped_cmd}'"
             elif node and method == 'ansible':
@@ -194,7 +330,6 @@ class RulesEngine:
 
             output = result.stdout
             if method == 'ansible' and node:
-                # Parse Ansible output - extract actual command output
                 if '|' in output and '>>' in output:
                     output = output.split('>>', 1)[-1].strip()
 
@@ -205,8 +340,87 @@ class RulesEngine:
         except Exception as e:
             return False, str(e)
 
+    def _execute_command(self, cmd: str, node: str = None,
+                        method: str = 'ssh', user: str = None) -> Tuple[bool, str]:
+        """Execute a command locally, via SSH, or via Ansible.
+        Uses pcs -f cib.xml if cluster is not running but cib.xml exists."""
+        # For pcs commands, pre-check if cluster is running
+        # If not running but cib.xml exists, use -f cib.xml from the start
+        if 'pcs ' in cmd and node:
+            cluster_running, cib_available = self._check_cluster_status(node, method, user)
+
+            if not cluster_running and cib_available:
+                # Transform pcs command to use -f cib.xml
+                transformed_cmd = self._transform_pcs_for_cib(cmd)
+                if transformed_cmd:
+                    return self._execute_command_raw(transformed_cmd, node, method, user)
+
+        # Execute the original command
+        return self._execute_command_raw(cmd, node, method, user)
+
+    def _run_sos_cmd(self, sos_cmd: str, sos_cmd_file: str, node: str, sos_base: str) -> Tuple[bool, str]:
+        """Run a local command using a file from the sosreport.
+
+        This allows running commands like 'pcs -f {file} resource config'
+        where {file} is replaced with the full path to a file in the sosreport.
+        """
+        import glob as glob_module
+        import shutil
+
+        # Check if the command tool exists locally
+        cmd_tool = sos_cmd.split()[0]
+        if not shutil.which(cmd_tool):
+            return False, f"Command '{cmd_tool}' not found locally"
+
+        # Find the file in the sosreport
+        sos_base_path = Path(sos_base)
+
+        # Determine the node's sosreport directory
+        if (sos_base_path / "etc").exists():
+            node_sos = sos_base_path
+        else:
+            node_sos = sos_base_path / node
+            if not node_sos.exists():
+                for item in sos_base_path.iterdir():
+                    if item.is_dir() and node in item.name:
+                        node_sos = item
+                        break
+
+        # Find the file (supports glob patterns)
+        if '*' in sos_cmd_file or '?' in sos_cmd_file:
+            pattern = str(node_sos / sos_cmd_file)
+            matches = glob_module.glob(pattern)
+            if not matches:
+                return False, f"No files matching pattern: {pattern}"
+            file_path = matches[0]
+        else:
+            file_path = str(node_sos / sos_cmd_file)
+            if not Path(file_path).exists():
+                return False, f"File not found: {file_path}"
+
+        # Replace {file} placeholder with actual path
+        full_cmd = sos_cmd.replace('{file}', file_path)
+
+        # Execute locally
+        try:
+            result = subprocess.run(
+                full_cmd,
+                shell=True,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                universal_newlines=True,
+                timeout=self.CMD_TIMEOUT
+            )
+            return result.returncode == 0, result.stdout
+        except subprocess.TimeoutExpired:
+            return False, f"Command timed out after {self.CMD_TIMEOUT}s"
+        except Exception as e:
+            return False, str(e)
+
     def _read_sosreport(self, sos_path: str, node: str, sos_base: str) -> Tuple[bool, str]:
         """Read data from SOSreport directory."""
+        import glob as glob_module
+
         sos_base_path = Path(sos_base)
 
         # If sos_base is a direct sosreport path (contains etc/ dir), use it directly
@@ -221,6 +435,20 @@ class RulesEngine:
                     if item.is_dir() and node in item.name:
                         node_sos = item
                         break
+
+        # Check if sos_path contains glob patterns
+        if '*' in sos_path or '?' in sos_path:
+            # Use glob to find matching files
+            pattern = str(node_sos / sos_path)
+            matches = glob_module.glob(pattern)
+            if matches:
+                # Use first matching file
+                try:
+                    with open(matches[0], 'r') as f:
+                        return True, f.read()
+                except Exception as e:
+                    return False, str(e)
+            return False, f"No files matching pattern: {pattern}"
 
         file_path = node_sos / sos_path
         if file_path.exists():
@@ -285,20 +513,22 @@ class RulesEngine:
         """Detect SAP HANA HA cluster configuration type.
 
         Configuration types:
-        - Scale-Up: Exactly 2 nodes, NO majority maker, uses SAPHana resource
-        - Scale-Out: 4+ HANA nodes (2+ per site) + 1 majority maker, uses SAPHanaController
+        - Scale-Up: 2 HANA instances (1 per site), clone-max=2
+        - Scale-Out: 4+ HANA instances (2+ per site), clone-max>2, has majority maker
 
-        Majority maker node should NOT have sap-hana-ha or resource-agents-sap-hana-scaleout.
-        If it does, location constraints and resource-discovery=never must be configured.
+        IMPORTANT: SAPHanaController can be used for BOTH Scale-Up and Scale-Out.
+        The definitive indicator is clone-max value, NOT the resource agent type.
+        hdbnsutil -sr_state validates actual HANA topology (2+ hosts per site = Scale-Out).
 
-        Scale-Out validation: uses hdbnsutil -sr_state to verify 2+ hosts per site.
+        Majority maker detection: by location constraints (primary) or name pattern.
         """
         # Extract parsed values
         node_count_str = parsed.get('node_count')
-        saphana_resource = parsed.get('saphana_resource')  # SAPHana_* = Scale-Up
-        saphana_controller = parsed.get('saphana_controller')  # SAPHanaController_* = Scale-Out
+        saphana_resource = parsed.get('saphana_resource')  # SAPHana_* = older Scale-Up
+        saphana_controller = parsed.get('saphana_controller')  # SAPHanaController_* = can be either
         majority_maker = parsed.get('majority_maker')
         majority_maker_node = parsed.get('majority_maker_node')  # Actual node name
+        clone_max_str = parsed.get('clone_max')
 
         # hdbnsutil -sr_state output for Scale-Out validation
         site_hosts_count_str = parsed.get('site_hosts_count')  # Number of hosts per site
@@ -311,9 +541,16 @@ class RulesEngine:
         except (ValueError, TypeError):
             node_count = 0
 
-        # Detect based on resource agent type (the definitive indicator)
-        has_saphana = saphana_resource is not None  # Scale-Up uses SAPHana resource
-        has_controller = saphana_controller is not None  # Scale-Out uses SAPHanaController
+        # Get clone-max value (number of HANA nodes)
+        try:
+            clone_max = int(clone_max_str) if clone_max_str else 2
+        except (ValueError, TypeError):
+            clone_max = 2  # Default to Scale-Up assumption
+
+        # Detect based on resource presence
+        has_saphana = saphana_resource is not None
+        has_controller = saphana_controller is not None
+        has_hana_resource = has_saphana or has_controller
         # Majority maker detected by name pattern OR by location constraints
         has_majority_maker = (majority_maker is not None and majority_maker != 'none') or \
                             (majority_maker_node is not None and majority_maker_node != 'none')
@@ -329,10 +566,11 @@ class RulesEngine:
             except (ValueError, TypeError):
                 hdbnsutil_host_count = 0
 
-        # Determine cluster type
+        # Determine cluster type based on clone-max (definitive indicator)
         cluster_type = "Unknown"
         details = {
             'node_count': node_count,
+            'clone_max': clone_max,
             'has_saphana_resource': has_saphana,
             'has_saphana_controller': has_controller,
             'has_majority_maker': has_majority_maker,
@@ -346,16 +584,22 @@ class RulesEngine:
         if node_count == 0:
             cluster_type = "Not detected"
             message = "Could not detect cluster configuration (cluster may not be running)"
-        elif has_controller:
-            # SAPHanaController = Scale-Out (2+ HANA nodes per site + majority maker)
+        elif not has_hana_resource:
+            if node_count == 1:
+                cluster_type = "Single Node"
+                message = "Single node configuration (no HA)"
+            else:
+                cluster_type = "Unknown"
+                message = f"Cluster detected ({node_count} nodes) but no SAP HANA resources found"
+        elif clone_max > 2:
+            # Scale-Out: 4+ HANA instances (2+ per site)
             cluster_type = "Scale-Out"
             if has_majority_maker:
-                # Expected: 4+ HANA nodes + 1 majority maker = 5+ total
                 hana_nodes = node_count - 1  # Subtract majority maker
                 mm_info = f" [{majority_maker_node}]" if majority_maker_node else ""
                 base_message = f"Scale-Out configuration ({hana_nodes} HANA nodes + majority maker{mm_info})"
             else:
-                base_message = f"Scale-Out configuration ({node_count} nodes) - WARNING: no majority maker detected"
+                base_message = f"Scale-Out configuration ({clone_max} HANA nodes) - WARNING: no majority maker detected"
 
             # Validate with hdbnsutil -sr_state
             if hdbnsutil_failed:
@@ -363,29 +607,26 @@ class RulesEngine:
             elif hdbnsutil_confirms_scaleout:
                 message = f"{base_message} - verified: {hdbnsutil_host_count} HANA instances per site"
             elif hdbnsutil_host_count == 1:
-                # WARNING: SAPHanaController detected but only 1 host per site
+                # WARNING: clone-max>2 but only 1 host per site
                 message = f"{base_message} - WARNING: hdbnsutil shows only 1 HANA instance per site (not true Scale-Out)"
                 cluster_type = "Scale-Out (unverified)"
             else:
                 message = base_message
-        elif has_saphana:
-            # SAPHana resource = Scale-Up (exactly 2 nodes, no majority maker)
-            cluster_type = "Scale-Up"
-            if node_count == 2 and not has_majority_maker:
-                message = "Scale-Up configuration (2 nodes, standard HA)"
-            elif has_majority_maker:
-                # Scale-Up should NOT have majority maker
-                message = f"Scale-Up with {node_count} nodes - WARNING: majority maker detected but Scale-Up should be 2 nodes only"
-            else:
-                message = f"Scale-Up configuration ({node_count} nodes) - WARNING: expected 2 nodes"
-        elif node_count == 1:
-            # 1 node - single node (no HA)
-            cluster_type = "Single Node"
-            message = "Single node configuration (no HA)"
+            details['hana_nodes'] = clone_max
         else:
-            # No HANA resources detected but cluster exists
-            cluster_type = "Unknown"
-            message = f"Cluster detected ({node_count} nodes) but no SAP HANA resources found"
+            # Scale-Up: 2 HANA instances (1 per site)
+            # clone-max=2 or not specified
+            cluster_type = "Scale-Up"
+            extra_nodes = node_count - clone_max
+            if extra_nodes > 0:
+                # Extra nodes in cluster (e.g., app servers with ASCS/ERS)
+                message = f"Scale-Up configuration ({clone_max} HANA nodes, {extra_nodes} additional cluster node(s))"
+            elif node_count == 2:
+                message = "Scale-Up configuration (2 nodes, standard HA)"
+            else:
+                message = f"Scale-Up configuration ({node_count} nodes)"
+            details['hana_nodes'] = clone_max
+            details['extra_nodes'] = extra_nodes
 
         details['cluster_type'] = cluster_type
 
@@ -396,6 +637,91 @@ class RulesEngine:
             severity=Severity.INFO,
             message=message,
             details=details,
+            node=node
+        )
+
+    def _validate_clone_max(self, rule: RuleDefinition, parsed: Dict, node: str) -> CheckResult:
+        """Validate clone-max setting for SAPHanaController and SAPHanaTopology.
+
+        For Scale-Out clusters:
+        - clone-max should equal the number of HANA nodes (total nodes - majority makers)
+        - clone-node-max should be 1
+        - interleave should be true
+        """
+        issues = []
+        info = []
+
+        # Get clone-max values
+        controller_clone_max = parsed.get('controller_clone_max')
+        topology_clone_max = parsed.get('topology_clone_max')
+        controller_clone_node_max = parsed.get('controller_clone_node_max')
+        topology_clone_node_max = parsed.get('topology_clone_node_max')
+        controller_interleave = parsed.get('controller_interleave')
+        topology_interleave = parsed.get('topology_interleave')
+        controller_promotable = parsed.get('controller_promotable')
+
+        # Check if we have any data
+        if not controller_clone_max and not topology_clone_max:
+            # No clone config found - might be using pcs -f cib.xml or cluster not running
+            return CheckResult(
+                check_id=rule.check_id,
+                description=rule.description,
+                status=CheckStatus.PASSED,
+                severity=Severity.INFO,
+                message="Clone configuration not available (cluster may be stopped)",
+                details={'parsed': parsed},
+                node=node
+            )
+
+        # Validate clone-node-max = 1
+        if controller_clone_node_max and controller_clone_node_max != '1':
+            issues.append(f"SAPHanaController clone-node-max={controller_clone_node_max} (should be 1)")
+        if topology_clone_node_max and topology_clone_node_max != '1':
+            issues.append(f"SAPHanaTopology clone-node-max={topology_clone_node_max} (should be 1)")
+
+        # Validate interleave = true
+        if controller_interleave and controller_interleave != 'true':
+            issues.append(f"SAPHanaController interleave={controller_interleave} (should be true)")
+        if topology_interleave and topology_interleave != 'true':
+            issues.append(f"SAPHanaTopology interleave={topology_interleave} (should be true)")
+
+        # Validate promotable = true for controller
+        if controller_promotable and controller_promotable != 'true':
+            issues.append(f"SAPHanaController promotable={controller_promotable} (should be true)")
+
+        # Report clone-max values (informational - we can't validate without knowing HANA node count)
+        if controller_clone_max:
+            info.append(f"SAPHanaController clone-max={controller_clone_max}")
+        if topology_clone_max:
+            info.append(f"SAPHanaTopology clone-max={topology_clone_max}")
+
+        # Check if controller and topology have matching clone-max
+        if controller_clone_max and topology_clone_max and controller_clone_max != topology_clone_max:
+            issues.append(f"clone-max mismatch: Controller={controller_clone_max}, Topology={topology_clone_max}")
+
+        if issues:
+            return CheckResult(
+                check_id=rule.check_id,
+                description=rule.description,
+                status=CheckStatus.FAILED,
+                severity=Severity.WARNING,
+                message="; ".join(issues),
+                details={'parsed': parsed, 'issues': issues},
+                node=node
+            )
+
+        # All checks passed
+        message = "Clone configuration valid"
+        if info:
+            message += f" ({'; '.join(info)})"
+
+        return CheckResult(
+            check_id=rule.check_id,
+            description=rule.description,
+            status=CheckStatus.PASSED,
+            severity=Severity.INFO,
+            message=message,
+            details={'parsed': parsed, 'info': info},
             node=node
         )
 
@@ -534,12 +860,28 @@ class RulesEngine:
         if method == 'sosreport' and sos_base:
             sos_path = source_defs.get('sos_path')
             alternates = source_defs.get('sos_path_alternates', [])
+            sos_cmd = source_defs.get('sos_cmd')
+            sos_cmd_file = source_defs.get('sos_cmd_file')
+
             success, output = self._read_sosreport(sos_path, node, sos_base)
-            if not success:
-                for alt_path in alternates:
-                    success, output = self._read_sosreport(alt_path, node, sos_base)
-                    if success:
-                        break
+            self._access_methods_used[node] = 'sosreport'
+
+            # If output contains error indicators (cluster was stopped), try alternatives
+            if not success or (success and output.strip().startswith('Error:')):
+                # First try sos_cmd if defined (e.g., pcs -f cib.xml)
+                if sos_cmd and sos_cmd_file:
+                    cmd_success, cmd_output = self._run_sos_cmd(sos_cmd, sos_cmd_file, node, sos_base)
+                    if cmd_success and cmd_output.strip():
+                        success, output = cmd_success, cmd_output
+                        self._used_cib_xml = True  # Track that we used cib.xml parsing
+
+                # Then try file alternates if still no success
+                if not success or (success and output.strip().startswith('Error:')):
+                    for alt_path in alternates:
+                        alt_success, alt_output = self._read_sosreport(alt_path, node, sos_base)
+                        if alt_success and not alt_output.strip().startswith('Error:'):
+                            success, output = alt_success, alt_output
+                            break
         else:
             cmd = source_defs.get('live_cmd')
             if not cmd:
@@ -567,6 +909,7 @@ class RulesEngine:
                     )
 
             success, output = self._execute_command(cmd, node, method, user)
+            self._access_methods_used[node] = method
 
         if not success:
             return CheckResult(
@@ -585,6 +928,11 @@ class RulesEngine:
         validation = rule.validation_logic
         if validation.get('type') == 'detection':
             return self._handle_detection_check(rule, parsed, node)
+
+        # Handle custom checks (e.g., clone_max_validation)
+        custom_check = validation.get('custom_check')
+        if custom_check == 'clone_max_validation':
+            return self._validate_clone_max(rule, parsed, node)
 
         # Evaluate expectations
         expectations = validation.get('expectations', [])
@@ -675,7 +1023,8 @@ class RulesEngine:
                 method = node_info.get('preferred_method')
                 if method:
                     user = node_info.get('ssh_user') or node_info.get('ansible_user')
-                    sos_base = self.access_config.get('sosreport_directory')
+                    # Use node's specific sosreport_path if available, otherwise fall back to sosreport_directory
+                    sos_base = node_info.get('sosreport_path') or self.access_config.get('sosreport_directory')
                     result = self._run_check_on_node(rule, node_name, method, user, sos_base)
                     result.node = f"{node_name} (cluster)"
                     return [result]
@@ -785,16 +1134,88 @@ class RulesEngine:
                         })
 
             if mismatches:
-                # Add a comparison failure result
-                results.append(CheckResult(
-                    check_id=rule.check_id,
-                    description=rule.description,
-                    status=CheckStatus.FAILED,
-                    severity=Severity[rule.severity],
-                    message=f"Values differ across nodes: {', '.join(set(m['key'] for m in mismatches))}",
-                    details={'mismatches': mismatches, 'reference_node': reference_node},
-                    node="(comparison)"
-                ))
+                # SAP HANA package keys - differences in these on majority maker nodes are expected
+                sap_hana_package_keys = {
+                    'sap_hana_ha_version', 'resource_agents_sap_hana',
+                    'resource_agents_sap_hana_scaleout', 'saphanasr_version'
+                }
+
+                # Build detailed message about differences
+                missing_packages = []  # Package exists on some nodes but not others
+                version_diffs = []     # Same package, different versions
+                critical_mismatches = []  # Non-SAP-HANA package mismatches (always report)
+                sap_hana_mismatches = []  # SAP HANA package mismatches (may be expected on majority maker)
+
+                for m in mismatches:
+                    key = m['key']
+                    expected = m.get('expected')
+                    actual = m.get('actual')
+                    is_sap_hana_pkg = key in sap_hana_package_keys
+
+                    if expected is None and actual is not None:
+                        # Package only on this node (extra package)
+                        msg = f"{key}: only on {m['node']} ({actual})"
+                        missing_packages.append(msg)
+                        if is_sap_hana_pkg:
+                            sap_hana_mismatches.append(m)
+                        else:
+                            critical_mismatches.append(m)
+                    elif expected is not None and actual is None:
+                        # Package missing on this node
+                        msg = f"{key}: missing on {m['node']} (reference: {expected})"
+                        missing_packages.append(msg)
+                        if is_sap_hana_pkg:
+                            sap_hana_mismatches.append(m)
+                        else:
+                            critical_mismatches.append(m)
+                    elif expected != actual:
+                        # Different versions
+                        msg = f"{key}: {m['node']} has {actual} (reference: {expected})"
+                        version_diffs.append(msg)
+                        if is_sap_hana_pkg:
+                            sap_hana_mismatches.append(m)
+                        else:
+                            critical_mismatches.append(m)
+
+                # Determine status: if only SAP HANA package differences, it's INFO (expected for majority maker)
+                only_sap_hana_diffs = len(critical_mismatches) == 0 and len(sap_hana_mismatches) > 0
+
+                # Build message with details
+                msg_parts = []
+                if version_diffs:
+                    msg_parts.append(f"Version mismatch: {'; '.join(version_diffs[:3])}")
+                    if len(version_diffs) > 3:
+                        msg_parts.append(f"...and {len(version_diffs) - 3} more")
+                if missing_packages:
+                    msg_parts.append(f"Package differences: {'; '.join(missing_packages[:3])}")
+                    if len(missing_packages) > 3:
+                        msg_parts.append(f"...and {len(missing_packages) - 3} more")
+
+                if only_sap_hana_diffs:
+                    # Only SAP HANA package differences - expected for majority maker nodes
+                    msg_parts.append("(expected for MajorityMaker nodes)")
+                    message = " | ".join(msg_parts)
+                    results.append(CheckResult(
+                        check_id=rule.check_id,
+                        description=rule.description,
+                        status=CheckStatus.PASSED,
+                        severity=Severity.INFO,
+                        message=message,
+                        details={'mismatches': mismatches, 'reference_node': reference_node, 'majority_maker_expected': True},
+                        node="(comparison)"
+                    ))
+                else:
+                    message = " | ".join(msg_parts) if msg_parts else f"Values differ across nodes: {', '.join(set(m['key'] for m in mismatches))}"
+                    # Add a comparison failure result
+                    results.append(CheckResult(
+                        check_id=rule.check_id,
+                        description=rule.description,
+                        status=CheckStatus.FAILED,
+                        severity=Severity[rule.severity],
+                        message=message,
+                        details={'mismatches': mismatches, 'reference_node': reference_node},
+                        node="(comparison)"
+                    ))
 
         return results
 
