@@ -298,6 +298,7 @@ class RulesEngine:
         saphana_resource = parsed.get('saphana_resource')  # SAPHana_* = Scale-Up
         saphana_controller = parsed.get('saphana_controller')  # SAPHanaController_* = Scale-Out
         majority_maker = parsed.get('majority_maker')
+        majority_maker_node = parsed.get('majority_maker_node')  # Actual node name
 
         # hdbnsutil -sr_state output for Scale-Out validation
         site_hosts_count_str = parsed.get('site_hosts_count')  # Number of hosts per site
@@ -313,7 +314,9 @@ class RulesEngine:
         # Detect based on resource agent type (the definitive indicator)
         has_saphana = saphana_resource is not None  # Scale-Up uses SAPHana resource
         has_controller = saphana_controller is not None  # Scale-Out uses SAPHanaController
-        has_majority_maker = majority_maker is not None and majority_maker != 'none'
+        # Majority maker detected by name pattern OR by location constraints
+        has_majority_maker = (majority_maker is not None and majority_maker != 'none') or \
+                            (majority_maker_node is not None and majority_maker_node != 'none')
 
         # Validate Scale-Out using hdbnsutil -sr_state
         # True Scale-Out has multiple hosts per site (site_hosts_count > 1)
@@ -333,6 +336,7 @@ class RulesEngine:
             'has_saphana_resource': has_saphana,
             'has_saphana_controller': has_controller,
             'has_majority_maker': has_majority_maker,
+            'majority_maker_node': majority_maker_node,
             'hdbnsutil_host_count': hdbnsutil_host_count,
             'hdbnsutil_confirms_scaleout': hdbnsutil_confirms_scaleout,
             'sidadm_user': sidadm_user,
@@ -348,7 +352,8 @@ class RulesEngine:
             if has_majority_maker:
                 # Expected: 4+ HANA nodes + 1 majority maker = 5+ total
                 hana_nodes = node_count - 1  # Subtract majority maker
-                base_message = f"Scale-Out configuration ({hana_nodes} HANA nodes + majority maker)"
+                mm_info = f" [{majority_maker_node}]" if majority_maker_node else ""
+                base_message = f"Scale-Out configuration ({hana_nodes} HANA nodes + majority maker{mm_info})"
             else:
                 base_message = f"Scale-Out configuration ({node_count} nodes) - WARNING: no majority maker detected"
 

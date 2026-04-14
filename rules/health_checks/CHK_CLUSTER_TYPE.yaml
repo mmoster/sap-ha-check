@@ -9,7 +9,17 @@ source_definitions:
   live_cmd: |
     echo "=== NODES ===" && crm_node -l 2>/dev/null | wc -l && crm_node -l 2>/dev/null;
     echo "=== HANA_RESOURCES ===" && pcs resource show 2>/dev/null | grep -E 'SAPHana|SAPHanaController|SAPHanaTopology' || crm_mon -1 2>/dev/null | grep -E 'SAPHana|SAPHanaController';
-    echo "=== MAJORITY_MAKER ===" && pcs resource show 2>/dev/null | grep -iE 'majority|qdevice' || crm_node -l 2>/dev/null | grep -i majority || echo "none";
+    echo "=== MAJORITY_MAKER ===";
+    # Detect majority maker by: 1) name pattern, 2) location constraints excluding from SAPHana, 3) node not running SAPHana
+    MM_BY_NAME=$(crm_node -l 2>/dev/null | grep -iE 'majority|mm-' | awk '{print $2}');
+    MM_BY_CONSTRAINT=$(pcs constraint location show 2>/dev/null | grep -E "SAPHana.*avoids node.*INFINITY|SAPHanaController.*avoids node.*INFINITY" | sed "s/.*avoids node '\\([^']*\\)'.*/\\1/" | sort -u | head -1);
+    if [ -n "$MM_BY_NAME" ]; then
+      echo "majority_maker_node=$MM_BY_NAME (by name)";
+    elif [ -n "$MM_BY_CONSTRAINT" ]; then
+      echo "majority_maker_node=$MM_BY_CONSTRAINT (by constraint)";
+    else
+      echo "none";
+    fi
     echo "=== HDBNSUTIL_SR_STATE ===";
     # Get HANA sidadm user - must have home in /usr/sap/<SID>/home (actual DB admin)
     SIDADM=$(grep -E '^[a-z0-9]{3}adm:.*:/usr/sap/[A-Z0-9]{3}/home:' /etc/passwd 2>/dev/null | head -1 | cut -d: -f1);
@@ -61,6 +71,10 @@ parser:
     - name: majority_maker
       regex: "(majority|qdevice|Majority)"
       group: 0
+    - name: majority_maker_node
+      # Captures "majority_maker_node=<hostname>" from detection output
+      regex: "majority_maker_node=(\\S+)"
+      group: 1
     # Parse hdbnsutil -sr_state output for host count per site
     # site_<NAME>_hosts=<count> from HOSTS_PER_SITE section
     - name: site_hosts_count

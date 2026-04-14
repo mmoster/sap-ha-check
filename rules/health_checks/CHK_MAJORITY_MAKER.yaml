@@ -20,8 +20,19 @@ source_definitions:
     echo "=== CLUSTER_NODES ==="
     crm_node -l 2>/dev/null || pcs status nodes 2>/dev/null
     echo "=== MAJORITY_MAKER ==="
-    crm_node -l 2>/dev/null | grep -iE 'majority|mm-' || echo "none"
-    pcs status nodes 2>/dev/null | grep -iE 'majority|mm-' || true
+    # Detect by name pattern
+    MM_BY_NAME=$(crm_node -l 2>/dev/null | grep -iE 'majority|mm-' | awk '{print $2}');
+    # Detect by location constraint (node excluded from SAPHana resources)
+    MM_BY_CONSTRAINT=$(pcs constraint location show 2>/dev/null | grep -E "SAPHana.*avoids node.*INFINITY|SAPHanaController.*avoids node.*INFINITY" | sed "s/.*avoids node '\\([^']*\\)'.*/\\1/" | sort -u | head -1);
+    if [ -n "$MM_BY_NAME" ]; then
+      echo "majority_maker_node=$MM_BY_NAME";
+      echo "detection_method=name_pattern";
+    elif [ -n "$MM_BY_CONSTRAINT" ]; then
+      echo "majority_maker_node=$MM_BY_CONSTRAINT";
+      echo "detection_method=location_constraint";
+    else
+      echo "none";
+    fi
     echo "=== HANA_PACKAGES ==="
     rpm -qa 2>/dev/null | grep -E 'sap-hana-ha|resource-agents-sap-hana' || echo "none"
     echo "=== LOCATION_CONSTRAINTS ==="
@@ -35,7 +46,11 @@ parser:
   multiline: true
   search_patterns:
     - name: majority_maker_node
-      regex: "\\d+\\s+(\\S*(?:majority|mm-)\\S*)\\s+member"
+      # Captures "majority_maker_node=<hostname>" from detection output
+      regex: "majority_maker_node=(\\S+)"
+      group: 1
+    - name: detection_method
+      regex: "detection_method=(\\S+)"
       group: 1
     - name: has_sap_hana_ha
       regex: "(sap-hana-ha-[\\d\\.-]+)"
@@ -44,7 +59,7 @@ parser:
       regex: "(resource-agents-sap-hana-scaleout-[\\d\\.-]+)"
       group: 1
     - name: location_constraint
-      regex: "(location.*SAPHana.*-INFINITY|Disabled on:.*|score:-INFINITY.*SAPHana)"
+      regex: "(avoids node.*INFINITY|location.*SAPHana.*-INFINITY|Disabled on:.*|score:-INFINITY.*SAPHana)"
       group: 0
     - name: resource_discovery_never
       regex: "(resource-discovery=never|resource-discovery:.*never)"
