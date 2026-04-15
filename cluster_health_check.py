@@ -2399,7 +2399,7 @@ Examples:
             ).stdout.strip()
 
             if local_head != remote_head:
-                # Check how many commits behind
+                # Check how many commits behind (remote has that we don't)
                 behind_count = subprocess.run(
                     ['git', 'rev-list', '--count', f'{local_head}..{remote_head}'],
                     cwd=SCRIPT_DIR,
@@ -2408,26 +2408,33 @@ Examples:
                     timeout=5
                 ).stdout.strip()
 
-                print(f"\n[INFO] A newer version is available ({behind_count} commit(s) behind)")
+                # Only show update prompt if actually behind (not if ahead with local commits)
                 try:
-                    response = input("  Update to latest version? [y/N]: ").strip().lower()
-                    if response == 'y' or response == 'yes':
-                        print("  Updating...")
-                        result = subprocess.run(
-                            ['git', 'pull'],
-                            cwd=SCRIPT_DIR,
-                            capture_output=True,
-                            text=True,
-                            timeout=60
-                        )
-                        if result.returncode == 0:
-                            print("  Updated successfully. Restarting health check...\n")
-                            # Restart the script with the same arguments
-                            os.execv(sys.executable, [sys.executable] + sys.argv + ['--no-update-check'])
-                        else:
-                            print(f"  [WARN] Update failed: {result.stderr.strip()}")
-                except (EOFError, KeyboardInterrupt):
-                    print("\n  Skipping update.")
+                    behind_int = int(behind_count)
+                except ValueError:
+                    behind_int = 0
+
+                if behind_int > 0:
+                    print(f"\n[INFO] A newer version is available ({behind_count} commit(s) behind)")
+                    try:
+                        response = input("  Update to latest version? [y/N]: ").strip().lower()
+                        if response == 'y' or response == 'yes':
+                            print("  Updating...")
+                            result = subprocess.run(
+                                ['git', 'pull'],
+                                cwd=SCRIPT_DIR,
+                                capture_output=True,
+                                text=True,
+                                timeout=60
+                            )
+                            if result.returncode == 0:
+                                print("  Updated successfully. Restarting health check...\n")
+                                # Restart the script with the same arguments
+                                os.execv(sys.executable, [sys.executable] + sys.argv + ['--no-update-check'])
+                            else:
+                                print(f"  [WARN] Update failed: {result.stderr.strip()}")
+                    except (EOFError, KeyboardInterrupt):
+                        print("\n  Skipping update.")
         except Exception:
             pass  # Silently ignore any errors in update check
 
