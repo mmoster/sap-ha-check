@@ -2090,10 +2090,153 @@ def delete_config(config_path: Path):
         return False
 
 
+def check_sosreports_on_nodes(nodes: list, ssh_user: str = 'root') -> dict:
+    """
+    Check which nodes have SOSreports available in /var/tmp.
+
+    Args:
+        nodes: List of node hostnames to check
+        ssh_user: SSH user for connecting to nodes (default: root)
+
+    Returns:
+        Dict mapping hostname -> sosreport path (or None if not found)
+    """
+    import subprocess
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    def check_node(hostname: str) -> tuple:
+        """Check if a node has a sosreport."""
+        try:
+            find_cmd = [
+                "ssh", "-o", "BatchMode=yes",
+                "-o", "ConnectTimeout=10",
+                "-o", "StrictHostKeyChecking=no",
+                f"{ssh_user}@{hostname}",
+                "ls -t /var/tmp/sosreport-*.tar.xz /var/tmp/sosreport-*.tar.gz 2>/dev/null | head -1"
+            ]
+
+            result = subprocess.run(
+                find_cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=30,
+                text=True
+            )
+
+            if result.returncode == 0 and result.stdout.strip():
+                return (hostname, result.stdout.strip())
+            return (hostname, None)
+        except Exception:
+            return (hostname, None)
+
+    results = {}
+    with ThreadPoolExecutor(max_workers=min(len(nodes), 5)) as executor:
+        futures = {executor.submit(check_node, node): node for node in nodes}
+        for future in as_completed(futures):
+            hostname, path = future.result()
+            results[hostname] = path
+
+    return results
+
+
+def create_sosreports(nodes: list, ssh_user: str = 'root', sos_options: str = None) -> dict:
+    """
+    Create SOSreports on remote cluster nodes.
+
+    Args:
+        nodes: List of node hostnames to create sosreports on
+        ssh_user: SSH user for connecting to nodes (default: root)
+        sos_options: Additional options for sos report command (default: cluster plugins)
+
+    Returns:
+        Dict mapping hostname -> (success: bool, message: str)
+    """
+    import subprocess
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    # Default: include cluster-relevant plugins
+    if sos_options is None:
+        sos_options = "--batch --all-logs -o pacemaker,corosync,sapnw,saphana,ha_cluster,systemd"
+
+    print(f"\n{'='*60}")
+    print(" Creating SOSreports on cluster nodes")
+    print(f"{'='*60}")
+    print(f"  Nodes: {', '.join(nodes)}")
+    print(f"  Command: sos report {sos_options}")
+    print()
+    print("  This may take several minutes per node...")
+    print()
+
+    def create_on_node(hostname: str) -> tuple:
+        """Run sos report on a single node."""
+        try:
+            # Run sos report remotely
+            sos_cmd = [
+                "ssh", "-o", "BatchMode=yes",
+                "-o", "ConnectTimeout=10",
+                "-o", "StrictHostKeyChecking=no",
+                "-o", "ServerAliveInterval=30",
+                f"{ssh_user}@{hostname}",
+                f"sos report {sos_options}"
+            ]
+
+            result = subprocess.run(
+                sos_cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=600,  # 10 minutes timeout
+                text=True
+            )
+
+            if result.returncode == 0:
+                # Extract the generated filename from output
+                output = result.stdout
+                for line in output.split('\n'):
+                    if '/var/tmp/sosreport-' in line and ('.tar.xz' in line or '.tar.gz' in line):
+                        # Extract path from line
+                        import re
+                        match = re.search(r'(/var/tmp/sosreport-[^\s]+\.tar\.[xg]z)', line)
+                        if match:
+                            return (hostname, True, f"Created: {match.group(1)}")
+                return (hostname, True, "SOSreport created successfully")
+            else:
+                error_msg = result.stderr.strip() or result.stdout.strip() or "Unknown error"
+                return (hostname, False, f"Failed: {error_msg[:100]}")
+
+        except subprocess.TimeoutExpired:
+            return (hostname, False, "Timeout (exceeded 10 minutes)")
+        except Exception as e:
+            return (hostname, False, f"Error: {str(e)}")
+
+    results = {}
+    # Run sequentially to avoid overloading nodes (sosreport is resource-intensive)
+    # But use ThreadPoolExecutor for consistent interface
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = {executor.submit(create_on_node, node): node for node in nodes}
+
+        for future in as_completed(futures):
+            hostname, success, message = future.result()
+            results[hostname] = (success, message)
+            status = "✓" if success else "✗"
+            print(f"  [{hostname}] {status} {message}")
+
+    print()
+    success_count = sum(1 for s, _ in results.values() if s)
+    print(f"SOSreport creation: {success_count}/{len(nodes)} successful")
+
+    return results
+
+
 def fetch_sosreports(config_path: Path, cluster_name: str = None, nodes: list = None,
-                     output_dir: str = None, ssh_user: str = 'root'):
+                     output_dir: str = None, ssh_user: str = 'root',
+                     auto_create: bool = False, interactive: bool = True):
     """
     Fetch the latest sosreports from cluster nodes via SCP.
+
+    First checks if SOSreports exist on nodes. If missing, prompts user
+    to create them (unless auto_create or non-interactive mode).
 
     Args:
         config_path: Path to the configuration file
@@ -2101,6 +2244,8 @@ def fetch_sosreports(config_path: Path, cluster_name: str = None, nodes: list = 
         nodes: List of specific node hostnames (alternative to cluster_name)
         output_dir: Directory to save sosreports (default: ./sosreports)
         ssh_user: SSH user for connecting to nodes (default: root)
+        auto_create: If True, automatically create missing sosreports without prompting
+        interactive: If True, prompt user for missing sosreports; if False, skip missing
 
     Returns:
         List of downloaded file paths, or empty list on failure
@@ -2146,53 +2291,68 @@ def fetch_sosreports(config_path: Path, cluster_name: str = None, nodes: list = 
         print("[ERROR] No nodes found to fetch sosreports from.")
         return []
 
+    # Step 1: Check which nodes have existing SOSreports
+    print(f"\n{'='*60}")
+    print(" Checking for existing SOSreports")
+    print(f"{'='*60}")
+    print(f"  Nodes: {', '.join(target_nodes)}")
+    print()
+
+    existing = check_sosreports_on_nodes(target_nodes, ssh_user)
+
+    nodes_with_sos = [n for n, p in existing.items() if p]
+    nodes_without_sos = [n for n, p in existing.items() if not p]
+
+    for node in target_nodes:
+        if existing.get(node):
+            print(f"  [{node}] ✓ Found: {os.path.basename(existing[node])}")
+        else:
+            print(f"  [{node}] ✗ No SOSreport found")
+
+    print()
+
+    # Step 2: Handle missing SOSreports
+    if nodes_without_sos:
+        print(f"Missing SOSreports on {len(nodes_without_sos)} node(s): {', '.join(nodes_without_sos)}")
+
+        create_missing = False
+
+        if auto_create:
+            create_missing = True
+        elif interactive and sys.stdin.isatty():
+            print()
+            response = input("Create SOSreports on these nodes? [y/N]: ").strip().lower()
+            create_missing = response in ('y', 'yes')
+
+        if create_missing:
+            create_results = create_sosreports(nodes_without_sos, ssh_user)
+
+            # Re-check for newly created sosreports
+            new_existing = check_sosreports_on_nodes(nodes_without_sos, ssh_user)
+            existing.update(new_existing)
+
+            # Update lists
+            nodes_with_sos = [n for n, p in existing.items() if p]
+            nodes_without_sos = [n for n, p in existing.items() if not p]
+
+    # Step 3: Fetch existing SOSreports
+    if not nodes_with_sos:
+        print("\nNo SOSreports available to download.")
+        return []
+
     print(f"\n{'='*60}")
     print(" Fetching SOSreports from cluster nodes")
     print(f"{'='*60}")
-    print(f"  Nodes: {', '.join(target_nodes)}")
+    print(f"  Nodes: {', '.join(nodes_with_sos)}")
     print(f"  Output: {sos_dir}")
     print(f"  SSH user: {ssh_user}")
     print()
 
     downloaded_files = []
 
-    def fetch_from_node(hostname: str) -> tuple:
-        """Find and download latest sosreport from a single node."""
+    def fetch_from_node(hostname: str, remote_path: str) -> tuple:
+        """Download sosreport from a single node using known path."""
         try:
-            # Find latest sosreport in /var/tmp
-            find_cmd = [
-                "ssh", "-o", "BatchMode=yes",
-                "-o", "ConnectTimeout=10",
-                "-o", "StrictHostKeyChecking=no",
-                f"{ssh_user}@{hostname}",
-                "ls -t /var/tmp/sosreport-*.tar.xz 2>/dev/null | head -1"
-            ]
-
-            result = subprocess.run(
-                find_cmd,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                timeout=30,
-                text=True
-            )
-
-            if result.returncode != 0 or not result.stdout.strip():
-                # Try .tar.gz format
-                find_cmd[-1] = "ls -t /var/tmp/sosreport-*.tar.gz 2>/dev/null | head -1"
-                result = subprocess.run(
-                    find_cmd,
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    timeout=30,
-                    text=True
-                )
-
-            if result.returncode != 0 or not result.stdout.strip():
-                return (hostname, None, "No sosreport found in /var/tmp")
-
-            remote_path = result.stdout.strip()
             filename = os.path.basename(remote_path)
             local_path = sos_dir / filename
 
@@ -2230,17 +2390,20 @@ def fetch_sosreports(config_path: Path, cluster_name: str = None, nodes: list = 
         except Exception as e:
             return (hostname, None, f"Error: {str(e)}")
 
-    # Fetch from all nodes in parallel
-    with ThreadPoolExecutor(max_workers=min(len(target_nodes), 5)) as executor:
-        futures = {executor.submit(fetch_from_node, node): node for node in target_nodes}
+    # Fetch from nodes with sosreports in parallel (using known paths)
+    with ThreadPoolExecutor(max_workers=min(len(nodes_with_sos), 5)) as executor:
+        futures = {
+            executor.submit(fetch_from_node, node, existing[node]): node
+            for node in nodes_with_sos
+        }
 
         for future in as_completed(futures):
             hostname, filepath, message = future.result()
             if filepath:
                 downloaded_files.append(filepath)
-                print(f"  [{hostname}] {message}")
+                print(f"  [{hostname}] ✓ {message}")
             else:
-                print(f"  [{hostname}] {message}")
+                print(f"  [{hostname}] ✗ {message}")
 
     print()
     if downloaded_files:

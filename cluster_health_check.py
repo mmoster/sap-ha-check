@@ -2229,7 +2229,12 @@ Examples:
         '--fetch-sosreports', '-F',
         nargs='*',
         metavar='CLUSTER_OR_NODE',
-        help='Fetch latest sosreports from cluster nodes via SCP (default output: ./sosreports/). Usage: -F [CLUSTER|node1 node2...]'
+        help='Fetch SOSreports from cluster nodes via SCP. Prompts to create if missing. Usage: -F [CLUSTER|node1 node2...]'
+    )
+    parser.add_argument(
+        '--create-sosreports',
+        action='store_true',
+        help='Auto-create SOSreports on nodes where missing (use with -F). Skips confirmation prompt.'
     )
     parser.add_argument(
         '--force', '-f',
@@ -2584,11 +2589,13 @@ Examples:
     if args.fetch_sosreports is not None:
         # Check what was provided: cluster name or node names
         fetch_args = args.fetch_sosreports
+        auto_create = getattr(args, 'create_sosreports', False)
 
         if not fetch_args:
             # No arguments - use cluster from -C if provided
             if args.cluster:
-                downloaded = fetch_sosreports(config_path, cluster_name=args.cluster)
+                downloaded = fetch_sosreports(config_path, cluster_name=args.cluster,
+                                              auto_create=auto_create)
             else:
                 print("[ERROR] Please specify a cluster name or node names.")
                 print("Usage: --fetch-sosreports CLUSTER")
@@ -2604,16 +2611,20 @@ Examples:
                     config = yaml.safe_load(f)
                 clusters = config.get('clusters', {})
                 if arg in clusters:
-                    downloaded = fetch_sosreports(config_path, cluster_name=arg)
+                    downloaded = fetch_sosreports(config_path, cluster_name=arg,
+                                                  auto_create=auto_create)
                 else:
                     # Treat as node name
-                    downloaded = fetch_sosreports(config_path, nodes=[arg])
+                    downloaded = fetch_sosreports(config_path, nodes=[arg],
+                                                  auto_create=auto_create)
             else:
                 # No config, treat as node name
-                downloaded = fetch_sosreports(config_path, nodes=[arg])
+                downloaded = fetch_sosreports(config_path, nodes=[arg],
+                                              auto_create=auto_create)
         else:
             # Multiple arguments - treat as node names
-            downloaded = fetch_sosreports(config_path, nodes=fetch_args)
+            downloaded = fetch_sosreports(config_path, nodes=fetch_args,
+                                          auto_create=auto_create)
 
         sys.exit(0 if downloaded else 1)
 

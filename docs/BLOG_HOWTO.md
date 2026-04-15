@@ -70,7 +70,38 @@ The tool extracts and analyzes SOSreport archives (`.tar.xz`, `.tar.gz`) automat
 
 ---
 
-## Example 4: Interactive Mode
+## Example 4: Fetch SOSreports from Cluster
+
+Download existing SOSreports from cluster nodes:
+
+```bash
+# Fetch from all nodes in a cluster
+./cluster_health_check.py -F mycluster
+
+# Fetch from specific nodes
+./cluster_health_check.py -F hana01 hana02
+```
+
+If no SOSreports exist on the nodes, the tool prompts you to create them:
+
+```
+  [hana01] ✗ No SOSreport found
+  [hana02] ✗ No SOSreport found
+
+Missing SOSreports on 2 node(s): hana01, hana02
+
+Create SOSreports on these nodes? [y/N]: y
+```
+
+To auto-create without prompting:
+
+```bash
+./cluster_health_check.py -F mycluster --create-sosreports
+```
+
+---
+
+## Example 5: Interactive Mode
 
 Don't remember where your sosreports are? Use interactive mode:
 
@@ -120,6 +151,8 @@ A problem is shown as:
 | `-s DIR` | Analyze SOSreports in DIR |
 | `-H FILE` | Read hosts from FILE |
 | `-u` | Interactive mode |
+| `-F CLUSTER` | Fetch SOSreports from nodes (prompts to create if missing) |
+| `--create-sosreports` | Auto-create missing SOSreports (use with `-F`) |
 | `-L` | List all available health checks |
 | `-S` | Show discovered cluster config |
 | `-d` | Debug mode (verbose output) |
@@ -159,6 +192,12 @@ Different validation rules apply to each type.
 
 # SOSreport analysis
 ./cluster_health_check.py -s ./sosreports/
+
+# Fetch SOSreports (prompts to create if missing)
+./cluster_health_check.py -F mycluster
+
+# Auto-create and fetch SOSreports
+./cluster_health_check.py -F mycluster --create-sosreports
 
 # Interactive
 ./cluster_health_check.py -u
