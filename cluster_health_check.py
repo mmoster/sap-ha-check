@@ -1582,7 +1582,7 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
 
         print(f"\n  Report saved: {report_file}")
 
-        # Generate PDF report if requested
+        # Generate PDF report if requested (fpdf2 availability checked at startup)
         if self.generate_pdf:
             try:
                 from report_generator import generate_health_check_report
@@ -1605,10 +1605,6 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                     install_status if install_status else None
                 )
                 print(f"  PDF report: {pdf_file}")
-            except ImportError:
-                print("  [WARN] PDF generation skipped - fpdf2 not installed")
-                print("         Install with: pip install fpdf2")
-                print("         Or run with --no-pdf to suppress this warning")
             except Exception as e:
                 print(f"  [WARN] PDF generation failed: {e}")
 
@@ -1778,31 +1774,29 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                 print("  ╚═══════════════════════════════════════════════════════╝")
                 print("=" * 63)
 
-                # Auto-generate PDF report on success
+                # Auto-generate PDF report on success (fpdf2 availability checked at startup)
                 if self.generate_pdf:
                     try:
-                        from report_generator import generate_health_check_report, is_pdf_available
-                        if is_pdf_available():
-                            # Use unified data model for PDF generation
-                            report_data = self._build_cluster_report_data()
-                            cluster_name = report_data.cluster_name
-                            cluster_name_safe = re.sub(r'[^\w\-]', '_', cluster_name)
+                        from report_generator import generate_health_check_report
 
-                            # Generate PDF with default name
-                            pdf_timestamp = datetime.now().strftime('%Y%m%d')
-                            pdf_time = datetime.now().strftime('%H%M')
-                            pdf_file = self.config_dir / f"{pdf_timestamp}_health_check_report_{cluster_name_safe}_{pdf_time}.pdf"
+                        # Use unified data model for PDF generation
+                        report_data = self._build_cluster_report_data()
+                        cluster_name = report_data.cluster_name
+                        cluster_name_safe = re.sub(r'[^\w\-]', '_', cluster_name)
 
-                            generate_health_check_report(
-                                report_data.get_results_list(),
-                                report_data.get_summary_dict(),
-                                report_data.to_cluster_info(),
-                                str(pdf_file),
-                                report_data.get_install_status() or None
-                            )
-                            print(f"\n  PDF report saved: {pdf_file}")
-                    except ImportError:
-                        pass  # fpdf2 not installed, skip silently on success
+                        # Generate PDF with default name
+                        pdf_timestamp = datetime.now().strftime('%Y%m%d')
+                        pdf_time = datetime.now().strftime('%H%M')
+                        pdf_file = self.config_dir / f"{pdf_timestamp}_health_check_report_{cluster_name_safe}_{pdf_time}.pdf"
+
+                        generate_health_check_report(
+                            report_data.get_results_list(),
+                            report_data.get_summary_dict(),
+                            report_data.to_cluster_info(),
+                            str(pdf_file),
+                            report_data.get_install_status() or None
+                        )
+                        print(f"\n  PDF report saved: {pdf_file}")
                     except Exception as e:
                         print(f"\n  [WARN] PDF generation failed: {e}")
 
@@ -2770,6 +2764,15 @@ Examples:
     # Create health check instance
     # PDF generation is enabled by default, can be disabled with --no-pdf
     generate_pdf = not args.no_pdf
+
+    # Check upfront if fpdf2 is available - warn once and disable PDF generation if not
+    if generate_pdf:
+        from report_generator import is_pdf_available
+        if not is_pdf_available():
+            print("  [WARN] PDF generation requires fpdf2. Install with: pip install fpdf2")
+            print("         Running without PDF generation (use --no-pdf to suppress this warning)")
+            generate_pdf = False
+
     health_check = ClusterHealthCheck(
         config_dir=str(config_dir),
         sosreport_dir=args.sosreport_dir,
@@ -2801,10 +2804,14 @@ Examples:
         print("  [2] Rerun health check")
         print("  [3] Run on different hosts")
         print("  [4] Show configuration")
-        print("  [5] Save PDF report (custom filename)")
+        if generate_pdf:
+            print("  [5] Save PDF report (custom filename)")
         print("  [6] Show suggestions")
         print("  [7] Reset configuration (delete cached discovery)")
-        print("  [q] Save PDF and quit")
+        if generate_pdf:
+            print("  [q] Save PDF and quit")
+        else:
+            print("  [q] Quit")
         print("-" * 63)
         try:
             choice = input("  Enter choice [1-7/q] (default=1): ").strip().lower()
@@ -2898,6 +2905,9 @@ Examples:
                     show_config(health_check.config_dir / 'cluster_access_config.yaml')
                 elif choice == '5' or choice == 'p':
                     # Save PDF report with custom filename
+                    if not generate_pdf:
+                        print("\n  [WARN] PDF generation not available (fpdf2 not installed)")
+                        continue
                     if not health_check.check_results:
                         print("\n  [WARN] No health check results available. Run a health check first.")
                         continue
@@ -2997,8 +3007,8 @@ Examples:
                     else:
                         print("  No configuration file found.")
                 elif choice == 'q' or choice == 'quit' or choice == 'exit':
-                    # Save PDF before quitting
-                    if health_check.check_results:
+                    # Save PDF before quitting (if available)
+                    if generate_pdf and health_check.check_results:
                         try:
                             # Get cluster name for filename
                             cluster_name = '(unknown)'
