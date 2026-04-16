@@ -135,6 +135,7 @@ class ClusterHealthCheck:
         self.generate_pdf = generate_pdf
         self.verbose_pdf = verbose_pdf  # Show all checks in detail in PDF
         self.majority_makers = []  # Nodes that are majority makers (Scale-Out)
+        self.last_pdf_file = None  # Track last generated PDF for auto-open
 
     def _debug_print(self, message: str):
         """Print debug message if debug mode is enabled."""
@@ -1861,6 +1862,7 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                             report_data.get_install_status() or None,
                             verbose=self.verbose_pdf
                         )
+                        self.last_pdf_file = pdf_file  # Track for auto-open
                         print(f"\n  PDF report saved: {pdf_file}")
                     except Exception as e:
                         print(f"\n  [WARN] PDF generation failed: {e}")
@@ -2912,6 +2914,23 @@ Examples:
 
             # If cluster is healthy (exit_code == 0), exit directly
             if exit_code == 0:
+                # Auto-open PDF if generated
+                if generate_pdf and health_check.last_pdf_file:
+                    import subprocess
+                    import platform
+                    try:
+                        system = platform.system()
+                        if system == 'Linux':
+                            subprocess.Popen(['xdg-open', str(health_check.last_pdf_file)],
+                                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        elif system == 'Darwin':  # macOS
+                            subprocess.Popen(['open', str(health_check.last_pdf_file)],
+                                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        elif system == 'Windows':
+                            os.startfile(str(health_check.last_pdf_file))
+                        print("  Opening PDF...")
+                    except Exception:
+                        pass  # Silently ignore if can't open
                 print("\n  Goodbye!")
                 cleanup_temp_file()
                 sys.exit(0)
