@@ -32,6 +32,9 @@ test_report.pdf
 cluster_access_config.yaml
 last_run_status.yaml
 
+# SOSreport data (fetched/extracted for analysis)
+sosreports/
+
 # OS
 .DS_Store
 Thumbs.db
