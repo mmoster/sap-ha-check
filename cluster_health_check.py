@@ -3025,6 +3025,23 @@ Examples:
                                 report_data.get_install_status() or None
                             )
                             print(f"\n  PDF report saved: {pdf_file}")
+
+                            # Open PDF with default viewer
+                            import subprocess
+                            import platform
+                            try:
+                                system = platform.system()
+                                if system == 'Linux':
+                                    subprocess.Popen(['xdg-open', str(pdf_file)],
+                                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                elif system == 'Darwin':  # macOS
+                                    subprocess.Popen(['open', str(pdf_file)],
+                                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                elif system == 'Windows':
+                                    os.startfile(str(pdf_file))
+                                print(f"  Opening PDF...")
+                            except Exception:
+                                pass  # Silently ignore if can't open
                         except Exception as e:
                             print(f"\n  [WARN] Could not save PDF: {e}")
                     print("  Goodbye!")
