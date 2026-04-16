@@ -12,7 +12,12 @@ This tool runs 22 automated health checks against your SAP HANA HA cluster, cove
 - HA/DR provider hooks
 - Package consistency across nodes
 
-It works with **live clusters** (via SSH) or **offline analysis** (via SOSreports).
+**Key features:**
+- Works with **live clusters** (via SSH) or **offline analysis** (via SOSreports)
+- **Detects cluster status** - warns if Pacemaker/Corosync not running
+- **Multi-cluster support** - prompts for selection if multiple clusters found
+- **Progress indicators** - animated spinner shows work in progress
+- **Auto-saves PDF** - reports saved and opened automatically on exit
 
 ---
 
@@ -165,10 +170,10 @@ A problem is shown as:
 
 The tool automatically detects:
 
-- **Scale-Up**: 2 HANA nodes (standard HA)
+- **Scale-Up**: 2 HANA nodes (+ optional additional cluster nodes like ASCS servers)
 - **Scale-Out**: Multiple HANA nodes + majority maker
 
-Different validation rules apply to each type.
+Additional cluster nodes that don't run HANA are correctly identified and don't cause failures.
 
 ---
 
@@ -178,6 +183,8 @@ Different validation rules apply to each type.
 2. **Use `-f`** to force re-discovery if nodes changed
 3. **SOSreport analysis is safe** - no SSH access needed
 4. **PDF reports** are great for sharing with support teams
+5. **Cluster not running?** - tool detects this and falls back to static config from corosync.conf
+6. **Multiple clusters?** - tool prompts you to select which cluster to analyze
 
 ---
 

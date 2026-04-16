@@ -41,7 +41,10 @@ This scans for SOSreport archives, hosts files, and existing reports, then prese
 - **Multithreaded Execution**: Parallel node connectivity checks and rule execution
 - **22 Built-in Health Checks**: Cluster configuration, Pacemaker/Corosync, and SAP-specific validations
 - **Automatic Cluster Discovery**: Discovers all nodes from Pacemaker configuration
-- **PDF Reports**: Auto-generated PDF reports (requires fpdf2)
+- **Cluster Status Detection**: Warns if cluster services are not running, falls back to static config
+- **Multi-Cluster Support**: Prompts for selection when multiple clusters are discovered
+- **Progress Indicators**: Animated spinner shows work is in progress
+- **PDF Reports**: Auto-generated PDF reports with automatic opening (requires fpdf2)
 
 ## Installation
 
@@ -112,7 +115,7 @@ Options:
 ### SAP-Specific
 | Check ID | Severity | Description |
 |----------|----------|-------------|
-| CHK_HANA_INSTALLED | INFO | Check if SAP HANA is installed on this node |
+| CHK_HANA_INSTALLED | INFO | Detect HANA installation (informational - non-HANA nodes OK) |
 | CHK_HANA_SR_STATUS | CRITICAL | Verify HANA System Replication status |
 | CHK_REPLICATION_MODE | WARNING | Verify replication mode is sync or syncmem |
 | CHK_HADR_HOOKS | CRITICAL | Validate HA/DR provider hooks |
@@ -122,9 +125,10 @@ Options:
 
 ## Cluster Types and Packages
 
-### Scale-Up (2 nodes, no majority maker)
+### Scale-Up (2 HANA nodes + optional additional cluster nodes)
 - Package: `sap-hana-ha` (ANGI, RHEL 9+) or `resource-agents-sap-hana` (classic)
 - Resource agent: `SAPHana`
+- Additional cluster nodes (ASCS servers, etc.) don't require HANA
 
 ### Scale-Out (4+ HANA nodes + 1 majority maker)
 - HANA nodes: `sap-hana-ha` (ANGI) or `resource-agents-sap-hana-scaleout` (classic)
