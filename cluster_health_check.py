@@ -2765,12 +2765,12 @@ Examples:
     # PDF generation is enabled by default, can be disabled with --no-pdf
     generate_pdf = not args.no_pdf
 
-    # Check upfront if fpdf2 is available - warn once and disable PDF generation if not
+    # Check upfront if fpdf2 is available - inform user and disable PDF generation if not
     if generate_pdf:
         from report_generator import is_pdf_available
         if not is_pdf_available():
-            print("  [WARN] PDF generation requires fpdf2. Install with: pip install fpdf2")
-            print("         Running without PDF generation (use --no-pdf to suppress this warning)")
+            print("  [INFO] PDF reports will not be created (fpdf2 not installed)")
+            print("         To enable: pip install fpdf2")
             generate_pdf = False
 
     health_check = ClusterHealthCheck(
@@ -2906,7 +2906,7 @@ Examples:
                 elif choice == '5' or choice == 'p':
                     # Save PDF report with custom filename
                     if not generate_pdf:
-                        print("\n  [WARN] PDF generation not available (fpdf2 not installed)")
+                        print("\n  [INFO] PDF reports not available (fpdf2 not installed)")
                         continue
                     if not health_check.check_results:
                         print("\n  [WARN] No health check results available. Run a health check first.")
