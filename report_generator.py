@@ -239,7 +239,8 @@ def generate_health_check_report(
     summary: Dict,
     cluster_info: Dict,
     output_path: str = None,
-    install_status: Dict = None
+    install_status: Dict = None,
+    verbose: bool = False
 ) -> str:
     """
     Generate a PDF health check report.
@@ -250,6 +251,7 @@ def generate_health_check_report(
         cluster_info: Cluster information (name, nodes, etc.)
         output_path: Output file path (optional)
         install_status: Installation status dict (optional)
+        verbose: If True, show all checks in detail (not just failed/warnings)
 
     Returns:
         Path to generated PDF file
@@ -804,18 +806,29 @@ def generate_health_check_report(
                 check.get('node', '')
             )
 
-    # Passed checks (collapsed)
+    # Passed checks
     if passed_checks:
         pdf.sub_section(f"Passed Checks ({len(passed_checks)})")
-        pdf.set_font('Helvetica', '', 9)
-        pdf.set_text_color(*RedHatColors.GREEN)
 
-        # List passed checks in compact format
-        for i, check in enumerate(passed_checks):
-            if i > 0 and i % 3 == 0:
-                pdf.ln(5)
-            pdf.cell(60, 5, f"[OK] {check.get('check_id', 'N/A')}", new_x="LMARGIN" if (i % 3 == 2) else "RIGHT", new_y="NEXT" if (i % 3 == 2) else "TOP")
-        pdf.ln(8)
+        if verbose:
+            # Verbose mode: show all passed checks in detail
+            for check in passed_checks:
+                pdf.check_result_row(
+                    check.get('check_id', 'N/A'),
+                    check.get('description', ''),
+                    check.get('status', 'PASSED'),
+                    check.get('message', ''),
+                    check.get('node', '')
+                )
+        else:
+            # Compact mode: list passed checks in 3-column format
+            pdf.set_font('Helvetica', '', 9)
+            pdf.set_text_color(*RedHatColors.GREEN)
+            for i, check in enumerate(passed_checks):
+                if i > 0 and i % 3 == 0:
+                    pdf.ln(5)
+                pdf.cell(60, 5, f"[OK] {check.get('check_id', 'N/A')}", new_x="LMARGIN" if (i % 3 == 2) else "RIGHT", new_y="NEXT" if (i % 3 == 2) else "TOP")
+            pdf.ln(8)
 
     # Skipped checks
     if skipped_checks:

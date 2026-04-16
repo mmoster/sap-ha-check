@@ -117,7 +117,7 @@ class ClusterHealthCheck:
                  hosts_file: str = None, workers: int = 10, rules_path: str = None,
                  debug: bool = False, ansible_group: str = None, skip_ansible: bool = False,
                  cluster_name: str = None, local_mode: bool = False, strict_mode: bool = False,
-                 generate_pdf: bool = False):
+                 generate_pdf: bool = False, verbose_pdf: bool = False):
         self.config_dir = Path(config_dir) if config_dir else SCRIPT_DIR
         self.sosreport_dir = sosreport_dir
         self.hosts_file = hosts_file
@@ -133,6 +133,7 @@ class ClusterHealthCheck:
         self.local_mode = local_mode
         self.strict_mode = strict_mode
         self.generate_pdf = generate_pdf
+        self.verbose_pdf = verbose_pdf  # Show all checks in detail in PDF
         self.majority_makers = []  # Nodes that are majority makers (Scale-Out)
 
     def _debug_print(self, message: str):
@@ -1664,7 +1665,8 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                     summary_dict,
                     cluster_info,
                     str(pdf_file),
-                    install_status if install_status else None
+                    install_status if install_status else None,
+                    verbose=self.verbose_pdf
                 )
                 print(f"  PDF report: {pdf_file}")
             except Exception as e:
@@ -1856,7 +1858,8 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                             report_data.get_summary_dict(),
                             report_data.to_cluster_info(),
                             str(pdf_file),
-                            report_data.get_install_status() or None
+                            report_data.get_install_status() or None,
+                            verbose=self.verbose_pdf
                         )
                         print(f"\n  PDF report saved: {pdf_file}")
                     except Exception as e:
@@ -2414,6 +2417,13 @@ Examples:
         help='Skip PDF report generation (useful if fpdf2 is not installed)'
     )
 
+    # Verbose PDF option to show all checks in detail
+    parser.add_argument(
+        '--verbose', '-v',
+        action='store_true',
+        help='Verbose PDF report - show all checks in detail (not just failed/warnings)'
+    )
+
     # No-update-check option
     parser.add_argument(
         '--no-update-check',
@@ -2826,6 +2836,7 @@ Examples:
     # Create health check instance
     # PDF generation is enabled by default, can be disabled with --no-pdf
     generate_pdf = not args.no_pdf
+    verbose_pdf = args.verbose  # Show all checks in detail in PDF
 
     # Check upfront if fpdf2 is available - inform user and disable PDF generation if not
     if generate_pdf:
@@ -2846,7 +2857,8 @@ Examples:
         cluster_name=args.cluster,
         local_mode=local_mode,
         strict_mode=args.strict,
-        generate_pdf=generate_pdf
+        generate_pdf=generate_pdf,
+        verbose_pdf=verbose_pdf
     )
 
     def cleanup_temp_file():
@@ -2947,7 +2959,8 @@ Examples:
                                     cluster_name=None,  # Force rediscovery
                                     local_mode=False,
                                     strict_mode=args.strict,
-                                    generate_pdf=not args.no_pdf
+                                    generate_pdf=not args.no_pdf,
+                                    verbose_pdf=verbose_pdf
                                 )
                                 # Run health check with force rediscovery
                                 exit_code = new_health_check.run_all_checks(
@@ -3012,7 +3025,8 @@ Examples:
                             report_data.get_summary_dict(),
                             report_data.to_cluster_info(),
                             str(pdf_file),
-                            report_data.get_install_status() or None
+                            report_data.get_install_status() or None,
+                            verbose=verbose_pdf
                         )
                         print(f"\n  PDF report saved: {pdf_file}")
                         print("  Goodbye!")
@@ -3096,7 +3110,8 @@ Examples:
                                 report_data.get_summary_dict(),
                                 report_data.to_cluster_info(),
                                 str(pdf_file),
-                                report_data.get_install_status() or None
+                                report_data.get_install_status() or None,
+                                verbose=verbose_pdf
                             )
                             print(f"\n  PDF report saved: {pdf_file}")
 
