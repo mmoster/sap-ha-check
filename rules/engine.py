@@ -741,6 +741,14 @@ class RulesEngine:
 
         actual = parsed.get(key)
 
+        # Support template variables in pass_message: ${key} is replaced with parsed[key]
+        if pass_message and '${' in pass_message:
+            import re as regex_module
+            def replace_var(match):
+                var_name = match.group(1)
+                return str(parsed.get(var_name, f'${{{var_name}}}'))
+            pass_message = regex_module.sub(r'\$\{(\w+)\}', replace_var, pass_message)
+
         # Handle info_if_exists: always passes, shows message if key exists
         if operator == 'info_if_exists':
             if actual is not None and pass_message:

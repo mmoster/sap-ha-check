@@ -1,36 +1,77 @@
-# CHK_HANA_INSTALLED - Detect SAP HANA installation status
+# CHK_HANA_INSTALLED - Detect SAP HANA installation and status
 # NOTE: This is an informational check. In Scale-Up clusters, only 2 nodes need HANA.
 #       Additional cluster nodes (ASCS servers, majority makers) don't require HANA.
 check_id: CHK_HANA_INSTALLED
-version: "1.4"
+version: "1.5"
 severity: INFO
 optional: true  # Don't count as failure - just informational
-description: Detect SAP HANA database installation (informational)
+description: Detect SAP HANA database installation and status
 enabled: true
 
 source_definitions:
   # Check for HANA-specific indicators that prove local HANA installation:
   # 1. /usr/sap/<SID>/HDB<instance> directory structure (local HANA installation)
-  # 2. Running HANA processes (hdbdaemon, hdbnameserver, hdbindexserver)
-  # 3. <sid>adm user with HDB home directory in /etc/passwd
+  # 2. Detect sidadm user and run HDB info for detailed status
+  # 3. Running HANA processes (hdbdaemon, hdbnameserver, hdbindexserver)
   # NOTE: Do NOT check /hana/shared - it's often NFS-mounted and doesn't prove local installation
   #       (e.g., majority maker nodes mount /hana/shared but don't run HANA)
   live_cmd: |
-    # Method 1: Check for HANA instance directories /usr/sap/<SID>/HDB<NN>
-    if ls -d /usr/sap/*/HDB[0-9][0-9] 2>/dev/null | head -1 | grep -q .; then
-      echo 'HANA_INSTALLED'
-    # Method 2: Check for running HANA processes
+    # Find HANA instance directory
+    HANA_DIR=$(ls -d /usr/sap/*/HDB[0-9][0-9] 2>/dev/null | head -1)
+
+    if [ -n "$HANA_DIR" ]; then
+      # Extract SID from path (e.g., /usr/sap/RH2/HDB02 -> RH2)
+      SID=$(echo "$HANA_DIR" | sed 's|.*/usr/sap/\([^/]*\)/HDB.*|\1|')
+      INST=$(echo "$HANA_DIR" | sed 's|.*/HDB\([0-9][0-9]\)|\1|')
+      SIDADM=$(echo "$SID" | tr '[:upper:]' '[:lower:]')adm
+
+      echo "HANA_INSTALLED"
+      echo "SID=$SID"
+      echo "INSTANCE=$INST"
+      echo "SIDADM=$SIDADM"
+
+      # Check if sidadm user exists and run HDB info
+      if id "$SIDADM" >/dev/null 2>&1; then
+        echo "SIDADM_EXISTS=yes"
+
+        # Run HDB info as sidadm to get detailed status
+        HDB_OUTPUT=$(su - "$SIDADM" -c 'HDB info' 2>/dev/null)
+        if [ -n "$HDB_OUTPUT" ]; then
+          # Count running processes
+          PROC_COUNT=$(echo "$HDB_OUTPUT" | grep -cE 'hdb(nameserver|indexserver|daemon|compileserver)')
+          if [ "$PROC_COUNT" -gt 0 ]; then
+            echo "HANA_STATUS=HANA installed (SID=$SID, instance=$INST, user=$SIDADM) - $PROC_COUNT processes running"
+            echo "HANA_RUNNING=yes"
+          else
+            echo "HANA_STATUS=HANA installed (SID=$SID, instance=$INST, user=$SIDADM) - not running"
+            echo "HANA_RUNNING=no"
+          fi
+          echo "--- HDB_INFO_START ---"
+          echo "$HDB_OUTPUT"
+          echo "--- HDB_INFO_END ---"
+        else
+          echo "HANA_STATUS=HANA installed (SID=$SID, instance=$INST, user=$SIDADM) - HDB info failed"
+          echo "HDB_INFO_FAILED=yes"
+        fi
+      else
+        echo "SIDADM_EXISTS=no"
+        echo "HANA_STATUS=HANA installed (SID=$SID, instance=$INST) - sidadm user not found"
+      fi
+    # Fallback: Check for running HANA processes
     elif ps -ef 2>/dev/null | grep -E 'hdbdaemon|hdbnameserver|hdbindexserver' | grep -v grep | head -1 | grep -q .; then
       echo 'HANA_INSTALLED'
-    # Method 3: Check for <sid>adm users with HDB home directory
+      echo 'HANA_RUNNING=yes'
+      echo 'HANA_STATUS=HANA processes running (could not determine SID)'
+    # Fallback: Check for sidadm users in /etc/passwd
     elif grep -E '^[a-z]{3}adm:.*HDB' /etc/passwd 2>/dev/null | head -1 | grep -q .; then
+      SIDADM=$(grep -E '^[a-z]{3}adm:.*HDB' /etc/passwd 2>/dev/null | head -1 | cut -d: -f1)
       echo 'HANA_INSTALLED'
-    # Method 4: Check for sapcontrol with HANA instance (local executable)
-    elif ls /usr/sap/*/HDB*/exe/sapcontrol 2>/dev/null | head -1 | grep -q .; then
-      echo 'HANA_INSTALLED'
+      echo "SIDADM=$SIDADM"
+      echo "HANA_STATUS=HANA user found ($SIDADM)"
     else
       # Not a HANA node - this is OK for additional cluster nodes (ASCS, majority maker)
       echo 'NOT_HANA_NODE'
+      echo 'HANA_STATUS=Not a HANA node (additional cluster node)'
     fi
   # SOSreport: check ps output for HANA processes (hdbnameserver, hdbdaemon, etc.)
   # The 'ps' file in sosreport contains full process list
@@ -41,8 +82,32 @@ parser:
   multiline: true
   search_patterns:
     # For live_cmd: look for explicit status
-    - name: hana_status
+    - name: hana_installed
       regex: "(HANA_INSTALLED|NOT_HANA_NODE)"
+      group: 1
+    # Capture the formatted status message
+    - name: hana_status_msg
+      regex: "HANA_STATUS=(.*)"
+      group: 1
+    # Extract SID
+    - name: sid
+      regex: "SID=([A-Z0-9]{3})"
+      group: 1
+    # Extract instance number
+    - name: instance
+      regex: "INSTANCE=([0-9]{2})"
+      group: 1
+    # Extract sidadm user
+    - name: sidadm
+      regex: "SIDADM=([a-z0-9]+adm)"
+      group: 1
+    # Check if HANA is running
+    - name: hana_running
+      regex: "HANA_RUNNING=(yes|no)"
+      group: 1
+    # Check HANA version from HDB info
+    - name: hana_version
+      regex: "HDB_VERSION:\\s*([0-9.]+)"
       group: 1
     # For sosreport ps file: look for HANA processes
     - name: hana_process
@@ -54,10 +119,14 @@ validation_logic:
   # This check always "passes" - it's informational only
   # HANA_INSTALLED = HANA node, NOT_HANA_NODE = additional cluster node (OK)
   expectations:
-    - key: hana_status
+    - key: hana_installed
       operator: in
       value: ["HANA_INSTALLED", "NOT_HANA_NODE"]
       message: "Could not determine HANA installation status"
+    - key: hana_status_msg
+      operator: info_if_exists
+      message: "HANA status check"
+      pass_message: "${hana_status_msg}"
     - key: hana_process
       operator: exists
       message: "HANA processes detected"
