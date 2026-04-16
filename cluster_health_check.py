@@ -290,6 +290,10 @@ class ClusterHealthCheck:
             nodes=node_list,
             majority_makers=majority_makers,
 
+            # OS/Software versions (from install_status)
+            rhel_version=install_status.get('rhel_version') if install_status else None,
+            pacemaker_version=install_status.get('pacemaker_version') if install_status else None,
+
             # SAP HANA config
             sid=cluster_config.get('sid'),
             instance_number=cluster_config.get('instance_number'),
@@ -374,7 +378,34 @@ class ClusterHealthCheck:
             'cluster_name': None,
             'cluster_nodes': [],
             'offline_nodes': [],
+            # Version info
+            'rhel_version': None,
+            'pacemaker_version': None,
         }
+
+        # Detect RHEL version from redhat-release
+        redhat_release = sos_path / "etc/redhat-release"
+        if redhat_release.exists():
+            try:
+                content = redhat_release.read_text().strip()
+                match = re.search(r'release\s+(\d+\.?\d*)', content)
+                if match:
+                    status['rhel_version'] = f"RHEL {match.group(1)}"
+                else:
+                    status['rhel_version'] = content[:50]
+            except Exception:
+                pass
+
+        # Detect Pacemaker version from installed-rpms
+        installed_rpms = sos_path / "installed-rpms"
+        if installed_rpms.exists():
+            try:
+                content = installed_rpms.read_text()
+                match = re.search(r'pacemaker-(\d+\.\d+\.\d+)', content)
+                if match:
+                    status['pacemaker_version'] = match.group(1)
+            except Exception:
+                pass
 
         # Check if corosync.conf exists
         corosync_conf = sos_path / "etc/corosync/corosync.conf"
@@ -547,6 +578,9 @@ class ClusterHealthCheck:
             'cluster_name': None,
             'cluster_nodes': [],
             'offline_nodes': [],
+            # Version info
+            'rhel_version': None,
+            'pacemaker_version': None,
         }
 
         if not node and not self.access_config:
@@ -601,6 +635,34 @@ class ClusterHealthCheck:
         else:
             status['packages_installed'] = False
             status['missing_packages'] = required_packages + ['sap-hana-ha']
+
+        # Detect RHEL version from /etc/redhat-release
+        success, output = self._execute_check_cmd(
+            "cat /etc/redhat-release 2>/dev/null",
+            node, method, user
+        )
+        if success and output:
+            # Extract version like "Red Hat Enterprise Linux release 9.5 (Plow)" -> "RHEL 9.5"
+            import re as regex_mod
+            match = regex_mod.search(r'release\s+(\d+\.?\d*)', output)
+            if match:
+                status['rhel_version'] = f"RHEL {match.group(1)}"
+            else:
+                status['rhel_version'] = output.strip()[:50]  # Fallback to raw output
+
+        # Detect Pacemaker version
+        success, output = self._execute_check_cmd(
+            "rpm -q pacemaker 2>/dev/null | head -1",
+            node, method, user
+        )
+        if success and output and 'not installed' not in output:
+            # Extract version like "pacemaker-2.1.8-3.el9.x86_64" -> "2.1.8"
+            import re as regex_mod
+            match = regex_mod.search(r'pacemaker-(\d+\.\d+\.\d+)', output)
+            if match:
+                status['pacemaker_version'] = match.group(1)
+            else:
+                status['pacemaker_version'] = output.strip()[:30]
 
         # If packages are installed, subscription/repos are OK (could be local repo)
         if status['packages_installed']:
