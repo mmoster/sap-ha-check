@@ -1783,6 +1783,21 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                 if data_source:
                     print(f"\n  Data Source: {data_source}")
 
+            # Show cluster configuration in verbose mode
+            if self.verbose_pdf:
+                config_file = self.config_dir / 'cluster_access_config.yaml'
+                if config_file.exists():
+                    # Get cluster name from access config
+                    cluster_to_show = None
+                    if self.access_config and hasattr(self.access_config, 'clusters'):
+                        clusters = self.access_config.clusters
+                        if clusters:
+                            cluster_to_show = list(clusters.keys())[0]
+                    print("\n" + "-" * 63)
+                    print(" Cluster Configuration (verbose mode)")
+                    print("-" * 63)
+                    show_config(config_file, cluster_to_show, config_only=True)
+
             # Check for installation issues
             # Essential commands for RHEL clusters
             essential_commands = ['pacemaker', 'corosync', 'pcs', 'crm_mon']  # noqa: F841
@@ -2809,7 +2824,7 @@ Examples:
     if args.show_config:
         # args.show_config is True (no argument) or a string (cluster/node name)
         cluster_or_node = None if args.show_config is True else args.show_config
-        show_config(config_path, cluster_or_node)
+        show_config(config_path, cluster_or_node, config_only=True)
         sys.exit(0)
 
     # Handle delete-config action

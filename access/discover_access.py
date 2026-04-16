@@ -1880,7 +1880,7 @@ class AccessDiscovery:
             print(f"  (source: {self.config.ansible_inventory_source})")
 
 
-def show_config(config_path: Path, cluster_or_node: str = None):
+def show_config(config_path: Path, cluster_or_node: str = None, config_only: bool = False):
     """Display the current configuration in a user-friendly format.
 
     Args:
@@ -1888,6 +1888,8 @@ def show_config(config_path: Path, cluster_or_node: str = None):
         cluster_or_node: Optional cluster name or hostname to filter output.
                          If a cluster name is provided, shows that cluster.
                          If a hostname is provided, shows the cluster containing that node.
+        config_only: If True, show only cluster configuration (no node summary,
+                     quick commands, or other sections)
     """
     if not config_path.exists():
         print(f"No configuration file found at {config_path}")
@@ -2216,11 +2218,16 @@ def show_config(config_path: Path, cluster_or_node: str = None):
                     if secondary_read is not None:
                         print(f"      secondary_read: {str(secondary_read).lower()}")
 
-            print("\n    To check this cluster:")
-            print(f"      ./cluster_health_check.py -C {name}")
+            if not config_only:
+                print("\n    To check this cluster:")
+                print(f"      ./cluster_health_check.py -C {name}")
     else:
         print("\n[INFO] No clusters discovered yet")
         print("  Run: ./cluster_health_check.py hana01")
+
+    # Skip remaining sections if config_only mode
+    if config_only:
+        return True
 
     # Show node summary (filtered to cluster nodes if cluster_name specified)
     if cluster_name and cluster_name in clusters:
