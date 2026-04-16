@@ -1962,6 +1962,22 @@ def show_config(config_path: Path, cluster_or_node: str = None):
             print(f"    Nodes: {', '.join(cluster_nodes)}")
             print(f"    Discovered from: {discovered_from}")
 
+            # Always show basic cluster info
+            discovered_at = info.get('discovered_at', '')
+            cluster_running = info.get('cluster_running')
+            rhel_version = info.get('rhel_version', '')
+            pacemaker_version = info.get('pacemaker_version', '')
+
+            if discovered_at:
+                print(f"    Discovered at: {discovered_at[:19]}")  # Trim microseconds
+            if cluster_running is not None:
+                status = "Running" if cluster_running else "Stopped"
+                print(f"    Cluster status: {status}")
+            if rhel_version:
+                print(f"    RHEL version: {rhel_version}")
+            if pacemaker_version:
+                print(f"    Pacemaker version: {pacemaker_version}")
+
             # Show SAP HANA info if available (Ansible-compatible parameters)
             sid = info.get('sid')
             if sid:
@@ -2067,6 +2083,29 @@ def show_config(config_path: Path, cluster_or_node: str = None):
                         print(f"      automated_register: {str(auto_reg).lower()}")
                     if prefer_takeover is not None:
                         print(f"      prefer_site_takeover: {str(prefer_takeover).lower()}")
+            else:
+                # Show whatever info we have even without SID
+                resource_type = info.get('resource_type', '')
+                virtual_ip = info.get('virtual_ip', '')
+                stonith_device = info.get('stonith_device', '')
+                node1_ip = info.get('node1_ip', '')
+                node2_ip = info.get('node2_ip', '')
+
+                has_info = resource_type or virtual_ip or stonith_device or node1_ip or node2_ip
+                if has_info:
+                    print("\n    Partial Configuration (SID not detected):")
+                    print("    " + "-" * 40)
+                    if resource_type:
+                        cluster_type = "Scale-Up" if resource_type == "SAPHana" else "Scale-Out"
+                        print(f"      cluster_type: {cluster_type}")
+                    if node1_ip:
+                        print(f"      node1_ip: {node1_ip}")
+                    if node2_ip:
+                        print(f"      node2_ip: {node2_ip}")
+                    if virtual_ip:
+                        print(f"      vip: {virtual_ip}")
+                    if stonith_device:
+                        print(f"      stonith_device: {stonith_device}")
 
             print("\n    To check this cluster:")
             print(f"      ./cluster_health_check.py -C {name}")
