@@ -1661,14 +1661,17 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                 pdf_timestamp = datetime.now().strftime('%Y%m%d')
                 pdf_time = datetime.now().strftime('%H%M')
                 pdf_file = self.config_dir / f"{pdf_timestamp}_health_check_report_{cluster_name_safe}_{pdf_time}.pdf"
-                generate_health_check_report(
-                    results_dict,
-                    summary_dict,
-                    cluster_info,
-                    str(pdf_file),
-                    install_status if install_status else None,
-                    verbose=self.verbose_pdf
-                )
+
+                # Use spinner for PDF generation (can take a while in verbose mode)
+                with Spinner("Generating PDF report"):
+                    generate_health_check_report(
+                        results_dict,
+                        summary_dict,
+                        cluster_info,
+                        str(pdf_file),
+                        install_status if install_status else None,
+                        verbose=self.verbose_pdf
+                    )
                 print(f"  PDF report: {pdf_file}")
             except Exception as e:
                 print(f"  [WARN] PDF generation failed: {e}")
@@ -1869,14 +1872,16 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                         pdf_time = datetime.now().strftime('%H%M')
                         pdf_file = self.config_dir / f"{pdf_timestamp}_health_check_report_{cluster_name_safe}_{pdf_time}.pdf"
 
-                        generate_health_check_report(
-                            report_data.get_results_list(),
-                            report_data.get_summary_dict(),
-                            report_data.to_cluster_info(),
-                            str(pdf_file),
-                            report_data.get_install_status() or None,
-                            verbose=self.verbose_pdf
-                        )
+                        # Use spinner for PDF generation
+                        with Spinner("Generating PDF report"):
+                            generate_health_check_report(
+                                report_data.get_results_list(),
+                                report_data.get_summary_dict(),
+                                report_data.to_cluster_info(),
+                                str(pdf_file),
+                                report_data.get_install_status() or None,
+                                verbose=self.verbose_pdf
+                            )
                         self.last_pdf_file = pdf_file  # Track for auto-open
                         print(f"\n  PDF report saved: {pdf_file}")
                     except Exception as e:
