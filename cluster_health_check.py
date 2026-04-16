@@ -2795,12 +2795,46 @@ Examples:
                     try:
                         new_hosts = input("  Enter hostnames (space-separated): ").strip()
                         if new_hosts:
-                            print("\n  To check different hosts, run:")
-                            print(f"    ./cluster_health_check.py {new_hosts}")
-                            print("\n  Or with force rediscovery:")
-                            print(f"    ./cluster_health_check.py -f {new_hosts}")
+                            host_list = new_hosts.split()
+                            print(f"\n  Running health check on: {', '.join(host_list)}")
+                            print("=" * 63)
+
+                            # Create temporary hosts file
+                            import tempfile
+                            with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as tmp:
+                                tmp.write('\n'.join(host_list))
+                                tmp_hosts_path = tmp.name
+
+                            try:
+                                # Create new health check instance with new hosts
+                                new_health_check = ClusterHealthCheck(
+                                    config_dir=str(config_dir),
+                                    sosreport_dir=args.sosreport_dir,
+                                    hosts_file=tmp_hosts_path,
+                                    workers=args.workers,
+                                    rules_path=args.rules_path,
+                                    debug=args.debug,
+                                    ansible_group=args.group,
+                                    cluster_name=None,  # Force rediscovery
+                                    local_mode=False,
+                                    strict_mode=args.strict,
+                                    generate_pdf=not args.no_pdf
+                                )
+                                # Run health check with force rediscovery
+                                exit_code = new_health_check.run_all_checks(
+                                    force_rediscover=True,
+                                    skip_steps=args.skip
+                                )
+                                # Update reference for subsequent menu options
+                                health_check = new_health_check
+                            finally:
+                                # Clean up temp file
+                                try:
+                                    os.unlink(tmp_hosts_path)
+                                except Exception:
+                                    pass
                     except (EOFError, KeyboardInterrupt):
-                        pass
+                        print("\n  Cancelled.")
                 elif choice == '4' or choice == 'c':
                     # Show configuration (show_config imported at module level)
                     show_config(health_check.config_dir / 'cluster_access_config.yaml')
