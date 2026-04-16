@@ -48,14 +48,32 @@ This scans for SOSreport archives, hosts files, and existing reports, then prese
 
 ## Installation
 
+### Option 1: Using git (recommended)
+
 ```bash
+# Install git if not available
+sudo dnf install git    # RHEL/Fedora
+sudo yum install git    # RHEL 7
+
+# Clone and run
 git clone https://github.com/mmoster/sap_hana_healthcheck.git
 cd sap_hana_healthcheck
+./cluster_health_check.py --local
 ```
 
-Requirements:
-- Python 3.6+
-- PyYAML (`pip install pyyaml`)
+### Option 2: Download without git
+
+```bash
+# Download and extract
+curl -L https://github.com/mmoster/sap_hana_healthcheck/archive/refs/heads/main.tar.gz | tar xz
+cd sap_hana_healthcheck-main
+./cluster_health_check.py --local
+```
+
+### Requirements
+
+- Python 3.6+ (included in RHEL 8/9)
+- PyYAML (`pip install pyyaml` or `dnf install python3-pyyaml`)
 - fpdf2 (optional, for PDF reports): `pip install fpdf2`
 
 ## Usage

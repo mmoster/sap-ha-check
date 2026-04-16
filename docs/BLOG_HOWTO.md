@@ -23,10 +23,28 @@ This tool runs 22 automated health checks against your SAP HANA HA cluster, cove
 
 ## Installation
 
+### Option 1: Using git (recommended)
+
 ```bash
+# Install git if not available
+sudo dnf install git    # RHEL/Fedora
+sudo yum install git    # RHEL 7
+
+# Clone and run
 git clone https://github.com/mmoster/sap_hana_healthcheck.git
 cd sap_hana_healthcheck
 pip install pyyaml fpdf2  # fpdf2 is optional for PDF reports
+./cluster_health_check.py --local
+```
+
+### Option 2: Download without git
+
+```bash
+# Download and extract
+curl -L https://github.com/mmoster/sap_hana_healthcheck/archive/refs/heads/main.tar.gz | tar xz
+cd sap_hana_healthcheck-main
+pip install pyyaml fpdf2  # fpdf2 is optional for PDF reports
+./cluster_health_check.py --local
 ```
 
 ---
