@@ -206,7 +206,10 @@ class ClusterHealthCheck:
             pass
 
         # Determine if cluster is running
-        cluster_running = True
+        # First check discovery-time status (from access discovery)
+        cluster_running = cluster_config.get('cluster_running', True)
+
+        # Also check install status (runtime check)
         if install_status:
             has_config = install_status.get('corosync_conf_exists') or install_status.get('cib_exists')
             pacemaker_running = install_status.get('pacemaker_running')

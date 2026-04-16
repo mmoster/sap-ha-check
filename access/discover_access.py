@@ -472,6 +472,61 @@ class AccessDiscovery:
 
         return sosreports
 
+    def was_cluster_running_in_sosreport(self, sosreport_path: str) -> tuple:
+        """
+        Check if the cluster was running when the SOSreport was captured.
+        Returns tuple: (was_running, reason_message)
+        """
+        sos_path = Path(sosreport_path)
+
+        # Check pcs status output for connection errors
+        for pcs_file in ["sos_commands/pacemaker/pcs_status", "sos_commands/pacemaker/pcs_status_--full"]:
+            pcs_status = sos_path / pcs_file
+            if pcs_status.exists():
+                try:
+                    content = pcs_status.read_text()
+                    # Check for connection failure messages
+                    if "Connection to cluster failed" in content or "Error: cluster is not currently running" in content:
+                        return (False, "pcs status shows cluster connection failed")
+                    if "error:" in content.lower() and "cluster" in content.lower():
+                        return (False, "pcs status shows cluster error")
+                    # If we have normal cluster output, it was running
+                    if "Cluster name:" in content or "nodes configured" in content:
+                        return (True, "pcs status shows cluster was running")
+                except Exception:
+                    pass
+
+        # Check crm_mon output
+        crm_mon = sos_path / "sos_commands/pacemaker/crm_mon_-1"
+        if crm_mon.exists():
+            try:
+                content = crm_mon.read_text()
+                if "Connection to cluster failed" in content or "Could not connect" in content:
+                    return (False, "crm_mon shows cluster connection failed")
+                if "error:" in content.lower() and "cluster" in content.lower():
+                    return (False, "crm_mon shows cluster error")
+                # Normal output indicates cluster was running
+                if "nodes configured" in content.lower() or "online" in content.lower():
+                    return (True, "crm_mon shows cluster was running")
+            except Exception:
+                pass
+
+        # Check systemd service status if available
+        systemd_dir = sos_path / "sos_commands/systemd"
+        if systemd_dir.exists():
+            for service_file in systemd_dir.glob("systemctl_status_*pacemaker*"):
+                try:
+                    content = service_file.read_text()
+                    if "Active: active (running)" in content:
+                        return (True, "systemctl shows pacemaker was running")
+                    if "Active: inactive" in content or "Active: failed" in content:
+                        return (False, "systemctl shows pacemaker was not running")
+                except Exception:
+                    pass
+
+        # Default: unknown, assume running (to avoid false positives)
+        return (True, "cluster status unknown from sosreport")
+
     def get_cluster_name_from_sosreport(self, sosreport_path: str) -> Optional[str]:
         """Extract cluster name from a sosreport's corosync.conf or pcs status output."""
         sos_path = Path(sosreport_path)
@@ -965,6 +1020,104 @@ class AccessDiscovery:
         import socket
         return socket.gethostname().split('.')[0]
 
+    def check_cluster_services_running(self, host: str = None, user: str = None) -> tuple:
+        """
+        Check if cluster services (pacemaker/corosync) are running.
+        Returns tuple: (pacemaker_running, corosync_running, service_status_message)
+        """
+        if host:
+            # Remote check via SSH
+            ssh_user = user or 'root'
+            sudo_prefix = "sudo " if ssh_user != 'root' else ""
+            cmd = f"{sudo_prefix}systemctl is-active pacemaker corosync 2>/dev/null"
+            try:
+                ssh_cmd = [
+                    "ssh", "-o", "BatchMode=yes",
+                    "-o", f"ConnectTimeout={self.SSH_TIMEOUT}",
+                    "-o", "StrictHostKeyChecking=no",
+                    f"{ssh_user}@{host}",
+                    cmd
+                ]
+                result = subprocess.run(ssh_cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                        universal_newlines=True, timeout=self.SSH_TIMEOUT + 2)
+                lines = result.stdout.strip().split('\n')
+                pacemaker_active = len(lines) > 0 and lines[0].strip() == 'active'
+                corosync_active = len(lines) > 1 and lines[1].strip() == 'active'
+            except Exception:
+                return (False, False, "Could not check service status")
+        else:
+            # Local check
+            try:
+                result = subprocess.run(
+                    "systemctl is-active pacemaker corosync 2>/dev/null",
+                    shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    universal_newlines=True, timeout=5
+                )
+                lines = result.stdout.strip().split('\n')
+                pacemaker_active = len(lines) > 0 and lines[0].strip() == 'active'
+                corosync_active = len(lines) > 1 and lines[1].strip() == 'active'
+            except Exception:
+                return (False, False, "Could not check service status")
+
+        if pacemaker_active and corosync_active:
+            return (True, True, "Cluster services running")
+        elif not pacemaker_active and not corosync_active:
+            return (False, False, "Cluster is NOT running (pacemaker and corosync are stopped)")
+        elif not pacemaker_active:
+            return (False, corosync_active, "Pacemaker is NOT running")
+        else:
+            return (pacemaker_active, False, "Corosync is NOT running")
+
+    def get_nodes_from_corosync_conf(self, host: str = None, user: str = None) -> List[str]:
+        """
+        Get cluster nodes from /etc/corosync/corosync.conf (static config).
+        This works even when cluster services are not running.
+        """
+        nodes = []
+        if host:
+            # Remote read via SSH
+            ssh_user = user or 'root'
+            sudo_prefix = "sudo " if ssh_user != 'root' else ""
+            cmd = f"{sudo_prefix}cat /etc/corosync/corosync.conf 2>/dev/null"
+            try:
+                ssh_cmd = [
+                    "ssh", "-o", "BatchMode=yes",
+                    "-o", f"ConnectTimeout={self.SSH_TIMEOUT}",
+                    "-o", "StrictHostKeyChecking=no",
+                    f"{ssh_user}@{host}",
+                    cmd
+                ]
+                result = subprocess.run(ssh_cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                        universal_newlines=True, timeout=self.SSH_TIMEOUT + 2)
+                if result.returncode == 0:
+                    content = result.stdout
+                else:
+                    return nodes
+            except Exception:
+                return nodes
+        else:
+            # Local read
+            try:
+                corosync_conf = Path("/etc/corosync/corosync.conf")
+                if corosync_conf.exists():
+                    content = corosync_conf.read_text()
+                else:
+                    return nodes
+            except Exception:
+                return nodes
+
+        # Parse corosync.conf for node names
+        # Look for ring0_addr or name in nodelist section
+        name_matches = re.findall(r'^\s*name:\s*(\S+)', content, re.MULTILINE)
+        if name_matches:
+            nodes = name_matches
+        else:
+            ring_matches = re.findall(r'ring0_addr:\s*(\S+)', content)
+            if ring_matches:
+                nodes = ring_matches
+
+        return nodes
+
     def discover_cluster_nodes_local(self) -> tuple:
         """
         Discover cluster members by running commands locally.
@@ -972,12 +1125,21 @@ class AccessDiscovery:
         """
         cluster_nodes = []
         cluster_name = None
+        cluster_running = True
 
         print("\n=== Discovering Cluster (local mode) ===")
 
         # Get local hostname
         self.local_hostname = self.get_local_hostname()
         print(f"  Local hostname: {self.local_hostname}")
+
+        # Check if cluster services are running
+        pacemaker_up, corosync_up, status_msg = self.check_cluster_services_running()
+        if not pacemaker_up or not corosync_up:
+            cluster_running = False
+            print(f"\n  ⚠️  WARNING: {status_msg}")
+            print("     Cluster commands will fail - falling back to static configuration")
+            print("     To start the cluster: pcs cluster start --all\n")
 
         # Get cluster name locally
         name_commands = [
@@ -1032,14 +1194,27 @@ class AccessDiscovery:
                 continue
 
         if not cluster_nodes:
-            print("  Could not discover cluster nodes locally")
-            print(f"  Using {self.local_hostname} as only node")
-            cluster_nodes = [self.local_hostname]
+            # Try static fallback from corosync.conf
+            static_nodes = self.get_nodes_from_corosync_conf()
+            if static_nodes:
+                cluster_nodes = static_nodes
+                if not cluster_running:
+                    print(f"  Found {len(cluster_nodes)} node(s) from corosync.conf: {', '.join(cluster_nodes)}")
+                else:
+                    print(f"  Found {len(cluster_nodes)} cluster node(s) (static): {', '.join(cluster_nodes)}")
+            else:
+                if not cluster_running:
+                    print("  Could not discover cluster nodes (cluster not running, no corosync.conf)")
+                else:
+                    print("  Could not discover cluster nodes locally")
+                print(f"  Using {self.local_hostname} as only node")
+                cluster_nodes = [self.local_hostname]
 
         # Store cluster info
         if cluster_name:
             self.config.clusters[cluster_name] = {
                 'nodes': cluster_nodes,
+                'cluster_running': cluster_running,
                 'discovered_from': self.local_hostname,
                 'discovered_at': datetime.now().isoformat()
             }
@@ -1057,8 +1232,17 @@ class AccessDiscovery:
         sudo_prefix = "sudo " if ssh_user != 'root' else ""
         cluster_nodes = []
         cluster_name = None
+        cluster_running = True
 
         print(f"\n=== Discovering Cluster from {seed_host} ===")
+
+        # Check if cluster services are running on the seed host
+        pacemaker_up, corosync_up, status_msg = self.check_cluster_services_running(seed_host, ssh_user)
+        if not pacemaker_up or not corosync_up:
+            cluster_running = False
+            print(f"\n  ⚠️  WARNING: {status_msg}")
+            print("     Cluster commands will fail - falling back to static configuration")
+            print("     To start the cluster: pcs cluster start --all\n")
 
         # First get cluster name
         cluster_name = self.discover_cluster_name(seed_host, ssh_user)
@@ -1106,9 +1290,21 @@ class AccessDiscovery:
                 continue
 
         if not cluster_nodes:
-            print(f"  Could not discover cluster nodes from {seed_host}")
-            print(f"  Using {seed_host} as only node")
-            cluster_nodes = [seed_host]
+            # Try static fallback from corosync.conf on the remote host
+            static_nodes = self.get_nodes_from_corosync_conf(seed_host, ssh_user)
+            if static_nodes:
+                cluster_nodes = static_nodes
+                if not cluster_running:
+                    print(f"  Found {len(cluster_nodes)} node(s) from corosync.conf: {', '.join(cluster_nodes)}")
+                else:
+                    print(f"  Found {len(cluster_nodes)} cluster node(s) (static): {', '.join(cluster_nodes)}")
+            else:
+                if not cluster_running:
+                    print(f"  Could not discover cluster nodes (cluster not running, no corosync.conf)")
+                else:
+                    print(f"  Could not discover cluster nodes from {seed_host}")
+                print(f"  Using {seed_host} as only node")
+                cluster_nodes = [seed_host]
 
         # Discover SAP HANA info (pass cluster_nodes for node IP/FQDN discovery)
         hana_info = self.discover_hana_info(seed_host, ssh_user, cluster_nodes)
@@ -1125,6 +1321,7 @@ class AccessDiscovery:
         if cluster_name:
             cluster_data = {
                 'nodes': cluster_nodes,
+                'cluster_running': cluster_running,
                 'discovered_from': seed_host,
                 'discovered_at': datetime.now().isoformat()
             }
@@ -1341,6 +1538,18 @@ class AccessDiscovery:
                 if sosreports:
                     print(f"\n[INFO] SOSreport mode: {len(sosreports)} SOSreport(s) found")
 
+                    # Check if cluster was running when SOSreports were captured
+                    cluster_was_down = False
+                    for hostname, sos_path in sosreports.items():
+                        was_running, reason = self.was_cluster_running_in_sosreport(sos_path)
+                        if not was_running:
+                            cluster_was_down = True
+                            print(f"\n  ⚠️  WARNING: Cluster was NOT running when {hostname}'s SOSreport was captured")
+                            print(f"     Reason: {reason}")
+                            print("     Some health check results may be incomplete or show errors")
+                            print("     Consider creating new SOSreports with cluster running\n")
+                            break  # Only warn once
+
                     # Extract all expected cluster nodes from corosync.conf
                     expected_nodes = set()
                     for hostname, sos_path in sosreports.items():
@@ -1545,6 +1754,46 @@ class AccessDiscovery:
                         }
                         self.config.nodes[hostname] = node_info
                         print(f"  [CLUSTER] Discovered {hostname} from SOSreport cluster info")
+
+        # Check if multiple clusters were discovered - prompt for selection
+        if len(self.config.clusters) > 1:
+            # Build clusters dict in format expected by prompt_cluster_selection
+            clusters_for_selection = {}
+            for cname, cinfo in self.config.clusters.items():
+                if cname == '(unknown)':
+                    continue
+                cluster_nodes_list = cinfo.get('nodes', [])
+                # Map nodes to their info
+                nodes_dict = {}
+                for node in cluster_nodes_list:
+                    if node in self.config.nodes:
+                        nodes_dict[node] = self.config.nodes[node].get('sosreport_path', '')
+                    else:
+                        nodes_dict[node] = ''
+                if nodes_dict:
+                    clusters_for_selection[cname] = {'nodes': nodes_dict}
+
+            if len(clusters_for_selection) > 1:
+                print("\n" + "=" * 60)
+                print(" Multiple clusters discovered from hosts")
+                print("=" * 60)
+                selected_cluster = self.prompt_cluster_selection(clusters_for_selection)
+
+                if selected_cluster is None:
+                    print("\n[INFO] Cluster selection cancelled.")
+                    sys.exit(0)
+                elif selected_cluster != '__all__':
+                    # Filter to only selected cluster's nodes
+                    selected_nodes = self.config.clusters[selected_cluster].get('nodes', [])
+                    filtered_nodes = {n: self.config.nodes[n] for n in selected_nodes if n in self.config.nodes}
+
+                    print(f"\n[INFO] Analyzing cluster '{selected_cluster}' only")
+                    print(f"       Nodes: {', '.join(sorted(filtered_nodes.keys()))}")
+
+                    # Remove nodes not in selected cluster
+                    self.config.nodes = filtered_nodes
+                    # Keep only selected cluster
+                    self.config.clusters = {selected_cluster: self.config.clusters[selected_cluster]}
 
         self.config.discovery_complete = True
         self.save_config()

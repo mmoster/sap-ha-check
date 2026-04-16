@@ -239,6 +239,7 @@ class ClusterReportData:
             'data_source': self.data_source,
             'access_method': self.access_method,
             'used_cib_xml': self.used_cib_xml,
+            'cluster_running': self.cluster_running,
 
             # OS/Software versions
             'rhel_version': self.rhel_version,

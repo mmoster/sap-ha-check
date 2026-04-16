@@ -409,46 +409,63 @@ def generate_health_check_report(
         pdf.ln(8)
 
     # =========================================================================
-    # CLUSTER NOT RUNNING WARNING (for live access)
+    # CLUSTER NOT RUNNING WARNING (for live access AND SOSreports)
     # =========================================================================
-    cluster_running = True
+    cluster_running = cluster_info.get('cluster_running', True)
+
+    # Also check install_status for live systems
     if install_status and access_method != 'sosreport':
         # Check if cluster is configured but not running
         has_config = install_status.get('corosync_conf_exists') or install_status.get('cib_exists')
         pacemaker_running = install_status.get('pacemaker_running')
         if has_config and not pacemaker_running:
             cluster_running = False
-            # Add prominent warning box
-            pdf.set_fill_color(255, 243, 205)  # Light yellow background
-            pdf.set_draw_color(255, 193, 7)    # Yellow border
-            pdf.set_line_width(0.5)
-            pdf.set_font('Helvetica', 'B', 11)
-            pdf.set_text_color(133, 100, 4)    # Dark yellow/brown text
 
-            # Warning box
-            y_start = pdf.get_y()
-            pdf.rect(10, y_start, 190, 38, 'DF')
-            pdf.set_xy(15, y_start + 3)
-            pdf.cell(0, 6, "WARNING: Cluster Services Not Running", ln=True)
-
-            pdf.set_xy(15, y_start + 10)
-            pdf.set_font('Helvetica', '', 9)
-            pdf.multi_cell(180, 4,
+    if not cluster_running:
+        # Determine warning message based on access method
+        if access_method == 'sosreport':
+            warning_title = "WARNING: Cluster Was Not Running When SOSreport Was Captured"
+            warning_text = (
+                "The SOSreport was collected while Pacemaker was not running. Health check results "
+                "may be incomplete or inaccurate. Checks that require live cluster data (quorum, "
+                "node status, resource status, replication status) will report ERROR status. "
+                "Consider creating new SOSreports with the cluster running."
+            )
+        else:
+            warning_title = "WARNING: Cluster Services Not Running"
+            warning_text = (
                 "The cluster is configured but Pacemaker is not running. Health check results "
                 "may be incomplete or inaccurate. Checks that require live cluster data (quorum, "
                 "node status, resource status, replication status) will report ERROR status."
             )
-            pdf.set_xy(15, y_start + 22)
-            pdf.set_font('Helvetica', 'B', 9)
-            pdf.cell(0, 4, "To start the cluster and rerun the health check:")
-            pdf.set_xy(15, y_start + 28)
-            pdf.set_font('Courier', '', 9)
-            pdf.set_fill_color(245, 245, 245)
-            pdf.cell(180, 5, "  pcs cluster start --all", fill=True)
 
-            pdf.set_text_color(*RedHatColors.BLACK)
-            pdf.set_line_width(0.2)
-            pdf.ln(20)
+        # Add prominent warning box
+        pdf.set_fill_color(255, 243, 205)  # Light yellow background
+        pdf.set_draw_color(255, 193, 7)    # Yellow border
+        pdf.set_line_width(0.5)
+        pdf.set_font('Helvetica', 'B', 11)
+        pdf.set_text_color(133, 100, 4)    # Dark yellow/brown text
+
+        # Warning box
+        y_start = pdf.get_y()
+        pdf.rect(10, y_start, 190, 38, 'DF')
+        pdf.set_xy(15, y_start + 3)
+        pdf.cell(0, 6, warning_title, ln=True)
+
+        pdf.set_xy(15, y_start + 10)
+        pdf.set_font('Helvetica', '', 9)
+        pdf.multi_cell(180, 4, warning_text)
+        pdf.set_xy(15, y_start + 22)
+        pdf.set_font('Helvetica', 'B', 9)
+        pdf.cell(0, 4, "To start the cluster and rerun the health check:")
+        pdf.set_xy(15, y_start + 28)
+        pdf.set_font('Courier', '', 9)
+        pdf.set_fill_color(245, 245, 245)
+        pdf.cell(180, 5, "  pcs cluster start --all", fill=True)
+
+        pdf.set_text_color(*RedHatColors.BLACK)
+        pdf.set_line_width(0.2)
+        pdf.ln(20)
 
     # =========================================================================
     # CLUSTER CONFIGURATION
