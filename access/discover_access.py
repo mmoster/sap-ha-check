@@ -2000,18 +2000,24 @@ def show_config(config_path: Path, cluster_or_node: str = None):
                 print(f"      cluster_type: {cluster_type}")
 
                 # Node Information
+                node1_hostname = info.get('node1_hostname', '')
                 node1_fqdn = info.get('node1_fqdn', '')
                 node1_ip = info.get('node1_ip', '')
+                node2_hostname = info.get('node2_hostname', '')
                 node2_fqdn = info.get('node2_fqdn', '')
                 node2_ip = info.get('node2_ip', '')
-                if node1_fqdn or node1_ip:
-                    print("\n      # Node 1")
+                if node1_hostname or node1_fqdn or node1_ip:
+                    print("\n      # Node 1 (Primary Site)")
+                    if node1_hostname:
+                        print(f"      node1_hostname: {node1_hostname}")
                     if node1_fqdn:
                         print(f"      node1_fqdn: {node1_fqdn}")
                     if node1_ip:
                         print(f"      node1_ip: {node1_ip}")
-                if node2_fqdn or node2_ip:
-                    print("\n      # Node 2")
+                if node2_hostname or node2_fqdn or node2_ip:
+                    print("\n      # Node 2 (Secondary Site)")
+                    if node2_hostname:
+                        print(f"      node2_hostname: {node2_hostname}")
                     if node2_fqdn:
                         print(f"      node2_fqdn: {node2_fqdn}")
                     if node2_ip:
@@ -2021,14 +2027,17 @@ def show_config(config_path: Path, cluster_or_node: str = None):
                 virtual_ip = info.get('virtual_ip', '')
                 vip_resource = info.get('vip_resource', '')
                 secondary_vip = info.get('secondary_vip', '')
-                if virtual_ip:
+                secondary_vip_resource = info.get('secondary_vip_resource', '')
+                if virtual_ip or secondary_vip:
                     print("\n      # Virtual IP Configuration")
-                    print(f"      vip: {virtual_ip}")
+                    if virtual_ip:
+                        print(f"      vip: {virtual_ip}")
                     if vip_resource:
                         print(f"      vip_resource: {vip_resource}")
                     if secondary_vip:
                         print(f"      secondary_vip: {secondary_vip}")
-                        print("      secondary_read: true")
+                        if secondary_vip_resource:
+                            print(f"      secondary_vip_resource: {secondary_vip_resource}")
 
                 # System Replication
                 repl_mode = info.get('replication_mode', '')
@@ -2062,50 +2071,150 @@ def show_config(config_path: Path, cluster_or_node: str = None):
                 # STONITH
                 stonith_device = info.get('stonith_device', '')
                 stonith_type = info.get('stonith_type', '')
-                if stonith_device:
+                stonith_params = info.get('stonith_params', {})
+                if stonith_device or stonith_params:
                     print("\n      # STONITH/Fencing")
-                    print(f"      stonith_device: {stonith_device}")
+                    if stonith_device:
+                        print(f"      stonith_device: {stonith_device}")
                     if stonith_type:
                         print(f"      stonith_type: {stonith_type}")
+                    if stonith_params:
+                        pcmk_host_map = stonith_params.get('pcmk_host_map', '')
+                        if pcmk_host_map:
+                            print(f"      pcmk_host_map: {pcmk_host_map}")
+                        for key, value in stonith_params.items():
+                            if key != 'pcmk_host_map':
+                                print(f"      {key}: {value}")
 
                 # Cluster Properties
                 stickiness = info.get('resource_stickiness')
                 migration = info.get('migration_threshold')
                 auto_reg = info.get('automated_register')
                 prefer_takeover = info.get('prefer_site_takeover')
-                if stickiness or migration or auto_reg is not None or prefer_takeover is not None:
+                dup_primary_timeout = info.get('duplicate_primary_timeout')
+                secondary_read = info.get('secondary_read')
+
+                has_props = (stickiness or migration or auto_reg is not None or
+                            prefer_takeover is not None or dup_primary_timeout or
+                            secondary_read is not None)
+                if has_props:
                     print("\n      # Cluster Properties")
                     if stickiness:
                         print(f"      resource_stickiness: {stickiness}")
-                    if migration:
+                    if migration is not None:
                         print(f"      migration_threshold: {migration}")
                     if auto_reg is not None:
                         print(f"      automated_register: {str(auto_reg).lower()}")
                     if prefer_takeover is not None:
                         print(f"      prefer_site_takeover: {str(prefer_takeover).lower()}")
+                    if dup_primary_timeout:
+                        print(f"      duplicate_primary_timeout: {dup_primary_timeout}")
+                    if secondary_read is not None:
+                        print(f"      secondary_read: {str(secondary_read).lower()}")
             else:
                 # Show whatever info we have even without SID
-                resource_type = info.get('resource_type', '')
-                virtual_ip = info.get('virtual_ip', '')
-                stonith_device = info.get('stonith_device', '')
-                node1_ip = info.get('node1_ip', '')
-                node2_ip = info.get('node2_ip', '')
+                # This can still be quite comprehensive
+                print("\n    Cluster Configuration (SID not stored):")
+                print("    " + "-" * 44)
 
-                has_info = resource_type or virtual_ip or stonith_device or node1_ip or node2_ip
-                if has_info:
-                    print("\n    Partial Configuration (SID not detected):")
-                    print("    " + "-" * 40)
-                    if resource_type:
-                        cluster_type = "Scale-Up" if resource_type == "SAPHana" else "Scale-Out"
-                        print(f"      cluster_type: {cluster_type}")
+                # Resource type and cluster type
+                resource_type = info.get('resource_type', '')
+                if resource_type:
+                    cluster_type = "Scale-Up" if resource_type == "SAPHana" else "Scale-Out"
+                    print(f"      cluster_type: {cluster_type}")
+                    print(f"      resource_type: {resource_type}")
+
+                # Node Information
+                node1_hostname = info.get('node1_hostname', '')
+                node1_fqdn = info.get('node1_fqdn', '')
+                node1_ip = info.get('node1_ip', '')
+                node2_hostname = info.get('node2_hostname', '')
+                node2_fqdn = info.get('node2_fqdn', '')
+                node2_ip = info.get('node2_ip', '')
+                if node1_hostname or node1_fqdn or node1_ip:
+                    print("\n      # Node 1")
+                    if node1_hostname:
+                        print(f"      node1_hostname: {node1_hostname}")
+                    if node1_fqdn:
+                        print(f"      node1_fqdn: {node1_fqdn}")
                     if node1_ip:
                         print(f"      node1_ip: {node1_ip}")
+                if node2_hostname or node2_fqdn or node2_ip:
+                    print("\n      # Node 2")
+                    if node2_hostname:
+                        print(f"      node2_hostname: {node2_hostname}")
+                    if node2_fqdn:
+                        print(f"      node2_fqdn: {node2_fqdn}")
                     if node2_ip:
                         print(f"      node2_ip: {node2_ip}")
+
+                # Virtual IP
+                virtual_ip = info.get('virtual_ip', '')
+                vip_resource = info.get('vip_resource', '')
+                secondary_vip = info.get('secondary_vip', '')
+                secondary_vip_resource = info.get('secondary_vip_resource', '')
+                if virtual_ip or secondary_vip:
+                    print("\n      # Virtual IP Configuration")
                     if virtual_ip:
                         print(f"      vip: {virtual_ip}")
+                    if vip_resource:
+                        print(f"      vip_resource: {vip_resource}")
+                    if secondary_vip:
+                        print(f"      secondary_vip: {secondary_vip}")
+                        if secondary_vip_resource:
+                            print(f"      secondary_vip_resource: {secondary_vip_resource}")
+
+                # System Replication
+                repl_mode = info.get('replication_mode', '')
+                op_mode = info.get('operation_mode', '')
+                sites = info.get('sites', [])
+                site1 = info.get('site1_name', '')
+                site2 = info.get('site2_name', '')
+                if repl_mode or op_mode or sites or site1:
+                    print("\n      # System Replication")
+                    if repl_mode:
+                        print(f"      replication_mode: {repl_mode}")
+                    if op_mode:
+                        print(f"      operation_mode: {op_mode}")
+                    if site1:
+                        print(f"      site1_name: {site1}")
+                    if site2:
+                        print(f"      site2_name: {site2}")
+                    elif sites:
+                        print(f"      sites: {', '.join(sites)}")
+
+                # STONITH
+                stonith_device = info.get('stonith_device', '')
+                stonith_params = info.get('stonith_params', {})
+                if stonith_device or stonith_params:
+                    print("\n      # STONITH/Fencing")
                     if stonith_device:
                         print(f"      stonith_device: {stonith_device}")
+                    if stonith_params:
+                        pcmk_host_map = stonith_params.get('pcmk_host_map', '')
+                        if pcmk_host_map:
+                            print(f"      pcmk_host_map: {pcmk_host_map}")
+                        for key, value in stonith_params.items():
+                            if key != 'pcmk_host_map':
+                                print(f"      {key}: {value}")
+
+                # Cluster Properties
+                auto_reg = info.get('automated_register')
+                prefer_takeover = info.get('prefer_site_takeover')
+                dup_primary_timeout = info.get('duplicate_primary_timeout')
+                secondary_read = info.get('secondary_read')
+                has_props = (auto_reg is not None or prefer_takeover is not None or
+                            dup_primary_timeout or secondary_read is not None)
+                if has_props:
+                    print("\n      # Cluster Properties")
+                    if auto_reg is not None:
+                        print(f"      automated_register: {str(auto_reg).lower()}")
+                    if prefer_takeover is not None:
+                        print(f"      prefer_site_takeover: {str(prefer_takeover).lower()}")
+                    if dup_primary_timeout:
+                        print(f"      duplicate_primary_timeout: {dup_primary_timeout}")
+                    if secondary_read is not None:
+                        print(f"      secondary_read: {str(secondary_read).lower()}")
 
             print("\n    To check this cluster:")
             print(f"      ./cluster_health_check.py -C {name}")
