@@ -2588,8 +2588,8 @@ Examples:
         except Exception:
             pass  # Silently ignore any errors in update check
 
-    # Check for updates (skip if running non-interactively or with certain flags)
-    if sys.stdin.isatty() and not any([args.show_config, args.list_rules, args.guide, args.install, args.no_update_check, args.export_ansible, args.fetch_sosreports is not None]):
+    # Check for updates (skip only if explicitly disabled with --no-update-check)
+    if sys.stdin.isatty() and not args.no_update_check:
         check_for_updates()
 
     # Handle usage/scan action (-u)
