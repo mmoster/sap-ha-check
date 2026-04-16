@@ -24,6 +24,9 @@ cd sap_hana_healthcheck
 
 # Analyze SOSreports offline
 ./cluster_health_check.py -s /path/to/sosreports/
+
+# Verbose PDF (show all checks in detail, not just failures)
+./cluster_health_check.py hana01 -v
 ```
 
 ### Interactive Mode

@@ -2286,6 +2286,7 @@ Examples:
   %(prog)s -S hana03                Show config for cluster containing hana03
   %(prog)s -H hosts.txt             Use custom hosts file
   %(prog)s -s /path/to/sosreports   Use SOSreport directory
+  %(prog)s -v hana03                Verbose PDF - show all checks in detail (for audits)
   %(prog)s -i                        Show installation guide (shortcut)
   %(prog)s --suggest                Show suggestions for first failing step
   %(prog)s --suggest install        Show full installation guide
