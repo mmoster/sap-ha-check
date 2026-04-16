@@ -50,21 +50,39 @@ class HealthCheckPDF(FPDF):
 
     def header(self):
         """Page header with Red Hat styling"""
-        # Red header bar
-        self.set_fill_color(*RedHatColors.RED)
-        self.rect(0, 0, 210, 12, 'F')
+        # Check if cluster name is long (needs two-line header)
+        show_cluster = self.cluster_name and self.cluster_name != "Unknown" and self.cluster_name != "Unknown Cluster"
+        cluster_name_long = show_cluster and len(self.cluster_name) > 20
 
-        # Header text
+        # Red header bar (taller if two-line)
+        header_height = 18 if cluster_name_long else 12
+        self.set_fill_color(*RedHatColors.RED)
+        self.rect(0, 0, 210, header_height, 'F')
+
+        # Header text - first line
         self.set_font('Helvetica', 'B', 10)
         self.set_text_color(*RedHatColors.WHITE)
         self.set_xy(10, 3)
         self.cell(0, 6, 'SAP HANA Cluster Health Check Report', align='L')
 
+        # Cluster name in the middle (if short enough for one line)
+        if show_cluster and not cluster_name_long:
+            self.set_xy(70, 3)
+            self.set_font('Helvetica', 'B', 9)
+            self.cell(70, 6, f'Cluster: {self.cluster_name}', align='C')
+
+        # Date on the right
         self.set_xy(-60, 3)
         self.set_font('Helvetica', '', 8)
         self.cell(50, 6, self.report_date, align='R')
 
-        self.ln(15)
+        # Second line for long cluster name
+        if cluster_name_long:
+            self.set_xy(10, 10)
+            self.set_font('Helvetica', 'B', 9)
+            self.cell(0, 6, f'Cluster: {self.cluster_name}', align='C')
+
+        self.ln(header_height + 3)
 
     def footer(self):
         """Page footer"""
