@@ -508,9 +508,46 @@ def generate_health_check_report(
 
     pdf.ln(5)
 
+    # Node Details (in verbose mode or when available)
+    node1_hostname = cluster_info.get('node1_hostname', '')
+    node1_fqdn = cluster_info.get('node1_fqdn', '')
+    node1_ip = cluster_info.get('node1_ip', '')
+    node2_hostname = cluster_info.get('node2_hostname', '')
+    node2_fqdn = cluster_info.get('node2_fqdn', '')
+    node2_ip = cluster_info.get('node2_ip', '')
+
+    if verbose or node1_hostname or node1_ip:
+        if node1_hostname or node1_fqdn or node1_ip:
+            pdf.sub_section("Node 1 (Primary Site)")
+            node1_info = {}
+            if node1_hostname:
+                node1_info["Hostname"] = node1_hostname
+            if node1_fqdn:
+                node1_info["FQDN"] = node1_fqdn
+            if node1_ip:
+                node1_info["IP Address"] = node1_ip
+            if node1_info:
+                pdf.info_table(node1_info)
+            pdf.ln(3)
+
+        if node2_hostname or node2_fqdn or node2_ip:
+            pdf.sub_section("Node 2 (Secondary Site)")
+            node2_info = {}
+            if node2_hostname:
+                node2_info["Hostname"] = node2_hostname
+            if node2_fqdn:
+                node2_info["FQDN"] = node2_fqdn
+            if node2_ip:
+                node2_info["IP Address"] = node2_ip
+            if node2_info:
+                pdf.info_table(node2_info)
+            pdf.ln(3)
+
     # SAP HANA HA Parameters (Ansible-compatible)
     sid = cluster_info.get('sid')
-    if sid:
+    # Show HANA config in verbose mode even without SID
+    show_hana_config = sid or verbose
+    if show_hana_config:
         pdf.sub_section("SAP HANA Configuration")
         hana_config = {}
         if sid:
@@ -527,6 +564,16 @@ def generate_health_check_report(
             hana_config["Operation Mode"] = cluster_info.get('operation_mode')
         if cluster_info.get('secondary_read') is not None:
             hana_config["Secondary Read Enabled"] = str(cluster_info.get('secondary_read'))
+        # Site names
+        site1 = cluster_info.get('site1_name', '')
+        site2 = cluster_info.get('site2_name', '')
+        sites = cluster_info.get('sites', [])
+        if site1:
+            hana_config["Site 1 Name"] = site1
+        if site2:
+            hana_config["Site 2 Name"] = site2
+        elif sites and not site1:
+            hana_config["Sites"] = ', '.join(sites)
         if hana_config:
             pdf.info_table(hana_config)
         pdf.ln(3)
