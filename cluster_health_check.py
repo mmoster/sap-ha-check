@@ -2801,10 +2801,10 @@ Examples:
         print("  [2] Rerun health check")
         print("  [3] Run on different hosts")
         print("  [4] Show configuration")
-        print("  [5] Save PDF report and exit")
+        print("  [5] Save PDF report (custom filename)")
         print("  [6] Show suggestions")
         print("  [7] Reset configuration (delete cached discovery)")
-        print("  [q] Quit")
+        print("  [q] Save PDF and quit")
         print("-" * 63)
         try:
             choice = input("  Enter choice [1-7/q] (default=1): ").strip().lower()
@@ -2997,7 +2997,37 @@ Examples:
                     else:
                         print("  No configuration file found.")
                 elif choice == 'q' or choice == 'quit' or choice == 'exit':
-                    print("\n  Goodbye!")
+                    # Save PDF before quitting
+                    if health_check.check_results:
+                        try:
+                            # Get cluster name for filename
+                            cluster_name = '(unknown)'
+                            if health_check.access_config and health_check.access_config.clusters:
+                                for cname in health_check.access_config.clusters.keys():
+                                    if cname != '(unknown)':
+                                        cluster_name = cname
+                                        break
+                            cluster_name_safe = re.sub(r'[^\w\-]', '_', cluster_name)
+
+                            # Generate filename
+                            pdf_timestamp = datetime.now().strftime('%Y%m%d')
+                            pdf_time = datetime.now().strftime('%H%M')
+                            pdf_file = health_check.config_dir / f"{pdf_timestamp}_health_check_report_{cluster_name_safe}_{pdf_time}.pdf"
+
+                            # Generate PDF
+                            from report_generator import generate_health_check_report
+                            report_data = health_check._build_cluster_report_data()
+                            generate_health_check_report(
+                                report_data.get_results_list(),
+                                report_data.get_summary_dict(),
+                                report_data.to_cluster_info(),
+                                str(pdf_file),
+                                report_data.get_install_status() or None
+                            )
+                            print(f"\n  PDF report saved: {pdf_file}")
+                        except Exception as e:
+                            print(f"\n  [WARN] Could not save PDF: {e}")
+                    print("  Goodbye!")
                     break
                 else:
                     print(f"  Invalid choice: {choice}")
