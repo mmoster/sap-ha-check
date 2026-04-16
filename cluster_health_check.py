@@ -2812,6 +2812,8 @@ Examples:
             print("  [q] Save PDF and quit")
         else:
             print("  [q] Quit")
+        if not generate_pdf:
+            print("  (PDF options hidden - fpdf2 not installed)")
         print("-" * 63)
         try:
             choice = input("  Enter choice [1-7/q] (default=1): ").strip().lower()
