@@ -50,6 +50,62 @@ from lib import (  # noqa: E402
     REPORT_VERSION,
 )
 
+import threading
+import itertools
+
+
+class Spinner:
+    """
+    A simple spinner context manager that shows progress during long operations.
+    Usage:
+        with Spinner("Checking nodes"):
+            do_long_operation()
+    """
+    FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+    FALLBACK_FRAMES = ['|', '/', '-', '\\']  # For terminals without Unicode
+
+    def __init__(self, message: str = "Working", delay: float = 0.1):
+        self.message = message
+        self.delay = delay
+        self._stop_event = threading.Event()
+        self._thread = None
+        # Test if Unicode works
+        try:
+            sys.stdout.write('\r⠋')
+            sys.stdout.write('\r \r')
+            sys.stdout.flush()
+            self.frames = self.FRAMES
+        except (UnicodeEncodeError, UnicodeError):
+            self.frames = self.FALLBACK_FRAMES
+
+    def _spin(self):
+        """Spinner animation loop."""
+        spinner = itertools.cycle(self.frames)
+        while not self._stop_event.is_set():
+            frame = next(spinner)
+            sys.stdout.write(f'\r  {frame} {self.message}...')
+            sys.stdout.flush()
+            self._stop_event.wait(self.delay)
+        # Clear the spinner line
+        sys.stdout.write('\r' + ' ' * (len(self.message) + 10) + '\r')
+        sys.stdout.flush()
+
+    def __enter__(self):
+        # Only show spinner if stdout is a terminal (not redirected)
+        if sys.stdout.isatty():
+            self._thread = threading.Thread(target=self._spin, daemon=True)
+            self._thread.start()
+        return self
+
+    def __exit__(self, *args):
+        self._stop_event.set()
+        if self._thread:
+            self._thread.join(timeout=0.5)
+
+    def update(self, message: str):
+        """Update the spinner message."""
+        self.message = message
+
 
 class ClusterHealthCheck:
     """Main orchestrator for SAP Pacemaker cluster health checks."""
@@ -1229,11 +1285,12 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
 
         nodes = self.access_config.nodes if self.access_config else {}
         self._debug_print(f"Target nodes: {list(nodes.keys())}")
-        print(f"Running {len(rules_to_run)} cluster configuration checks (parallel)...")
 
-        # Run rules in parallel
-        results = self._run_rules_parallel(rules_to_run, nodes)
+        # Run rules in parallel with spinner
+        with Spinner(f"Running {len(rules_to_run)} cluster configuration checks"):
+            results = self._run_rules_parallel(rules_to_run, nodes)
         self.check_results.extend(results)
+        print(f"  Completed {len(rules_to_run)} cluster configuration checks")
 
         failed = [r for r in self.check_results if r.status == CheckStatus.FAILED
                   and r.check_id in config_checks]
@@ -1265,11 +1322,12 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
 
         nodes = self.access_config.nodes if self.access_config else {}
         self._debug_print(f"Target nodes: {list(nodes.keys())}")
-        print(f"Running {len(rules_to_run)} Pacemaker/Corosync checks (parallel)...")
 
-        # Run rules in parallel
-        results = self._run_rules_parallel(rules_to_run, nodes)
+        # Run rules in parallel with spinner
+        with Spinner(f"Running {len(rules_to_run)} Pacemaker/Corosync checks"):
+            results = self._run_rules_parallel(rules_to_run, nodes)
         self.check_results.extend(results)
+        print(f"  Completed {len(rules_to_run)} Pacemaker/Corosync checks")
 
         failed = [r for r in self.check_results if r.status == CheckStatus.FAILED
                   and r.check_id in pacemaker_checks]
@@ -1429,11 +1487,11 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
         # Filter nodes to only those with HANA installed
         hana_nodes = {k: v for k, v in nodes.items() if k in nodes_with_hana} if nodes_with_hana else nodes
 
-        print(f"Running {len(rules_to_run)} SAP-specific checks on {len(hana_nodes)} node(s)...")
-
         # Run rules in parallel only on nodes with HANA
-        results = self._run_rules_parallel(rules_to_run, hana_nodes)
+        with Spinner(f"Running {len(rules_to_run)} SAP-specific checks on {len(hana_nodes)} node(s)"):
+            results = self._run_rules_parallel(rules_to_run, hana_nodes)
         self.check_results.extend(results)
+        print(f"  Completed {len(rules_to_run)} SAP-specific checks")
 
         failed = [r for r in self.check_results if r.status == CheckStatus.FAILED
                   and r.check_id in sap_checks]
