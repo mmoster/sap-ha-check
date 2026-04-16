@@ -202,6 +202,48 @@ nodes:
 ./cluster_health_check.py -S hana01
 ```
 
+**Example Output:**
+
+```
+--- Cluster: my_cluster ---
+    Nodes: hana01, hana02
+    Discovered from: hana01
+    Discovered at: 2026-04-16T16:30:40
+    Cluster status: Running
+
+    Cluster Configuration:
+    --------------------------------------------
+      # Node 1
+      node1_hostname: hana01
+      node1_fqdn: hana01.example.com
+      node1_ip: 192.168.5.232
+
+      # Node 2
+      node2_hostname: hana02
+      node2_fqdn: hana02.example.com
+      node2_ip: 192.168.5.233
+
+      # Virtual IP Configuration
+      vip: 192.168.5.231
+      vip_resource: vip_RH2_HDB00
+      secondary_vip: 192.168.5.234
+
+      # System Replication
+      replication_mode: sync
+      operation_mode: logreplay
+      site1_name: DC1
+
+      # STONITH/Fencing
+      stonith_device: my_fence
+      pcmk_host_map: hana01:hana01-ipmi;hana02:hana02-ipmi
+
+      # Cluster Properties
+      automated_register: true
+      prefer_site_takeover: true
+      duplicate_primary_timeout: 7200
+      secondary_read: true
+```
+
 Delete with `-D` to restart the investigation from scratch.
 
 ## Extending Health Checks

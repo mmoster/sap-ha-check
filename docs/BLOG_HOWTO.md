@@ -187,6 +187,50 @@ A problem is shown as:
 
 ---
 
+## Viewing Cluster Configuration
+
+Use `-S` or `--show-config` to display the discovered cluster configuration:
+
+```bash
+./cluster_health_check.py -S hana01
+```
+
+**Example Output:**
+
+```
+--- Cluster: my_cluster ---
+    Nodes: hana01, hana02
+    Cluster status: Running
+
+    Cluster Configuration:
+    --------------------------------------------
+      # Node 1
+      node1_hostname: hana01
+      node1_fqdn: hana01.example.com
+      node1_ip: 192.168.5.232
+
+      # Virtual IP Configuration
+      vip: 192.168.5.231
+      secondary_vip: 192.168.5.234
+
+      # System Replication
+      replication_mode: sync
+      operation_mode: logreplay
+
+      # STONITH/Fencing
+      stonith_device: my_fence
+      pcmk_host_map: hana01:hana01-ipmi;hana02:hana02-ipmi
+
+      # Cluster Properties
+      automated_register: true
+      prefer_site_takeover: true
+      duplicate_primary_timeout: 7200
+```
+
+This configuration is also included in verbose PDF reports (`-v`).
+
+---
+
 ## Cluster Types Detected
 
 The tool automatically detects:
