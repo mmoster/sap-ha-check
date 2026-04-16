@@ -43,8 +43,10 @@ This scans for SOSreport archives, hosts files, and existing reports, then prese
 - **Automatic Cluster Discovery**: Discovers all nodes from Pacemaker configuration
 - **Cluster Status Detection**: Warns if cluster services are not running, falls back to static config
 - **Multi-Cluster Support**: Prompts for selection when multiple clusters are discovered
+- **Version Detection**: Automatically detects RHEL and Pacemaker versions
+- **HANA Status Detection**: Identifies SID, instance, sidadm user, and running processes
 - **Progress Indicators**: Animated spinner shows work is in progress
-- **PDF Reports**: Auto-generated PDF reports with automatic opening (requires fpdf2)
+- **PDF Reports**: Auto-generated PDF reports with optional verbose mode (requires fpdf2)
 
 ## Installation
 
@@ -91,6 +93,7 @@ Options:
   -S, --show-config [CLUSTER|NODE]  Display configuration (optionally filter by cluster or node)
   -L, --list-rules      List available health check rules
   -d, --debug           Enable debug mode
+  -v, --verbose         Verbose PDF - show all checks in detail (not just failures)
   --no-pdf              Skip PDF report generation
   --no-update-check     Skip software update check
 ```
@@ -133,7 +136,7 @@ Options:
 ### SAP-Specific
 | Check ID | Severity | Description |
 |----------|----------|-------------|
-| CHK_HANA_INSTALLED | INFO | Detect HANA installation (informational - non-HANA nodes OK) |
+| CHK_HANA_INSTALLED | INFO | Detect HANA installation, SID, instance, sidadm user, and running status |
 | CHK_HANA_SR_STATUS | CRITICAL | Verify HANA System Replication status |
 | CHK_REPLICATION_MODE | WARNING | Verify replication mode is sync or syncmem |
 | CHK_HADR_HOOKS | CRITICAL | Validate HA/DR provider hooks |

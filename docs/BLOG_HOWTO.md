@@ -16,6 +16,8 @@ This tool runs 22 automated health checks against your SAP HANA HA cluster, cove
 - Works with **live clusters** (via SSH) or **offline analysis** (via SOSreports)
 - **Detects cluster status** - warns if Pacemaker/Corosync not running
 - **Multi-cluster support** - prompts for selection if multiple clusters found
+- **Version detection** - automatically detects RHEL and Pacemaker versions
+- **HANA status detection** - identifies SID, instance, sidadm user, and running processes
 - **Progress indicators** - animated spinner shows work in progress
 - **Auto-saves PDF** - reports saved and opened automatically on exit
 
@@ -179,6 +181,7 @@ A problem is shown as:
 | `-L` | List all available health checks |
 | `-S` | Show discovered cluster config |
 | `-d` | Debug mode (verbose output) |
+| `-v, --verbose` | Verbose PDF - show all checks in detail, not just failures |
 | `--no-pdf` | Skip PDF report generation |
 | `-D` | Delete cached config, start fresh |
 
@@ -201,8 +204,10 @@ Additional cluster nodes that don't run HANA are correctly identified and don't 
 2. **Use `-f`** to force re-discovery if nodes changed
 3. **SOSreport analysis is safe** - no SSH access needed
 4. **PDF reports** are great for sharing with support teams
-5. **Cluster not running?** - tool detects this and falls back to static config from corosync.conf
-6. **Multiple clusters?** - tool prompts you to select which cluster to analyze
+5. **Use `-v` for detailed PDFs** - shows all checks, not just failures (great for audits)
+6. **Cluster not running?** - tool detects this and falls back to static config from corosync.conf
+7. **Multiple clusters?** - tool prompts you to select which cluster to analyze
+8. **HANA status** - detects sidadm user and runs `HDB info` to show process count
 
 ---
 
@@ -226,6 +231,9 @@ Additional cluster nodes that don't run HANA are correctly identified and don't 
 
 # Interactive
 ./cluster_health_check.py -u
+
+# Verbose PDF (show all checks in detail)
+./cluster_health_check.py --local -v
 
 # List checks
 ./cluster_health_check.py -L
