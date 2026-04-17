@@ -593,11 +593,15 @@ class AccessDiscovery:
 
         return nodes
 
-    def extract_cluster_config_from_sosreport(self, sosreport_path: str) -> dict:
+    def extract_cluster_config_from_cib(self, sosreport_path: str = None) -> dict:
         """
-        Extract detailed cluster configuration from a SOSreport.
+        Extract detailed cluster configuration from cib.xml.
 
-        Parses pcs_config, cib.xml, and other files to extract:
+        Works with both:
+        - SOSreport directory (pass sosreport_path)
+        - Live/stopped cluster (pass sosreport_path=None to use local cib.xml)
+
+        Parses cib.xml and other files to extract:
         - HANA SID and instance number
         - VIP configuration
         - STONITH configuration
@@ -608,13 +612,19 @@ class AccessDiscovery:
         Returns:
             Dict with cluster configuration suitable for storing in self.config.clusters
         """
-        sos_path = Path(sosreport_path)
+        sos_path = Path(sosreport_path) if sosreport_path else None
         config = {}
 
         # Try to use CIBParser for detailed config
         try:
             from lib.cib_parser import CIBParser
-            parser = CIBParser.from_sosreport(sosreport_path)
+
+            # Use SOSreport or local cib.xml
+            if sosreport_path:
+                parser = CIBParser.from_sosreport(sosreport_path)
+            else:
+                parser = CIBParser.from_live_system()
+
             if parser and parser.is_available():
                 cib_config = parser.get_resource_config()
                 if cib_config.get('success'):
@@ -646,6 +656,10 @@ class AccessDiscovery:
                     config['stonith_device'] = stonith_config['devices'][0] if stonith_config['devices'] else None
         except Exception:
             pass
+
+        # Parse additional files (only for SOSreport mode)
+        if not sos_path:
+            return config  # For local mode, CIBParser has all we need
 
         # Parse pcs_config for additional info (VIPs, etc.)
         pcs_config_paths = [
@@ -1406,14 +1420,34 @@ class AccessDiscovery:
                 print(f"  Using {self.local_hostname} as only node")
                 cluster_nodes = [self.local_hostname]
 
+        # Extract cluster configuration
+        cluster_config = {}
+        if not cluster_running:
+            # Stopped cluster: extract from local cib.xml (same logic as SOSreport)
+            print("  Extracting configuration from cib.xml (cluster stopped)...")
+            cluster_config = self.extract_cluster_config_from_cib(None)
+            if cluster_config:
+                sid = cluster_config.get('sid', '')
+                vip = cluster_config.get('virtual_ip', '')
+                if sid:
+                    print(f"  SAP HANA SID: {sid}, Instance: {cluster_config.get('instance_number', 'N/A')}")
+                if vip:
+                    print(f"  Virtual IP: {vip}")
+                if cluster_config.get('stonith_device'):
+                    print(f"  STONITH Device: {cluster_config.get('stonith_device')}")
+
         # Store cluster info
         if cluster_name:
-            self.config.clusters[cluster_name] = {
+            cluster_data = {
                 'nodes': cluster_nodes,
                 'cluster_running': cluster_running,
                 'discovered_from': self.local_hostname,
                 'discovered_at': datetime.now().isoformat()
             }
+            # Add config from cib.xml if available
+            if cluster_config:
+                cluster_data.update(cluster_config)
+            self.config.clusters[cluster_name] = cluster_data
 
         return cluster_name, cluster_nodes
 
@@ -1502,8 +1536,78 @@ class AccessDiscovery:
                 print(f"  Using {seed_host} as only node")
                 cluster_nodes = [seed_host]
 
-        # Discover SAP HANA info (pass cluster_nodes for node IP/FQDN discovery)
-        hana_info = self.discover_hana_info(seed_host, ssh_user, cluster_nodes)
+        # Discover SAP HANA info
+        hana_info = {}
+        if cluster_running:
+            # Running cluster: use pcs commands via SSH
+            hana_info = self.discover_hana_info(seed_host, ssh_user, cluster_nodes)
+        else:
+            # Stopped cluster: extract from cib.xml (same logic as SOSreport)
+            # First try to copy cib.xml from remote and parse locally
+            print("  Extracting configuration from cib.xml (cluster stopped)...")
+            try:
+                import tempfile
+                with tempfile.NamedTemporaryFile(suffix='.xml', delete=False) as tmp:
+                    tmp_path = tmp.name
+
+                # Copy cib.xml from remote node
+                scp_cmd = [
+                    "scp", "-o", "BatchMode=yes",
+                    "-o", "ConnectTimeout=10",
+                    "-o", "StrictHostKeyChecking=no",
+                    f"{ssh_user}@{seed_host}:/var/lib/pacemaker/cib/cib.xml",
+                    tmp_path
+                ]
+                result = subprocess.run(scp_cmd, stdin=subprocess.DEVNULL,
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                        timeout=30)
+                if result.returncode == 0:
+                    # Parse the cib.xml
+                    from lib.cib_parser import CIBParser
+                    parser = CIBParser.from_file(tmp_path)
+                    if parser and parser.is_available():
+                        cib_config = parser.get_resource_config()
+                        if cib_config.get('success'):
+                            hana_cfg = cib_config.get('sap_hana', {})
+                            if hana_cfg:
+                                hana_info['sid'] = hana_cfg.get('sid')
+                                hana_info['instance_number'] = hana_cfg.get('instance_number')
+                                hana_info['resource_name'] = hana_cfg.get('resource_name')
+                                hana_info['resource_type'] = hana_cfg.get('resource_type')
+                                attrs = hana_cfg.get('attributes', {})
+                                if attrs.get('AUTOMATED_REGISTER'):
+                                    hana_info['automated_register'] = attrs['AUTOMATED_REGISTER'].lower() == 'true'
+                                if attrs.get('PREFER_SITE_TAKEOVER'):
+                                    hana_info['prefer_site_takeover'] = attrs['PREFER_SITE_TAKEOVER'].lower() == 'true'
+                                if attrs.get('DUPLICATE_PRIMARY_TIMEOUT'):
+                                    try:
+                                        hana_info['duplicate_primary_timeout'] = int(attrs['DUPLICATE_PRIMARY_TIMEOUT'])
+                                    except ValueError:
+                                        pass
+
+                        # Get STONITH
+                        stonith_config = parser.get_stonith()
+                        if stonith_config.get('devices'):
+                            hana_info['stonith_device'] = stonith_config['devices'][0]
+
+                        # Get VIPs from resource config
+                        if cib_config.get('vips'):
+                            vips = cib_config['vips']
+                            if vips:
+                                hana_info['virtual_ip'] = vips[0].get('ip')
+                                hana_info['vip_resource'] = vips[0].get('name')
+                                if len(vips) > 1:
+                                    hana_info['secondary_vip'] = vips[1].get('ip')
+
+                # Clean up temp file
+                import os
+                os.unlink(tmp_path)
+            except Exception as e:
+                if self.debug:
+                    print(f"  Warning: Could not extract cib.xml config: {e}")
+                # Fall back to discover_hana_info which may get partial info
+                hana_info = self.discover_hana_info(seed_host, ssh_user, cluster_nodes)
+
         if hana_info:
             sid = hana_info.get('sid', '')
             inst = hana_info.get('instance_number', '')
@@ -1736,7 +1840,7 @@ class AccessDiscovery:
 
                     # Extract detailed cluster configuration from the first available SOSreport
                     first_sosreport = list(sosreports.values())[0]
-                    cluster_config = self.extract_cluster_config_from_sosreport(first_sosreport)
+                    cluster_config = self.extract_cluster_config_from_cib(first_sosreport)
                     if cluster_config:
                         # Merge into cluster config
                         if cluster_name and cluster_name in self.config.clusters:
