@@ -593,6 +593,202 @@ class AccessDiscovery:
 
         return nodes
 
+    def extract_cluster_config_from_sosreport(self, sosreport_path: str) -> dict:
+        """
+        Extract detailed cluster configuration from a SOSreport.
+
+        Parses pcs_config, cib.xml, and other files to extract:
+        - HANA SID and instance number
+        - VIP configuration
+        - STONITH configuration
+        - Replication mode and operation mode
+        - Node hostnames, IPs, FQDNs
+        - Cluster properties (automated_register, prefer_site_takeover, etc.)
+
+        Returns:
+            Dict with cluster configuration suitable for storing in self.config.clusters
+        """
+        sos_path = Path(sosreport_path)
+        config = {}
+
+        # Try to use CIBParser for detailed config
+        try:
+            from lib.cib_parser import CIBParser
+            parser = CIBParser.from_sosreport(sosreport_path)
+            if parser and parser.is_available():
+                cib_config = parser.get_resource_config()
+                if cib_config.get('success'):
+                    hana_config = cib_config.get('sap_hana', {})
+                    if hana_config:
+                        config['sid'] = hana_config.get('sid')
+                        config['instance_number'] = hana_config.get('instance_number')
+                        config['resource_name'] = hana_config.get('resource_name')
+                        config['resource_type'] = hana_config.get('resource_type')
+                        config['clone_max'] = hana_config.get('clone_max')
+
+                        # Extract HA parameters from resource attributes
+                        attrs = hana_config.get('attributes', {})
+                        if attrs.get('AUTOMATED_REGISTER'):
+                            config['automated_register'] = attrs['AUTOMATED_REGISTER'].lower() == 'true'
+                        if attrs.get('PREFER_SITE_TAKEOVER'):
+                            config['prefer_site_takeover'] = attrs['PREFER_SITE_TAKEOVER'].lower() == 'true'
+                        if attrs.get('DUPLICATE_PRIMARY_TIMEOUT'):
+                            try:
+                                config['duplicate_primary_timeout'] = int(attrs['DUPLICATE_PRIMARY_TIMEOUT'])
+                            except ValueError:
+                                pass
+
+                # Get STONITH config
+                stonith_config = parser.get_stonith()
+                if stonith_config.get('enabled') is not None:
+                    config['stonith_enabled'] = stonith_config['enabled']
+                if stonith_config.get('devices'):
+                    config['stonith_device'] = stonith_config['devices'][0] if stonith_config['devices'] else None
+        except Exception:
+            pass
+
+        # Parse pcs_config for additional info (VIPs, etc.)
+        pcs_config_paths = [
+            sos_path / "sos_commands/pacemaker/pcs_config",
+            sos_path / "sos_commands/pacemaker/pcs_resource_config",
+        ]
+
+        for pcs_config_path in pcs_config_paths:
+            if pcs_config_path.exists():
+                try:
+                    content = pcs_config_path.read_text()
+
+                    # Extract VIP resources
+                    vip_pattern = r'Resource:\s*(vip\S*)\s+.*?type=IPaddr2\).*?ip=(\d+\.\d+\.\d+\.\d+)'
+                    vip_matches = re.findall(vip_pattern, content, re.DOTALL | re.IGNORECASE)
+                    if vip_matches:
+                        # Primary VIP is usually the first one or one with SID in name
+                        for name, ip in vip_matches:
+                            if 'vip_' in name.lower() and not config.get('virtual_ip'):
+                                config['virtual_ip'] = ip
+                                config['vip_resource'] = name
+                            elif 'vip2_' in name.lower() or ('secondary' in name.lower()):
+                                config['secondary_vip'] = ip
+                                config['secondary_vip_resource'] = name
+
+                    # If we found VIPs but didn't set primary, use first one
+                    if vip_matches and not config.get('virtual_ip'):
+                        config['virtual_ip'] = vip_matches[0][1]
+                        config['vip_resource'] = vip_matches[0][0]
+                        if len(vip_matches) > 1:
+                            config['secondary_vip'] = vip_matches[1][1]
+                            config['secondary_vip_resource'] = vip_matches[1][0]
+
+                    # Extract SID/instance if not already found
+                    if not config.get('sid'):
+                        sid_match = re.search(r'SID=([A-Z0-9]{3})', content)
+                        if sid_match:
+                            config['sid'] = sid_match.group(1)
+
+                    if not config.get('instance_number'):
+                        inst_match = re.search(r'InstanceNumber=(\d{2})', content)
+                        if inst_match:
+                            config['instance_number'] = inst_match.group(1)
+
+                    # Extract STONITH device if not found
+                    if not config.get('stonith_device'):
+                        stonith_match = re.search(r'Resource:\s*(\S+)\s+\(class=stonith', content)
+                        if stonith_match:
+                            config['stonith_device'] = stonith_match.group(1)
+
+                    # Extract STONITH params (pcmk_host_map, etc.)
+                    if config.get('stonith_device'):
+                        host_map_match = re.search(r'pcmk_host_map=([^\n]+)', content)
+                        if host_map_match:
+                            if 'stonith_params' not in config:
+                                config['stonith_params'] = {}
+                            config['stonith_params']['pcmk_host_map'] = host_map_match.group(1).strip()
+
+                    break  # Found config, stop looking
+                except Exception:
+                    pass
+
+        # Parse SAPHanaSR-showAttr for replication info
+        sr_attr_paths = [
+            sos_path / "sos_commands/sos_extras/sap_hana_ha/SAPHanaSR-showAttr",
+            sos_path / "sos_commands/saphana/SAPHanaSR-showAttr",
+        ]
+
+        for sr_attr_path in sr_attr_paths:
+            if sr_attr_path.exists():
+                try:
+                    content = sr_attr_path.read_text()
+
+                    # Extract replication mode (sync, syncmem, async)
+                    mode_match = re.search(r'sync_state\s*:\s*(\w+)', content, re.IGNORECASE)
+                    if not mode_match:
+                        mode_match = re.search(r'srmode\s*[=:]\s*(\w+)', content, re.IGNORECASE)
+                    if mode_match:
+                        mode = mode_match.group(1).lower()
+                        if mode in ('sync', 'syncmem', 'async'):
+                            config['replication_mode'] = mode
+
+                    # Extract operation mode (logreplay, delta_datashipping)
+                    op_match = re.search(r'op_mode\s*[=:]\s*(\w+)', content, re.IGNORECASE)
+                    if op_match:
+                        config['operation_mode'] = op_match.group(1)
+
+                    # Extract sites
+                    site_matches = re.findall(r'site\s*[=:]\s*(\w+)', content, re.IGNORECASE)
+                    if site_matches:
+                        config['sites'] = list(set(site_matches))
+
+                    break  # Found SR attr, stop looking
+                except Exception:
+                    pass
+
+        # Extract node info from corosync.conf
+        corosync_conf = sos_path / "etc/corosync/corosync.conf"
+        if corosync_conf.exists():
+            try:
+                content = corosync_conf.read_text()
+
+                # Extract node hostnames and IPs
+                node_blocks = re.findall(r'node\s*\{([^}]+)\}', content, re.DOTALL)
+                nodes = []
+                for i, block in enumerate(node_blocks):
+                    name_match = re.search(r'name:\s*(\S+)', block)
+                    ring_match = re.search(r'ring0_addr:\s*(\S+)', block)
+                    if name_match:
+                        node_name = name_match.group(1)
+                        nodes.append(node_name)
+                        # Store node info
+                        node_key = f'node{i+1}_hostname'
+                        config[node_key] = node_name
+                        if ring_match:
+                            config[f'node{i+1}_ip'] = ring_match.group(1)
+            except Exception:
+                pass
+
+        # Get RHEL version
+        redhat_release = sos_path / "etc/redhat-release"
+        if redhat_release.exists():
+            try:
+                content = redhat_release.read_text().strip()
+                match = re.search(r'release\s+(\d+\.?\d*)', content)
+                if match:
+                    config['rhel_version'] = f"RHEL {match.group(1)}"
+            except Exception:
+                pass
+
+        # Get Pacemaker version
+        installed_rpms = sos_path / "installed-rpms"
+        if installed_rpms.exists():
+            try:
+                content = installed_rpms.read_text()
+                match = re.search(r'pacemaker-(\d+\.\d+\.\d+)', content)
+                if match:
+                    config['pacemaker_version'] = match.group(1)
+            except Exception:
+                pass
+
+        return config
+
     def _discover_cluster_from_sosreports(self, available_sosreports: Dict[str, str]) -> Dict[str, str]:
         """
         From the SOSreports of nodes we already have, discover other cluster nodes
@@ -1537,6 +1733,23 @@ class AccessDiscovery:
 
                 if sosreports:
                     print(f"\n[INFO] SOSreport mode: {len(sosreports)} SOSreport(s) found")
+
+                    # Extract detailed cluster configuration from the first available SOSreport
+                    first_sosreport = list(sosreports.values())[0]
+                    cluster_config = self.extract_cluster_config_from_sosreport(first_sosreport)
+                    if cluster_config:
+                        # Merge into cluster config
+                        if cluster_name and cluster_name in self.config.clusters:
+                            self.config.clusters[cluster_name].update(cluster_config)
+                        # Print what we found
+                        if cluster_config.get('sid'):
+                            print(f"  SAP HANA SID: {cluster_config.get('sid')}, Instance: {cluster_config.get('instance_number', 'N/A')}")
+                        if cluster_config.get('virtual_ip'):
+                            print(f"  Virtual IP: {cluster_config.get('virtual_ip')}")
+                        if cluster_config.get('replication_mode'):
+                            print(f"  Replication Mode: {cluster_config.get('replication_mode')}")
+                        if cluster_config.get('stonith_device'):
+                            print(f"  STONITH Device: {cluster_config.get('stonith_device')}")
 
                     # Check if cluster was running when SOSreports were captured
                     cluster_was_down = False

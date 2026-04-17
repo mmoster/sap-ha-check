@@ -426,10 +426,20 @@ class CIBParser:
         if success:
             result['success'] = True
             result['raw_output'] = output
-            
+
+            import re
             for line in output.split('\n'):
-                if line.strip().startswith('Resource:') or line.strip().startswith('*'):
-                    result['devices'].append(line.strip())
+                line = line.strip()
+                # Extract just the device name from "Resource: device_name (class=stonith ...)"
+                if line.startswith('Resource:'):
+                    match = re.match(r'Resource:\s*(\S+)', line)
+                    if match:
+                        result['devices'].append(match.group(1))
+                elif line.startswith('*'):
+                    # Handle "* device_name" format
+                    match = re.match(r'\*\s*(\S+)', line)
+                    if match:
+                        result['devices'].append(match.group(1))
         
         # Get STONITH enabled status from properties
         props = self.get_properties()

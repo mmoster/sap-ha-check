@@ -217,9 +217,10 @@ class ClusterHealthCheck:
         majority_makers = list(self.majority_makers) if self.majority_makers else []
         if self.rules_engine:
             resource_config = self.rules_engine.get_cluster_resources_config()
-            # Extract majority maker from resource config if not already set
+            # Extract majority maker from resource config ONLY for Scale-Out clusters
+            # Majority makers are not applicable to Scale-Up clusters (even with extra nodes)
             if resource_config.get('available') and resource_config.get('majority_maker'):
-                if resource_config['majority_maker'] not in majority_makers:
+                if cluster_type == 'Scale-Out' and resource_config['majority_maker'] not in majority_makers:
                     majority_makers.append(resource_config['majority_maker'])
 
         # Build results list from check_results

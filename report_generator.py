@@ -503,7 +503,9 @@ def generate_health_check_report(
 
     # Node list
     pdf.sub_section("Cluster Nodes")
-    majority_makers = cluster_info.get('majority_makers', [])
+    # Majority makers are ONLY applicable for Scale-Out clusters
+    is_scale_out = cluster_info.get('cluster_type') == 'Scale-Out'
+    majority_makers = cluster_info.get('majority_makers', []) if is_scale_out else []
     for node in nodes:
         pdf.set_font('Helvetica', '', 10)
         pdf.cell(5, 6, "-")  # Bullet point
