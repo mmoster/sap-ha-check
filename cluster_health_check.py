@@ -49,6 +49,7 @@ from lib import (  # noqa: E402
     ClusterReportData,
     REPORT_VERSION,
 )
+from lib.config_extractor import ConfigExtractor  # noqa: E402
 
 import threading
 import itertools
@@ -143,6 +144,118 @@ class ClusterHealthCheck:
             timestamp = datetime.now().strftime('%H:%M:%S.%f')[:-3]
             print(f"  [DEBUG {timestamp}] {message}")
 
+    def _extract_cluster_config(self, cluster_name: str = None) -> dict:
+        """
+        Extract detailed cluster configuration using ConfigExtractor.
+
+        Uses the appropriate extraction method based on access method:
+        - SOSreport: parse pcs_config file directly
+        - SSH offline: run pcs -f cib.xml config remotely
+        - Running cluster: run pcs config
+
+        Args:
+            cluster_name: Cluster name for finding config
+
+        Returns:
+            Dict with extracted configuration merged with existing cluster_config
+        """
+        extracted = {}
+
+        # Find source for extraction
+        if self.access_config:
+            # Get first node's info to determine access method
+            nodes = self.access_config.nodes or {}
+            for node_name, node_info in nodes.items():
+                # Try SOSreport first
+                sos_path = node_info.get('sosreport_path')
+                if sos_path:
+                    self._debug_print(f"Extracting config from SOSreport: {sos_path}")
+                    extractor = ConfigExtractor.from_sosreport(sos_path)
+                    if extractor:
+                        extracted = extractor.get_config()
+                        # Write config YAML for reference
+                        config_yaml = self.config_dir / f"{cluster_name or 'cluster'}_config.yaml"
+                        try:
+                            extractor.write_yaml(str(config_yaml))
+                            self._debug_print(f"Config written to: {config_yaml}")
+                        except Exception as e:
+                            self._debug_print(f"Failed to write config YAML: {e}")
+                        break
+
+                # Try SSH method if no SOSreport
+                method = node_info.get('preferred_method')
+                if method == 'ssh':
+                    user = node_info.get('ssh_user', 'root')
+                    # Check if cluster is running (from access config or default to trying running first)
+                    cluster_running = True
+                    if self.access_config and hasattr(self.access_config, 'clusters'):
+                        for cinfo in self.access_config.clusters.values():
+                            if node_name in cinfo.get('nodes', []):
+                                cluster_running = cinfo.get('cluster_running', True)
+                                break
+
+                    if cluster_running:
+                        self._debug_print(f"Extracting config from running cluster via SSH: {node_name}")
+                        extractor = ConfigExtractor.from_running_cluster(node_name, user)
+                        # If running cluster extraction fails, try offline
+                        if not extractor:
+                            self._debug_print(f"Running cluster extraction failed, trying offline: {node_name}")
+                            extractor = ConfigExtractor.from_ssh_offline(node_name, user)
+                    else:
+                        self._debug_print(f"Extracting config from offline cluster via SSH: {node_name}")
+                        extractor = ConfigExtractor.from_ssh_offline(node_name, user)
+
+                    if extractor:
+                        extracted = extractor.get_config()
+                        config_yaml = self.config_dir / f"{cluster_name or 'cluster'}_config.yaml"
+                        try:
+                            extractor.write_yaml(str(config_yaml))
+                            self._debug_print(f"Config written to: {config_yaml}")
+                        except Exception as e:
+                            self._debug_print(f"Failed to write config YAML: {e}")
+                        break
+
+        # Return sap_hana section merged with other relevant fields
+        result = {}
+        if extracted:
+            hana = extracted.get('sap_hana', {})
+            stonith = extracted.get('stonith', {})
+            constraints = extracted.get('constraints', {})
+
+            # SAP HANA config
+            result['sid'] = hana.get('sid')
+            result['instance_number'] = hana.get('instance_number')
+            result['virtual_ip'] = hana.get('virtual_ip')
+            result['secondary_vip'] = hana.get('secondary_vip')
+            result['vip_resource'] = hana.get('vip_resource')
+            result['secondary_vip_resource'] = hana.get('secondary_vip_resource')
+
+            # HA parameters
+            result['prefer_site_takeover'] = hana.get('prefer_site_takeover')
+            result['automated_register'] = hana.get('automated_register')
+            result['duplicate_primary_timeout'] = hana.get('duplicate_primary_timeout')
+            result['clone_max'] = hana.get('clone_max')
+
+            # Resource info
+            result['resource_type'] = hana.get('resource_type')
+            result['resource_name'] = hana.get('resource_name')
+            if hana.get('topology'):
+                result['topology_resource'] = hana['topology'].get('resource_name')
+
+            # STONITH
+            result['stonith_device'] = stonith.get('device')
+            result['stonith_params'] = {
+                'pcmk_host_map': stonith.get('pcmk_host_map', ''),
+                'ssl': stonith.get('ssl', ''),
+                'ssl_insecure': stonith.get('ssl_insecure', ''),
+            }
+
+            # Majority maker
+            if constraints.get('majority_maker'):
+                result['majority_maker'] = constraints['majority_maker']
+
+        return result
+
     def _build_cluster_report_data(self, cluster_name: str = None,
                                     summary: dict = None) -> ClusterReportData:
         """
@@ -185,6 +298,15 @@ class ClusterHealthCheck:
         cluster_config = {}
         if self.access_config and hasattr(self.access_config, 'clusters'):
             cluster_config = self.access_config.clusters.get(cluster_name, {})
+
+        # Extract detailed config from pcs config output
+        # This fills in SAP HANA parameters, VIPs, STONITH, etc.
+        extracted_config = self._extract_cluster_config(cluster_name)
+        if extracted_config:
+            # Merge extracted config - extracted values take precedence for None/empty values
+            for key, value in extracted_config.items():
+                if value is not None and (cluster_config.get(key) is None or cluster_config.get(key) == ''):
+                    cluster_config[key] = value
 
         # Get node list
         node_list = list(self.access_config.nodes.keys()) if self.access_config else []
