@@ -89,6 +89,7 @@ class RuleDefinition:
     description: str = None
     enabled: bool = True
     optional: bool = False  # If True, failures are warnings in non-strict mode
+    hana_nodes_only: bool = False  # If True, skip majority maker nodes (no HANA)
     source_definitions: Dict[str, Any] = None
     parser: Dict[str, Any] = None
     validation_logic: Dict[str, Any] = None
@@ -228,6 +229,7 @@ class RulesEngine:
                     description=data.get('description', ''),
                     enabled=data.get('enabled', True),
                     optional=data.get('optional', False),
+                    hana_nodes_only=data.get('hana_nodes_only', False),
                     source_definitions=data.get('source_definitions', {}),
                     parser=data.get('parser', {}),
                     validation_logic=data.get('validation_logic', {}),
@@ -591,15 +593,26 @@ class RulesEngine:
             else:
                 cluster_type = "Unknown"
                 message = f"Cluster detected ({node_count} nodes) but no SAP HANA resources found"
-        elif clone_max > 2:
-            # Scale-Out: 4+ HANA instances (2+ per site)
+        elif has_majority_maker:
+            # Scale-Out with majority maker
+            # clone-max = number of HANA nodes (total nodes - 1 majority maker)
             cluster_type = "Scale-Out"
-            if has_majority_maker:
-                hana_nodes = node_count - 1  # Subtract majority maker
-                mm_info = f" [{majority_maker_node}]" if majority_maker_node else ""
-                base_message = f"Scale-Out configuration ({hana_nodes} HANA nodes + majority maker{mm_info})"
+            hana_nodes = clone_max  # clone-max IS the number of HANA nodes
+            mm_info = f" [{majority_maker_node}]" if majority_maker_node else ""
+            base_message = f"Scale-Out configuration ({hana_nodes} HANA nodes + majority maker{mm_info})"
+
+            # Validate with hdbnsutil -sr_state
+            if hdbnsutil_failed:
+                message = f"{base_message} - NOTE: could not verify with hdbnsutil ({hdbnsutil_failed})"
+            elif hdbnsutil_confirms_scaleout:
+                message = f"{base_message} - verified: {hdbnsutil_host_count} HANA instances per site"
             else:
-                base_message = f"Scale-Out configuration ({clone_max} HANA nodes) - WARNING: no majority maker detected"
+                message = base_message
+            details['hana_nodes'] = hana_nodes
+        elif clone_max > 2:
+            # Scale-Out without majority maker (clone-max > 2)
+            cluster_type = "Scale-Out"
+            base_message = f"Scale-Out configuration ({clone_max} HANA nodes) - WARNING: no majority maker detected"
 
             # Validate with hdbnsutil -sr_state
             if hdbnsutil_failed:
@@ -614,19 +627,14 @@ class RulesEngine:
                 message = base_message
             details['hana_nodes'] = clone_max
         else:
-            # Scale-Up: 2 HANA instances (1 per site)
+            # Scale-Up: 2 HANA instances (1 per site), no majority maker
             # clone-max=2 or not specified
             cluster_type = "Scale-Up"
-            extra_nodes = node_count - clone_max
-            if extra_nodes > 0:
-                # Extra nodes in cluster (e.g., app servers with ASCS/ERS)
-                message = f"Scale-Up configuration ({clone_max} HANA nodes, {extra_nodes} additional cluster node(s))"
-            elif node_count == 2:
+            if node_count == 2:
                 message = "Scale-Up configuration (2 nodes, standard HA)"
             else:
-                message = f"Scale-Up configuration ({node_count} nodes)"
+                message = f"Scale-Up configuration ({clone_max} HANA nodes)"
             details['hana_nodes'] = clone_max
-            details['extra_nodes'] = extra_nodes
 
         details['cluster_type'] = cluster_type
 
@@ -1046,11 +1054,36 @@ class RulesEngine:
                 node=None
             )]
 
+        # Get majority maker node(s) if check is hana_nodes_only
+        majority_maker_nodes = set()
+        if rule.hana_nodes_only:
+            resource_config = self.get_cluster_resources_config()
+            if resource_config.get('available'):
+                mm_node = resource_config.get('majority_maker')
+                if mm_node:
+                    majority_maker_nodes.add(mm_node)
+                # Also check majority_maker_info for consistency
+                mm_info = resource_config.get('majority_maker_info', {})
+                if mm_info.get('node'):
+                    majority_maker_nodes.add(mm_info['node'])
+
         # Run on all nodes (multithreaded)
         with ThreadPoolExecutor(max_workers=self.MAX_WORKERS) as executor:
             futures = {}
 
             for node_name, node_info in nodes.items():
+                # Skip majority maker nodes for hana_nodes_only checks
+                if rule.hana_nodes_only and node_name in majority_maker_nodes:
+                    results.append(CheckResult(
+                        check_id=rule.check_id,
+                        description=rule.description,
+                        status=CheckStatus.SKIPPED,
+                        severity=Severity[rule.severity],
+                        message="Majority maker node - HANA not installed",
+                        node=node_name
+                    ))
+                    continue
+
                 method = node_info.get('preferred_method')
                 if not method:
                     results.append(CheckResult(

@@ -4,6 +4,7 @@ version: "1.0"
 severity: WARNING
 description: Validate HANA autostart is disabled (cluster manages startup)
 enabled: true
+hana_nodes_only: true  # Skip majority maker nodes (no HANA installed)
 
 source_definitions:
   live_cmd: "grep -r 'Autostart' /usr/sap/*/SYS/profile/*_HDB* 2>/dev/null || grep 'Autostart' /sapmnt/*/profile/* 2>/dev/null"

@@ -4,6 +4,7 @@ version: "1.0"
 severity: CRITICAL
 description: Validate SAP HANA HA/DR provider hooks are configured
 enabled: true
+hana_nodes_only: true  # Skip majority maker nodes (no HANA installed)
 
 source_definitions:
   # Check for HA/DR hooks - supports various provider names
