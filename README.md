@@ -36,7 +36,25 @@ cd sap_hana_healthcheck
 ./cluster_health_check.py -u
 ```
 
-This scans for SOSreport archives, hosts files, and existing reports, then presents interactive options.
+This scans the current directory for:
+- SOSreport archives (`.tar.xz`, `.tar.gz`)
+- Hosts files (`hosts.txt`, `inventory`)
+- Previous health check results (`.yaml`)
+
+Then presents an interactive menu:
+
+```
+Found resources:
+  [1] SOSreports: ./sosreports/ (3 archives)
+  [2] Hosts file: ./hosts.txt (2 hosts)
+  [3] Previous result: cluster2 (2026-04-16)
+  [4] Run on local cluster node
+  [5] Enter hostnames manually
+
+Select option [1-5/q]:
+```
+
+This is useful when you don't remember where your SOSreports are stored or want a guided setup.
 
 ## Features
 
