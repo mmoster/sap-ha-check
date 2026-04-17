@@ -33,11 +33,6 @@ def scan_for_resources(base_dir: str = ".") -> dict:
         'pdf_reports': [],            # *.pdf reports
     }
 
-    print("\n" + "=" * 63)
-    print(" Scanning for resources...")
-    print("=" * 63)
-    print(f"  Base directory: {base_path}\n")
-
     # Scan for sosreports (compressed)
     archive_patterns = ['**/sosreport-*.tar.xz', '**/sosreport-*.tar.gz',
                         '**/sosreport-*.tar.bz2', '**/sosreport-*.tgz', '**/sosreport-*.txz']

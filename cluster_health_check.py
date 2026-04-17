@@ -2605,7 +2605,8 @@ Examples:
 
     # Handle usage/scan action (-u)
     if args.usage:
-        result = run_usage_scan()
+        # Pass sosreport_dir to limit scan to that directory if specified
+        result = run_usage_scan(base_dir=args.sosreport_dir)
         if result is None:
             sys.exit(0)
 
@@ -2626,6 +2627,21 @@ Examples:
             args.sosreport_dir = result['sosreport_dir']
         elif result['action'] == 'continue':
             args.config_dir = result.get('config_dir')
+        elif result['action'] == 'fetch_sosreports':
+            # Fetch SOSreports from cluster and then analyze them
+            seed_node = result['seed_node']
+            output_dir = result.get('output_dir') or args.sosreport_dir
+            downloaded = create_and_fetch_sosreports(
+                seed_node=seed_node,
+                output_dir=output_dir,
+                interactive=sys.stdin.isatty()
+            )
+            if downloaded:
+                # Set sosreport_dir to where we downloaded them
+                args.sosreport_dir = output_dir or str(Path.cwd() / 'sosreports')
+            else:
+                print("  No SOSreports were collected.")
+                sys.exit(1)
         # Continue to run the health check with the set arguments
 
     # Handle guide action

@@ -267,12 +267,33 @@ USAGE EXAMPLES
     return None, False
 
 
-def run_usage_scan():
+def run_usage_scan(base_dir: str = None):
     """
     Run the usage scan mode: find resources, present options, and help user get started.
+
+    Args:
+        base_dir: Base directory to scan for resources (default: current directory)
     """
+    # Use specified base directory or current directory
+    scan_dir = base_dir if base_dir else "."
+
+    # Check if specified directory exists
+    if base_dir and not os.path.exists(base_dir):
+        print(f"\n  Directory not found: {base_dir}")
+        print("  Creating directory...")
+        try:
+            os.makedirs(base_dir, exist_ok=True)
+        except Exception as e:
+            print(f"  Error creating directory: {e}")
+            return None
+
+    print(f"\n{'='*63}")
+    print(" Scanning for resources...")
+    print(f"{'='*63}")
+    print(f"  Base directory: {os.path.abspath(scan_dir)}")
+
     # Scan for resources
-    resources = scan_for_resources(".")
+    resources = scan_for_resources(scan_dir)
 
     # Count what we found
     n_compressed = len(resources['sosreports_compressed'])
@@ -328,7 +349,7 @@ def run_usage_scan():
         print(f"  Config files:             {n_config}")
 
     if not (has_sosreports or has_inventory or has_former):
-        print("  (No resources found)")
+        print("  (No resources found in this directory)")
 
     # Present options based on what was found
     print("\n" + "-" * 63)
@@ -352,6 +373,8 @@ def run_usage_scan():
         inv_file = resources['inventory_files'][0] if n_inventory > 0 else resources['hosts_files'][0]
         options.append(('i', f'Use inventory/hosts file: {inv_file}'))
 
+    # Always offer the option to fetch SOSreports from a cluster
+    options.append(('f', 'Fetch SOSreports from cluster nodes (enter hostname)'))
     options.append(('n', 'Enter hostnames manually'))
     options.append(('l', 'Run locally (on this cluster node)'))
     options.append(('h', 'Show help and examples'))
@@ -456,6 +479,18 @@ def run_usage_scan():
         # Use inventory file
         inv_file = resources['inventory_files'][0] if n_inventory > 0 else resources['hosts_files'][0]
         return {'action': 'hosts_file', 'hosts_file': inv_file}
+
+    if choice == 'f':
+        # Fetch SOSreports from cluster nodes
+        try:
+            host = input("  Enter a cluster node hostname: ").strip()
+            if host:
+                # Return action to collect sosreports, with output dir set to scan_dir
+                output_dir = scan_dir if scan_dir != "." else None
+                return {'action': 'fetch_sosreports', 'seed_node': host, 'output_dir': output_dir}
+        except (EOFError, KeyboardInterrupt):
+            pass
+        return None
 
     if choice == 'n':
         # Manual hostname entry
