@@ -124,6 +124,31 @@ To auto-create without prompting:
 ./cluster_health_check.py -F mycluster --create-sosreports
 ```
 
+### Complete SOSreport Collection Workflow
+
+For a comprehensive workflow that discovers the cluster, configures SAP extensions,
+creates and fetches SOSreports in one command:
+
+```bash
+# Provide any cluster node - all others will be discovered
+./cluster_health_check.py -R hana01
+
+# Auto-configure SAP extensions without prompting
+./cluster_health_check.py -R hana01 --configure-extensions
+```
+
+This workflow:
+1. Discovers cluster name and all nodes from the seed node
+2. Checks SSH access to all nodes (skips unreachable ones)
+3. Checks and optionally configures SAP SOSreport extensions
+4. Creates SOSreports in parallel with cluster name as label
+5. Fetches SOSreports via SCP to local `./sosreports/` directory
+
+**SAP Extensions** enhance SOSreport data collection by adding:
+- `SAPHanaSR-showAttr` output (critical for SR analysis)
+- Cluster state snapshots (`crm_mon`, `pcs status`)
+- Resource and constraint configurations
+
 ---
 
 ## Example 5: Interactive Mode
@@ -177,7 +202,9 @@ A problem is shown as:
 | `-H FILE` | Read hosts from FILE |
 | `-u` | Interactive mode |
 | `-F CLUSTER` | Fetch SOSreports from nodes (prompts to create if missing) |
+| `-R NODE` | Complete SOSreport workflow: discover cluster, configure SAP extensions, create & fetch |
 | `--create-sosreports` | Auto-create missing SOSreports (use with `-F`) |
+| `--configure-extensions` | Auto-configure SAP extensions (use with `-R`) |
 | `-L` | List all available health checks |
 | `-S` | Show discovered cluster config |
 | `-d` | Debug mode (verbose output) |
@@ -272,6 +299,9 @@ Additional cluster nodes that don't run HANA are correctly identified and don't 
 
 # Auto-create and fetch SOSreports
 ./cluster_health_check.py -F mycluster --create-sosreports
+
+# Complete SOSreport collection (discover + configure + create + fetch)
+./cluster_health_check.py -R hana01
 
 # Interactive
 ./cluster_health_check.py -u

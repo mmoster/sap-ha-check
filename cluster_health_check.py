@@ -36,7 +36,7 @@ SCRIPT_DIR = Path(__file__).parent.resolve()
 sys.path.insert(0, str(SCRIPT_DIR / "access"))
 sys.path.insert(0, str(SCRIPT_DIR / "rules"))
 
-from discover_access import AccessDiscovery, show_config, delete_config, export_ansible_vars, fetch_sosreports  # noqa: E402
+from discover_access import AccessDiscovery, show_config, delete_config, export_ansible_vars, fetch_sosreports, create_and_fetch_sosreports  # noqa: E402
 from engine import RulesEngine, CheckResult, CheckStatus, Severity  # noqa: E402
 
 # Import lib modules
@@ -2380,6 +2380,17 @@ Examples:
         help='Auto-create SOSreports on nodes where missing (use with -F). Skips confirmation prompt.'
     )
     parser.add_argument(
+        '--collect-sosreports', '-R',
+        metavar='NODE',
+        help='Collect SOSreports from cluster: discover nodes from NODE, configure SAP extensions, create and fetch SOSreports'
+    )
+    parser.add_argument(
+        '--configure-extensions',
+        action='store_true',
+        default=None,
+        help='Auto-configure SAP SOSreport extensions without prompting (use with -R)'
+    )
+    parser.add_argument(
         '--force', '-f',
         action='store_true',
         help='Force rediscovery (ignore existing config)'
@@ -2783,6 +2794,19 @@ Examples:
             downloaded = fetch_sosreports(config_path, nodes=fetch_args,
                                           auto_create=auto_create)
 
+        sys.exit(0 if downloaded else 1)
+
+    # Handle collect-sosreports action (new comprehensive workflow)
+    if args.collect_sosreports:
+        seed_node = args.collect_sosreports
+        configure_ext = getattr(args, 'configure_extensions', None)
+
+        downloaded = create_and_fetch_sosreports(
+            seed_node=seed_node,
+            output_dir=args.sosreport_dir,
+            configure_extensions=configure_ext,
+            interactive=sys.stdin.isatty()
+        )
         sys.exit(0 if downloaded else 1)
 
     # Interactive mode: if no arguments provided, show intro and ask user

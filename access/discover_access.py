@@ -2560,8 +2560,9 @@ def create_sosreports(nodes: list, ssh_user: str = 'root', sos_options: str = No
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
     # Default: include cluster-relevant plugins
+    # Note: ha_cluster plugin doesn't exist on RHEL 9, using only widely available plugins
     if sos_options is None:
-        sos_options = "--batch --all-logs -o pacemaker,corosync,sapnw,saphana,ha_cluster,systemd"
+        sos_options = "--batch --all-logs -o pacemaker,corosync,sapnw,saphana,systemd,sos_extras"
 
     print(f"\n{'='*60}")
     print(" Creating SOSreports on cluster nodes")
@@ -2631,6 +2632,609 @@ def create_sosreports(nodes: list, ssh_user: str = 'root', sos_options: str = No
     print(f"SOSreport creation: {success_count}/{len(nodes)} successful")
 
     return results
+
+
+def check_sos_sap_extensions(hostname: str, ssh_user: str = 'root') -> dict:
+    """
+    Check if SAP HANA HA SOSreport extensions are configured on a node.
+
+    Returns:
+        Dict with:
+        - sos_conf_ok: True if /etc/sos/sos.conf has SAP plugins enabled
+        - extras_ok: True if /etc/sos/extras.d/sap_hana_ha exists and has content
+        - sos_extras_installed: True if sos-extras package is installed
+    """
+    result = {
+        'reachable': False,
+        'sos_conf_ok': False,
+        'extras_ok': False,
+        'sos_extras_installed': False,
+    }
+
+    try:
+        # Check sos.conf for SAP plugins
+        check_cmd = [
+            "ssh", "-o", "BatchMode=yes",
+            "-o", "ConnectTimeout=10",
+            "-o", "StrictHostKeyChecking=no",
+            f"{ssh_user}@{hostname}",
+            """
+            # Check if sos-extras is installed
+            rpm -q sos 2>/dev/null && echo "SOS_INSTALLED=yes" || echo "SOS_INSTALLED=no"
+
+            # Check sos.conf for SAP plugins
+            if grep -q 'saphana' /etc/sos/sos.conf 2>/dev/null; then
+                echo "SOS_CONF_OK=yes"
+            else
+                echo "SOS_CONF_OK=no"
+            fi
+
+            # Check if extras.d/sap_hana_ha exists and has SAPHanaSR-showAttr
+            if [ -f /etc/sos/extras.d/sap_hana_ha ] && grep -q 'SAPHanaSR-showAttr' /etc/sos/extras.d/sap_hana_ha 2>/dev/null; then
+                echo "EXTRAS_OK=yes"
+            else
+                echo "EXTRAS_OK=no"
+            fi
+            """
+        ]
+
+        proc = subprocess.run(
+            check_cmd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=30,
+            text=True
+        )
+
+        if proc.returncode == 0:
+            result['reachable'] = True
+            output = proc.stdout
+            result['sos_extras_installed'] = 'SOS_INSTALLED=yes' in output
+            result['sos_conf_ok'] = 'SOS_CONF_OK=yes' in output
+            result['extras_ok'] = 'EXTRAS_OK=yes' in output
+        else:
+            result['reachable'] = False
+
+    except subprocess.TimeoutExpired:
+        result['reachable'] = False
+    except Exception:
+        result['reachable'] = False
+
+    return result
+
+
+def configure_sos_sap_extensions(hostname: str, ssh_user: str = 'root') -> tuple:
+    """
+    Configure SAP HANA HA SOSreport extensions on a node.
+
+    Creates /etc/sos/extras.d/sap_hana_ha with commands for collecting
+    HANA cluster state, and updates /etc/sos/sos.conf to enable SAP plugins.
+
+    Returns:
+        Tuple (success: bool, message: str)
+    """
+    sudo_prefix = "sudo " if ssh_user != 'root' else ""
+
+    extras_content = """# SAP HANA HA/DR data collection for SOSreports
+# Collects System Replication status and cluster state
+SAPHanaSR-showAttr
+SAPHanaSR-showAttr --format=script
+crm_mon -1 -r -n
+pcs status --full
+pcs resource config
+pcs constraint config
+cibadmin --query --scope resources
+cibadmin --query --scope constraints
+"""
+
+    # Commands to deploy configuration
+    # Important: We need to properly update existing sections in sos.conf, not add duplicates
+    deploy_script = f"""
+# Create directories if needed
+{sudo_prefix}mkdir -p /etc/sos/extras.d
+
+# Check if sos.conf already has SAP plugins configured
+if grep -q 'saphana' /etc/sos/sos.conf 2>/dev/null && grep -q 'pacemaker.crm-scrub' /etc/sos/sos.conf 2>/dev/null; then
+    echo "SOS_CONF_ALREADY_OK"
+else
+    # Backup existing sos.conf
+    [ -f /etc/sos/sos.conf ] && {sudo_prefix}cp /etc/sos/sos.conf /etc/sos/sos.conf.bak.$(date +%s)
+
+    # We need to update the existing [report] and [plugin_options] sections
+    # Create a Python script to properly update the INI file
+    {sudo_prefix}python3 << 'PYEOF'
+import configparser
+import os
+
+conf_path = '/etc/sos/sos.conf'
+config = configparser.ConfigParser(allow_no_value=True)
+
+# Preserve case of option names
+config.optionxform = str
+
+# Read existing config
+if os.path.exists(conf_path):
+    config.read(conf_path)
+
+# Ensure sections exist
+if 'report' not in config.sections():
+    config.add_section('report')
+if 'plugin_options' not in config.sections():
+    config.add_section('plugin_options')
+
+# Update enable-plugins in [report] section
+existing_plugins = config.get('report', 'enable-plugins', fallback='')
+needed_plugins = ['saphana', 'sapnw', 'pacemaker', 'corosync', 'sos_extras']
+if existing_plugins:
+    current = [p.strip() for p in existing_plugins.split(',')]
+else:
+    current = []
+for p in needed_plugins:
+    if p not in current:
+        current.append(p)
+config.set('report', 'enable-plugins', ', '.join(current))
+
+# Add pacemaker.crm-scrub to [plugin_options]
+config.set('plugin_options', 'pacemaker.crm-scrub', 'on')
+
+# Write back
+with open(conf_path, 'w') as f:
+    config.write(f)
+
+print("SOS_CONF_UPDATED")
+PYEOF
+fi
+
+# Create extras.d/sap_hana_ha
+cat << 'EXTRASEOF' | {sudo_prefix}tee /etc/sos/extras.d/sap_hana_ha >/dev/null
+{extras_content}
+EXTRASEOF
+
+# Verify
+if [ -f /etc/sos/extras.d/sap_hana_ha ] && grep -q 'SAPHanaSR-showAttr' /etc/sos/extras.d/sap_hana_ha 2>/dev/null; then
+    echo "EXTRAS_DEPLOYED_OK"
+else
+    echo "EXTRAS_DEPLOY_FAILED"
+fi
+"""
+
+    try:
+        deploy_cmd = [
+            "ssh", "-o", "BatchMode=yes",
+            "-o", "ConnectTimeout=10",
+            "-o", "StrictHostKeyChecking=no",
+            f"{ssh_user}@{hostname}",
+            deploy_script
+        ]
+
+        proc = subprocess.run(
+            deploy_cmd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=60,
+            text=True
+        )
+
+        if proc.returncode == 0:
+            output = proc.stdout
+            if 'EXTRAS_DEPLOYED_OK' in output:
+                if 'SOS_CONF_ALREADY_OK' in output:
+                    return (True, "Extensions configured (sos.conf was already OK)")
+                else:
+                    return (True, "Extensions configured successfully")
+            else:
+                return (False, f"Deployment verification failed")
+        else:
+            return (False, f"SSH command failed: {proc.stderr.strip()[:80]}")
+
+    except subprocess.TimeoutExpired:
+        return (False, "Timeout")
+    except Exception as e:
+        return (False, f"Error: {str(e)}")
+
+
+def discover_cluster_from_node(seed_node: str, ssh_user: str = 'root') -> dict:
+    """
+    Discover cluster information from a single seed node via SSH.
+
+    Returns:
+        Dict with:
+        - success: bool
+        - cluster_name: str or None
+        - cluster_running: bool
+        - nodes: list of cluster node hostnames
+        - error: str if not successful
+    """
+    result = {
+        'success': False,
+        'cluster_name': None,
+        'cluster_running': False,
+        'nodes': [],
+        'error': None,
+    }
+
+    sudo_prefix = "sudo " if ssh_user != 'root' else ""
+
+    # First check if we can reach the node
+    try:
+        test_cmd = [
+            "ssh", "-o", "BatchMode=yes",
+            "-o", "ConnectTimeout=10",
+            "-o", "StrictHostKeyChecking=no",
+            f"{ssh_user}@{seed_node}",
+            "echo ok"
+        ]
+        proc = subprocess.run(
+            test_cmd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=15,
+            text=True
+        )
+        if proc.returncode != 0 or 'ok' not in proc.stdout:
+            result['error'] = f"Cannot connect to {seed_node} via SSH"
+            return result
+    except subprocess.TimeoutExpired:
+        result['error'] = f"SSH connection to {seed_node} timed out"
+        return result
+    except Exception as e:
+        result['error'] = f"SSH error: {str(e)}"
+        return result
+
+    # Check if cluster is running
+    cluster_check_script = f"""
+# Check if pacemaker is running
+if systemctl is-active pacemaker >/dev/null 2>&1; then
+    echo "CLUSTER_RUNNING=yes"
+else
+    echo "CLUSTER_RUNNING=no"
+fi
+
+# Get cluster name (try multiple methods)
+CLUSTER_NAME=""
+CLUSTER_NAME=$({sudo_prefix}crm_attribute -G -n cluster-name -q 2>/dev/null)
+[ -z "$CLUSTER_NAME" ] && CLUSTER_NAME=$({sudo_prefix}pcs property show cluster-name 2>/dev/null | grep cluster-name | awk '{{print $2}}')
+[ -z "$CLUSTER_NAME" ] && CLUSTER_NAME=$({sudo_prefix}corosync-cmapctl totem.cluster_name 2>/dev/null | cut -d= -f2 | tr -d ' ')
+[ -z "$CLUSTER_NAME" ] && CLUSTER_NAME=$(grep -oP 'cluster_name:\\s*\\K\\S+' /etc/corosync/corosync.conf 2>/dev/null)
+echo "CLUSTER_NAME=$CLUSTER_NAME"
+
+# Get cluster nodes (try multiple methods)
+NODES=""
+NODES=$({sudo_prefix}pcs status nodes 2>/dev/null | grep -oP 'Online:\\s*\\K.*' | tr -d '[]' | tr ' ' '\\n' | grep -v '^$' | sort -u | tr '\\n' ' ')
+[ -z "$NODES" ] && NODES=$({sudo_prefix}crm_node -l 2>/dev/null | awk '{{print $2}}' | sort -u | tr '\\n' ' ')
+[ -z "$NODES" ] && NODES=$(grep -oP 'ring0_addr:\\s*\\K\\S+' /etc/corosync/corosync.conf 2>/dev/null | tr '\\n' ' ')
+[ -z "$NODES" ] && NODES=$(grep -oP 'name:\\s*\\K\\S+' /etc/corosync/corosync.conf 2>/dev/null | grep -v '^$' | tr '\\n' ' ')
+echo "CLUSTER_NODES=$NODES"
+"""
+
+    try:
+        discover_cmd = [
+            "ssh", "-o", "BatchMode=yes",
+            "-o", "ConnectTimeout=10",
+            "-o", "StrictHostKeyChecking=no",
+            f"{ssh_user}@{seed_node}",
+            cluster_check_script
+        ]
+
+        proc = subprocess.run(
+            discover_cmd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=30,
+            text=True
+        )
+
+        output = proc.stdout
+
+        # Parse results
+        result['cluster_running'] = 'CLUSTER_RUNNING=yes' in output
+
+        for line in output.split('\n'):
+            if line.startswith('CLUSTER_NAME='):
+                name = line.split('=', 1)[1].strip()
+                if name:
+                    result['cluster_name'] = name
+            elif line.startswith('CLUSTER_NODES='):
+                nodes_str = line.split('=', 1)[1].strip()
+                if nodes_str:
+                    result['nodes'] = [n.strip() for n in nodes_str.split() if n.strip()]
+
+        # If no nodes found, at least include the seed node
+        if not result['nodes']:
+            result['nodes'] = [seed_node]
+
+        result['success'] = True
+
+    except subprocess.TimeoutExpired:
+        result['error'] = "Discovery command timed out"
+    except Exception as e:
+        result['error'] = f"Discovery error: {str(e)}"
+
+    return result
+
+
+def create_and_fetch_sosreports(seed_node: str, output_dir: str = None,
+                                 ssh_user: str = 'root',
+                                 configure_extensions: bool = None,
+                                 interactive: bool = True) -> list:
+    """
+    Complete workflow to create SOSreports on a cluster and fetch them locally.
+
+    This function:
+    1. Discovers cluster name and all nodes from a seed node
+    2. Checks if cluster is running
+    3. Checks/configures SAP SOSreport extensions (prompts user if interactive)
+    4. Creates SOSreports in parallel with cluster name as label
+    5. Fetches SOSreports via SCP
+
+    Args:
+        seed_node: A cluster node to start discovery from
+        output_dir: Directory to save sosreports (default: ./sosreports)
+        ssh_user: SSH user for connecting to nodes (default: root)
+        configure_extensions: If True, configure SAP extensions; if None, prompt
+        interactive: If True, prompt user for confirmations
+
+    Returns:
+        List of downloaded file paths, or empty list on failure
+    """
+    print(f"\n{'='*63}")
+    print(" SAP HANA Cluster SOSreport Collection")
+    print(f"{'='*63}")
+    print(f"  Seed node: {seed_node}")
+    print(f"  SSH user: {ssh_user}")
+    print()
+
+    # Step 1: Discover cluster info
+    print("Step 1: Discovering cluster configuration...")
+    discovery = discover_cluster_from_node(seed_node, ssh_user)
+
+    if not discovery['success']:
+        print(f"  [ERROR] {discovery['error']}")
+        return []
+
+    cluster_name = discovery['cluster_name'] or 'unknown'
+    cluster_nodes = discovery['nodes']
+    cluster_running = discovery['cluster_running']
+
+    print(f"  Cluster name: {cluster_name}")
+    print(f"  Cluster status: {'Running' if cluster_running else 'Stopped'}")
+    print(f"  Nodes: {', '.join(cluster_nodes)}")
+    print()
+
+    # Step 2: Check SSH access to all nodes and filter reachable ones
+    print("Step 2: Checking SSH access to cluster nodes...")
+    reachable_nodes = []
+    unreachable_nodes = []
+
+    def check_node_ssh(hostname: str) -> tuple:
+        """Check SSH access to a node."""
+        try:
+            cmd = [
+                "ssh", "-o", "BatchMode=yes",
+                "-o", "ConnectTimeout=10",
+                "-o", "StrictHostKeyChecking=no",
+                f"{ssh_user}@{hostname}",
+                "echo ok"
+            ]
+            proc = subprocess.run(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=15,
+                text=True
+            )
+            return (hostname, proc.returncode == 0 and 'ok' in proc.stdout)
+        except Exception:
+            return (hostname, False)
+
+    with ThreadPoolExecutor(max_workers=min(len(cluster_nodes), 5)) as executor:
+        futures = {executor.submit(check_node_ssh, node): node for node in cluster_nodes}
+        for future in as_completed(futures):
+            hostname, reachable = future.result()
+            if reachable:
+                reachable_nodes.append(hostname)
+                print(f"  [{hostname}] ✓ SSH OK")
+            else:
+                unreachable_nodes.append(hostname)
+                print(f"  [{hostname}] ✗ Unreachable (skipping)")
+
+    if not reachable_nodes:
+        print("\n[ERROR] No reachable nodes found. Cannot proceed.")
+        return []
+
+    print()
+
+    # Step 3: Check and configure SAP SOSreport extensions
+    print("Step 3: Checking SAP SOSreport extensions...")
+    nodes_need_config = []
+    nodes_have_config = []
+
+    for node in reachable_nodes:
+        ext_status = check_sos_sap_extensions(node, ssh_user)
+        if ext_status['extras_ok']:
+            nodes_have_config.append(node)
+            print(f"  [{node}] ✓ SAP extensions configured")
+        else:
+            nodes_need_config.append(node)
+            print(f"  [{node}] ✗ SAP extensions missing")
+
+    if nodes_need_config:
+        print()
+        do_configure = configure_extensions
+
+        if do_configure is None and interactive and sys.stdin.isatty():
+            print("  SAP SOSreport extensions enhance data collection for cluster analysis.")
+            print("  They add SAPHanaSR-showAttr and other cluster state commands.")
+            print()
+            response = input(f"  Configure SAP extensions on {len(nodes_need_config)} node(s)? [Y/n]: ").strip().lower()
+            do_configure = response not in ('n', 'no')
+
+        if do_configure:
+            print()
+            print("  Configuring SAP extensions...")
+            for node in nodes_need_config:
+                success, message = configure_sos_sap_extensions(node, ssh_user)
+                status = "✓" if success else "✗"
+                print(f"    [{node}] {status} {message}")
+
+    print()
+
+    # Step 4: Create SOSreports with cluster name label
+    print("Step 4: Creating SOSreports on cluster nodes...")
+    print(f"  Using cluster name as label: {cluster_name}")
+    print("  This may take several minutes per node...")
+    print()
+
+    # SOSreport options with cluster name label
+    # Note: Using only widely available plugins (ha_cluster doesn't exist on RHEL 9)
+    sos_options = f"--batch --all-logs --label={cluster_name} -o pacemaker,corosync,sapnw,saphana,systemd,sos_extras"
+
+    def create_on_node(hostname: str) -> tuple:
+        """Run sos report on a single node."""
+        try:
+            sos_cmd = [
+                "ssh", "-o", "BatchMode=yes",
+                "-o", "ConnectTimeout=10",
+                "-o", "StrictHostKeyChecking=no",
+                "-o", "ServerAliveInterval=30",
+                f"{ssh_user}@{hostname}",
+                f"sos report {sos_options}"
+            ]
+
+            result = subprocess.run(
+                sos_cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=600,  # 10 minutes timeout
+                text=True
+            )
+
+            if result.returncode == 0:
+                # Extract the generated filename from output
+                output = result.stdout
+                for line in output.split('\n'):
+                    if '/var/tmp/sosreport-' in line and ('.tar.xz' in line or '.tar.gz' in line):
+                        match = re.search(r'(/var/tmp/sosreport-[^\s]+\.tar\.[xg]z)', line)
+                        if match:
+                            return (hostname, True, match.group(1))
+                return (hostname, True, "Created successfully (path unknown)")
+            else:
+                error_msg = result.stderr.strip() or result.stdout.strip() or "Unknown error"
+                return (hostname, False, f"Failed: {error_msg[:100]}")
+
+        except subprocess.TimeoutExpired:
+            return (hostname, False, "Timeout (exceeded 10 minutes)")
+        except Exception as e:
+            return (hostname, False, f"Error: {str(e)}")
+
+    created_reports = {}
+    # Run in parallel with limited workers (sosreport is resource-intensive)
+    with ThreadPoolExecutor(max_workers=min(len(reachable_nodes), 3)) as executor:
+        futures = {executor.submit(create_on_node, node): node for node in reachable_nodes}
+
+        for future in as_completed(futures):
+            hostname, success, result = future.result()
+            status = "✓" if success else "✗"
+            print(f"  [{hostname}] {status} {result}")
+            if success and result.startswith('/var/tmp/'):
+                created_reports[hostname] = result
+
+    print()
+
+    # Step 5: Fetch created SOSreports
+    if not created_reports:
+        # Fall back to checking for existing reports
+        print("Step 5: Checking for existing SOSreports...")
+        existing = check_sosreports_on_nodes(reachable_nodes, ssh_user)
+        created_reports = {k: v for k, v in existing.items() if v}
+
+        if not created_reports:
+            print("  No SOSreports available to download.")
+            return []
+
+    # Determine output directory
+    if output_dir:
+        sos_dir = Path(output_dir)
+    else:
+        sos_dir = Path.cwd() / 'sosreports'
+
+    sos_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"Step 5: Fetching SOSreports to {sos_dir}...")
+    print()
+
+    downloaded_files = []
+
+    def fetch_from_node(hostname: str, remote_path: str) -> tuple:
+        """Download sosreport from a single node."""
+        try:
+            filename = os.path.basename(remote_path)
+            local_path = sos_dir / filename
+
+            # Check if already downloaded
+            if local_path.exists():
+                return (hostname, str(local_path), "Already exists (skipped)")
+
+            # Download via SCP
+            scp_cmd = [
+                "scp", "-o", "BatchMode=yes",
+                "-o", "ConnectTimeout=10",
+                "-o", "StrictHostKeyChecking=no",
+                f"{ssh_user}@{hostname}:{remote_path}",
+                str(local_path)
+            ]
+
+            proc = subprocess.run(
+                scp_cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=300,  # 5 minutes for large files
+                text=True
+            )
+
+            if proc.returncode == 0:
+                size_mb = local_path.stat().st_size / (1024 * 1024)
+                return (hostname, str(local_path), f"Downloaded ({size_mb:.1f} MB)")
+            else:
+                return (hostname, None, f"SCP failed: {proc.stderr.strip()[:60]}")
+
+        except subprocess.TimeoutExpired:
+            return (hostname, None, "Timeout")
+        except Exception as e:
+            return (hostname, None, f"Error: {str(e)}")
+
+    with ThreadPoolExecutor(max_workers=min(len(created_reports), 5)) as executor:
+        futures = {
+            executor.submit(fetch_from_node, node, path): node
+            for node, path in created_reports.items()
+        }
+
+        for future in as_completed(futures):
+            hostname, filepath, message = future.result()
+            status = "✓" if filepath else "✗"
+            print(f"  [{hostname}] {status} {message}")
+            if filepath:
+                downloaded_files.append(filepath)
+
+    print()
+    print(f"{'='*63}")
+    if downloaded_files:
+        print(f" Downloaded {len(downloaded_files)} SOSreport(s) to: {sos_dir}")
+        print()
+        print(" To analyze with health check:")
+        print(f"   ./cluster_health_check.py -s {sos_dir}")
+    else:
+        print(" No SOSreports were downloaded.")
+    print(f"{'='*63}")
+
+    return downloaded_files
 
 
 def fetch_sosreports(config_path: Path, cluster_name: str = None, nodes: list = None,

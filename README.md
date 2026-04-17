@@ -27,6 +27,9 @@ cd sap_hana_healthcheck
 
 # Verbose PDF (show all checks in detail, not just failures)
 ./cluster_health_check.py hana01 -v
+
+# Collect SOSreports from cluster (auto-discovers all nodes)
+./cluster_health_check.py -R hana01
 ```
 
 ### Interactive Mode
@@ -117,6 +120,13 @@ Options:
   -v, --verbose         Verbose PDF - show all checks in detail (not just failures)
   --no-pdf              Skip PDF report generation
   --no-update-check     Skip software update check
+
+SOSreport Collection:
+  -F, --fetch-sosreports [CLUSTER|node1 node2...]  Fetch existing SOSreports from nodes
+  -R, --collect-sosreports NODE  Full SOSreport workflow: discover cluster from NODE,
+                                 configure SAP extensions, create and fetch SOSreports
+  --create-sosreports    Auto-create SOSreports on nodes where missing (use with -F)
+  --configure-extensions Auto-configure SAP extensions without prompting (use with -R)
 ```
 
 ## Health Check Steps
