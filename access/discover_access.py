@@ -2544,7 +2544,8 @@ def check_sosreports_on_nodes(nodes: list, ssh_user: str = 'root') -> dict:
     return results
 
 
-def create_sosreports(nodes: list, ssh_user: str = 'root', sos_options: str = None) -> dict:
+def create_sosreports(nodes: list, ssh_user: str = 'root', sos_options: str = None,
+                      cluster_name: str = None) -> dict:
     """
     Create SOSreports on remote cluster nodes.
 
@@ -2552,6 +2553,7 @@ def create_sosreports(nodes: list, ssh_user: str = 'root', sos_options: str = No
         nodes: List of node hostnames to create sosreports on
         ssh_user: SSH user for connecting to nodes (default: root)
         sos_options: Additional options for sos report command (default: cluster plugins)
+        cluster_name: Optional cluster name for SOSreport label (auto-discovered if None)
 
     Returns:
         Dict mapping hostname -> (success: bool, message: str)
@@ -2559,15 +2561,30 @@ def create_sosreports(nodes: list, ssh_user: str = 'root', sos_options: str = No
     import subprocess
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
+    # Try to discover cluster name if not provided
+    if cluster_name is None and nodes:
+        discovery = discover_cluster_from_node(nodes[0], ssh_user)
+        if discovery['success'] and discovery['cluster_name']:
+            cluster_name = discovery['cluster_name']
+            print(f"\n  Discovered cluster: {cluster_name}")
+
     # Default: include cluster-relevant plugins
     # Note: ha_cluster plugin doesn't exist on RHEL 9, using only widely available plugins
     if sos_options is None:
-        sos_options = "--batch --all-logs -o pacemaker,corosync,sapnw,saphana,systemd,sos_extras"
+        base_options = "--batch --all-logs -o pacemaker,corosync,sapnw,saphana,systemd,sos_extras"
+        if cluster_name:
+            # Sanitize cluster name for use as label (remove spaces, special chars)
+            safe_label = re.sub(r'[^a-zA-Z0-9_-]', '', cluster_name)
+            sos_options = f"{base_options} --label={safe_label}"
+        else:
+            sos_options = base_options
 
     print(f"\n{'='*60}")
     print(" Creating SOSreports on cluster nodes")
     print(f"{'='*60}")
     print(f"  Nodes: {', '.join(nodes)}")
+    if cluster_name:
+        print(f"  Cluster: {cluster_name}")
     print(f"  Command: sos report {sos_options}")
     print()
     print("  This may take several minutes per node...")
@@ -3246,6 +3263,8 @@ def fetch_sosreports(config_path: Path, cluster_name: str = None, nodes: list = 
     First checks if SOSreports exist on nodes. If missing, prompts user
     to create them (unless auto_create or non-interactive mode).
 
+    When a single node is specified, discovers and includes all cluster nodes.
+
     Args:
         config_path: Path to the configuration file
         cluster_name: Name of the cluster to fetch sosreports from
@@ -3271,10 +3290,64 @@ def fetch_sosreports(config_path: Path, cluster_name: str = None, nodes: list = 
 
     # Get list of nodes to fetch from
     target_nodes = []
+    discovered_cluster_name = None
 
     if nodes:
-        # Use specified nodes directly
-        target_nodes = nodes
+        # If single node specified, try to discover all cluster nodes
+        if len(nodes) == 1:
+            seed_node = nodes[0]
+            print(f"\n{'='*60}")
+            print(" Discovering cluster from seed node")
+            print(f"{'='*60}")
+            print(f"  Seed node: {seed_node}")
+
+            discovery = discover_cluster_from_node(seed_node, ssh_user)
+
+            if discovery['success']:
+                discovered_cluster_name = discovery['cluster_name']
+                cluster_status = "Running" if discovery['cluster_running'] else "Stopped"
+                print(f"  Cluster: {discovered_cluster_name or 'unknown'}")
+                print(f"  Status: {cluster_status}")
+                print(f"  Nodes discovered: {', '.join(discovery['nodes'])}")
+
+                # Check SSH access to all discovered nodes
+                print()
+                print("  Checking SSH access to cluster nodes...")
+                reachable = []
+                unreachable = []
+
+                def check_ssh(hostname):
+                    try:
+                        cmd = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
+                               "-o", "StrictHostKeyChecking=no", f"{ssh_user}@{hostname}", "echo ok"]
+                        proc = subprocess.run(cmd, stdin=subprocess.DEVNULL,
+                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                            timeout=15, text=True)
+                        return (hostname, proc.returncode == 0 and 'ok' in proc.stdout)
+                    except Exception:
+                        return (hostname, False)
+
+                with ThreadPoolExecutor(max_workers=min(len(discovery['nodes']), 5)) as executor:
+                    futures = {executor.submit(check_ssh, n): n for n in discovery['nodes']}
+                    for future in as_completed(futures):
+                        hostname, ok = future.result()
+                        if ok:
+                            reachable.append(hostname)
+                            print(f"    [{hostname}] ✓ SSH OK")
+                        else:
+                            unreachable.append(hostname)
+                            print(f"    [{hostname}] ✗ Unreachable (skipping)")
+
+                target_nodes = reachable
+                if unreachable:
+                    print(f"\n  Note: {len(unreachable)} node(s) unreachable, will be skipped")
+            else:
+                print(f"  Could not discover cluster: {discovery.get('error', 'unknown error')}")
+                print(f"  Using only specified node: {seed_node}")
+                target_nodes = nodes
+        else:
+            # Multiple nodes specified - use them directly
+            target_nodes = nodes
     elif cluster_name:
         # Load nodes from cluster config
         if not config_path.exists():
@@ -3333,7 +3406,8 @@ def fetch_sosreports(config_path: Path, cluster_name: str = None, nodes: list = 
             create_missing = response in ('y', 'yes')
 
         if create_missing:
-            create_results = create_sosreports(nodes_without_sos, ssh_user)
+            create_results = create_sosreports(nodes_without_sos, ssh_user,
+                                               cluster_name=discovered_cluster_name)
 
             # Re-check for newly created sosreports
             new_existing = check_sosreports_on_nodes(nodes_without_sos, ssh_user)
