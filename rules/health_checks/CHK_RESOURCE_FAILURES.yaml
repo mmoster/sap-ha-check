@@ -1,36 +1,35 @@
 # CHK_RESOURCE_FAILURES - Detect failed resource operations
 check_id: CHK_RESOURCE_FAILURES
-version: "1.0"
+version: "1.1"
 severity: WARNING
 description: Detect failed resource operations in cluster history
 enabled: true
 
+# Checks crm_mon output for failed resource actions.
+# In crm_mon output, failures are explicitly shown (FAILED, fail-count, Failed Actions).
+# If none of these patterns appear, the cluster has no resource failures.
+
 source_definitions:
-  # Check for failed actions - if none found, output NO_FAILURES
   live_cmd: |
-    FAILURES=$(crm_mon -1 -f 2>/dev/null | grep -iE 'FAILED|fail-count=[1-9]|Failed Actions' || pcs status --full 2>/dev/null | grep -iE 'FAILED|fail-count=[1-9]|Failed Actions')
-    if [ -n "$FAILURES" ]; then
-      echo "$FAILURES"
-    else
-      echo "NO_FAILURES"
-    fi
+    crm_mon -1 -f 2>/dev/null || pcs status --full 2>/dev/null
   sos_path: "sos_commands/pacemaker/crm_mon_-1*"
   # Fallback: run pcs -f cib.xml locally when cluster was stopped
-  sos_cmd: "pcs -f {file} status --full 2>/dev/null | grep -iE 'FAILED|fail-count=[1-9]|Failed Actions' || echo 'NO_FAILURES'"
+  sos_cmd: "pcs -f {file} status --full 2>/dev/null"
   sos_cmd_file: "sos_commands/pacemaker/crm_report/*/cib.xml"
 
 parser:
   type: regex
   multiline: true
   search_patterns:
-    - name: status
-      regex: "(NO_FAILURES|FAILED|fail-count=[1-9]|Failed Actions)"
+    # Detect actual failure indicators in crm_mon/pcs output
+    - name: failures_found
+      regex: "(FAILED|fail-count=[1-9]|Failed Actions)"
       group: 0
 
 validation_logic:
   scope: cluster  # Failure history is cluster-wide
   expectations:
-    - key: status
-      operator: eq
-      value: "NO_FAILURES"
+    - key: failures_found
+      operator: not_exists
+      value: true
       message: "Failed resource actions detected - may need cleanup with: pcs resource cleanup"
