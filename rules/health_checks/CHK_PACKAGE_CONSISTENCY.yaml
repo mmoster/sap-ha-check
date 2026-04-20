@@ -1,19 +1,19 @@
 # CHK_PACKAGE_CONSISTENCY - Verify package versions across nodes
 check_id: CHK_PACKAGE_CONSISTENCY
-version: "1.2"
+version: "1.3"
 severity: WARNING
 description: Verify package versions are consistent across nodes
 enabled: true
+hana_nodes_only: true  # Only compare HANA nodes; nodes excluded by constraints may have different packages
 
 # Package types (RHEL):
 # - sap-hana-ha: Modern ANGI package (RHEL 9+), supports both Scale-Up and Scale-Out
 # - resource-agents-sap-hana: Classic Scale-Up package (RHEL 8/9)
 # - resource-agents-sap-hana-scaleout: Classic Scale-Out package (RHEL 8/9)
 #
-# Majority maker nodes in Scale-Out clusters:
-# - Should have SAME packages as HANA nodes, OR
-# - Should have NO SAP HANA packages (no sap-hana-ha, resource-agents-sap-hana*)
-# - Having different SAP HANA packages is a WARNING (not critical)
+# Nodes excluded from HANA by location constraints (app servers in Scale-Up,
+# majority makers in Scale-Out) are skipped - they may legitimately have
+# different packages. Only HANA nodes are compared for consistency.
 
 source_definitions:
   live_cmd: "rpm -qa | grep -E 'pacemaker|corosync|resource-agents|SAPHanaSR|sap-hana-ha' | sort 2>/dev/null || dpkg -l | grep -E 'pacemaker|corosync' 2>/dev/null"

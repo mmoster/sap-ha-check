@@ -518,24 +518,41 @@ def generate_health_check_report(
     # Majority makers are ONLY applicable for Scale-Out clusters
     is_scale_out = cluster_info.get('cluster_type') == 'Scale-Out'
     majority_makers = cluster_info.get('majority_makers', []) if is_scale_out else []
+    # Nodes excluded from HANA by location constraints (app servers or majority makers)
+    resource_config = cluster_info.get('resource_config') or {}
+    hana_excluded_node = resource_config.get('hana_excluded_node')
+    excluded_nodes = set(majority_makers)
+    if hana_excluded_node:
+        excluded_nodes.add(hana_excluded_node)
     for node in nodes:
         pdf.set_font('Helvetica', '', 10)
         pdf.cell(5, 6, "-")  # Bullet point
         if node in majority_makers:
             pdf.set_font('Helvetica', 'I', 10)
             pdf.cell(0, 6, f"{node} (MajorityMaker)", new_x="LMARGIN", new_y="NEXT")
+        elif node in excluded_nodes:
+            pdf.set_font('Helvetica', 'I', 10)
+            pdf.cell(0, 6, f"{node} (no HANA resources - excluded by constraints)", new_x="LMARGIN", new_y="NEXT")
         else:
             pdf.cell(0, 6, node, new_x="LMARGIN", new_y="NEXT")
 
-    # Note about MajorityMaker constraints for Scale-Out
-    if majority_makers and cluster_info.get('cluster_type') == 'Scale-Out':
+    # Note about constraint-excluded nodes
+    if excluded_nodes:
         pdf.ln(2)
         pdf.set_font('Helvetica', 'I', 8)
         pdf.set_text_color(100, 100, 100)
-        pdf.multi_cell(0, 4,
-            f"Note: MajorityMaker node(s) have location constraints with resource-discovery=never "
-            f"to prevent SAPHanaTopology and SAPHanaController from running on these nodes."
-        )
+        if majority_makers:
+            pdf.multi_cell(0, 4,
+                f"Note: MajorityMaker node(s) have location constraints with resource-discovery=never "
+                f"to prevent SAPHanaTopology and SAPHanaController from running on these nodes."
+            )
+        else:
+            non_mm_excluded = excluded_nodes - set(majority_makers)
+            if non_mm_excluded:
+                pdf.multi_cell(0, 4,
+                    f"Note: {', '.join(sorted(non_mm_excluded))} excluded from SAPHana resources by "
+                    f"location constraints (resource-discovery=never)."
+                )
         pdf.set_text_color(*RedHatColors.BLACK)
 
     pdf.ln(5)
@@ -629,23 +646,25 @@ def generate_health_check_report(
             pdf.info_table(ha_config)
         pdf.ln(3)
 
-        # SAPHanaTopology Resource (Scale-Out)
+        # SAPHanaTopology Resource
         topology_resource = cluster_info.get('topology_resource')
         if topology_resource:
             pdf.sub_section("SAPHanaTopology Resource")
+            # Determine which nodes the clone actually runs on
+            hana_nodes = [n for n in nodes if n not in excluded_nodes]
+            clone_desc = f"clone (runs on: {', '.join(hana_nodes)})"
             topo_config = {
                 "Resource Name": topology_resource,
                 "Resource Agent": "ocf:suse:SAPHanaTopology",
-                "Clone Type": "clone (runs on all HANA nodes)",
+                "Clone Type": clone_desc,
                 "interleave": "true",
             }
-            # Add majority maker exclusion info
-            if majority_makers:
-                topo_config["Excluded Nodes"] = ", ".join(majority_makers) + " (resource-discovery=never)"
+            if excluded_nodes:
+                topo_config["Excluded Nodes"] = ", ".join(sorted(excluded_nodes)) + " (resource-discovery=never)"
             pdf.info_table(topo_config)
             pdf.ln(3)
 
-        # SAPHanaController Resource (Scale-Out) / SAPHana Resource (Scale-Up)
+        # SAPHanaController Resource / SAPHana Resource
         res_config = {}
         resource_type = cluster_info.get('resource_type')
         resource_name = cluster_info.get('resource_name')
@@ -656,9 +675,8 @@ def generate_health_check_report(
                 res_config["Resource Agent"] = "ocf:suse:SAPHanaController"
                 res_config["Clone Type"] = "promotable (master/slave)"
                 res_config["interleave"] = "true"
-                # Add majority maker exclusion info
-                if majority_makers:
-                    res_config["Excluded Nodes"] = ", ".join(majority_makers) + " (resource-discovery=never)"
+                if excluded_nodes:
+                    res_config["Excluded Nodes"] = ", ".join(sorted(excluded_nodes)) + " (resource-discovery=never)"
             else:
                 pdf.sub_section("SAPHana Resource")
                 res_config["Resource Name"] = resource_name
