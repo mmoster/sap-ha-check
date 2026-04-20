@@ -553,8 +553,9 @@ class RulesEngine:
         has_saphana = saphana_resource is not None
         has_controller = saphana_controller is not None
         has_hana_resource = has_saphana or has_controller
-        # Majority maker detected by name pattern OR by location constraints
-        has_majority_maker = (majority_maker is not None and majority_maker != 'none') or \
+        # Detect if location constraints exclude a node from HANA resources
+        # This could indicate a majority maker (Scale-Out) OR an app server (Scale-Up)
+        has_constraint_excluded_node = (majority_maker is not None and majority_maker != 'none') or \
                             (majority_maker_node is not None and majority_maker_node != 'none')
 
         # Validate Scale-Out using hdbnsutil -sr_state
@@ -568,7 +569,20 @@ class RulesEngine:
             except (ValueError, TypeError):
                 hdbnsutil_host_count = 0
 
-        # Determine cluster type based on clone-max (definitive indicator)
+        # SAP HANA Scale-Out architecture:
+        #   - At least 2 HANA instances per site (minimum 4 total = clone-max >= 4)
+        #   - Minimum 5 nodes: 4 HANA nodes + 1 majority maker
+        #   - Majority maker has constraints excluding SAPHanaTopology + SAPHanaController
+        #
+        # SAP HANA Scale-Up architecture:
+        #   - Exactly 1 HANA instance per site (clone-max = 2)
+        #   - May have additional app server nodes in the cluster
+        #   - App servers may have HANA exclusion constraints (NOT majority makers)
+        #
+        # Key rule: Majority maker ONLY exists in Scale-Out (clone-max >= 4)
+        is_scale_out = clone_max >= 4
+        has_majority_maker = is_scale_out and has_constraint_excluded_node
+
         cluster_type = "Unknown"
         details = {
             'node_count': node_count,
@@ -576,43 +590,37 @@ class RulesEngine:
             'has_saphana_resource': has_saphana,
             'has_saphana_controller': has_controller,
             'has_majority_maker': has_majority_maker,
-            'majority_maker_node': majority_maker_node,
+            'majority_maker_node': majority_maker_node if has_majority_maker else None,
             'hdbnsutil_host_count': hdbnsutil_host_count,
             'hdbnsutil_confirms_scaleout': hdbnsutil_confirms_scaleout,
             'sidadm_user': sidadm_user,
             'parsed': parsed
         }
 
-        if node_count == 0:
-            cluster_type = "Not detected"
-            message = "Could not detect cluster configuration (cluster may not be running)"
-        elif not has_hana_resource:
-            if node_count == 1:
+        # Decision tree:
+        # 1. HANA resources + clone-max → definitive type (clone-max >= 4 = Scale-Out, < 4 = Scale-Up)
+        # 2. No HANA resources → Unknown
+        # 3. node_count is informational, not required for type detection
+        if not has_hana_resource:
+            if node_count == 0:
+                cluster_type = "Not detected"
+                message = "Could not detect cluster configuration (no HANA resources found)"
+            elif node_count == 1:
                 cluster_type = "Single Node"
                 message = "Single node configuration (no HA)"
             else:
                 cluster_type = "Unknown"
                 message = f"Cluster detected ({node_count} nodes) but no SAP HANA resources found"
-        elif has_majority_maker:
-            # Scale-Out with majority maker
-            # clone-max = number of HANA nodes (total nodes - 1 majority maker)
+        elif is_scale_out:
+            # Scale-Out: clone-max >= 4 (at least 2 HANA instances per site)
             cluster_type = "Scale-Out"
-            hana_nodes = clone_max  # clone-max IS the number of HANA nodes
-            mm_info = f" [{majority_maker_node}]" if majority_maker_node else ""
-            base_message = f"Scale-Out configuration ({hana_nodes} HANA nodes + majority maker{mm_info})"
+            hana_nodes = clone_max
 
-            # Validate with hdbnsutil -sr_state
-            if hdbnsutil_failed:
-                message = f"{base_message} - NOTE: could not verify with hdbnsutil ({hdbnsutil_failed})"
-            elif hdbnsutil_confirms_scaleout:
-                message = f"{base_message} - verified: {hdbnsutil_host_count} HANA instances per site"
+            if has_majority_maker:
+                mm_info = f" [{majority_maker_node}]" if majority_maker_node else ""
+                base_message = f"Scale-Out configuration ({hana_nodes} HANA nodes + majority maker{mm_info})"
             else:
-                message = base_message
-            details['hana_nodes'] = hana_nodes
-        elif clone_max > 2:
-            # Scale-Out without majority maker (clone-max > 2)
-            cluster_type = "Scale-Out"
-            base_message = f"Scale-Out configuration ({clone_max} HANA nodes) - WARNING: no majority maker detected"
+                base_message = f"Scale-Out configuration ({hana_nodes} HANA nodes) - WARNING: no majority maker detected"
 
             # Validate with hdbnsutil -sr_state
             if hdbnsutil_failed:
@@ -620,18 +628,21 @@ class RulesEngine:
             elif hdbnsutil_confirms_scaleout:
                 message = f"{base_message} - verified: {hdbnsutil_host_count} HANA instances per site"
             elif hdbnsutil_host_count == 1:
-                # WARNING: clone-max>2 but only 1 host per site
-                message = f"{base_message} - WARNING: hdbnsutil shows only 1 HANA instance per site (not true Scale-Out)"
-                cluster_type = "Scale-Out (unverified)"
+                message = f"{base_message} - WARNING: hdbnsutil shows only 1 HANA instance per site"
             else:
                 message = base_message
-            details['hana_nodes'] = clone_max
+            details['hana_nodes'] = hana_nodes
         else:
-            # Scale-Up: 2 HANA instances (1 per site), no majority maker
-            # clone-max=2 or not specified
+            # Scale-Up: clone-max < 4 (1 HANA instance per site, typically clone-max=2)
             cluster_type = "Scale-Up"
-            if node_count == 2:
-                message = "Scale-Up configuration (2 nodes, standard HA)"
+            extra_nodes = max(0, node_count - clone_max) if node_count > 0 else 0
+            if node_count == 2 or node_count == 0:
+                message = f"Scale-Up configuration ({clone_max} HANA nodes)"
+            elif extra_nodes > 0 and has_constraint_excluded_node:
+                # Extra node with HANA exclusion constraints = app server, NOT majority maker
+                message = f"Scale-Up configuration ({clone_max} HANA nodes, {extra_nodes} app server node(s))"
+            elif extra_nodes > 0:
+                message = f"Scale-Up configuration ({clone_max} HANA nodes, {extra_nodes} additional node(s))"
             else:
                 message = f"Scale-Up configuration ({clone_max} HANA nodes)"
             details['hana_nodes'] = clone_max
@@ -879,25 +890,31 @@ class RulesEngine:
             sos_cmd = source_defs.get('sos_cmd')
             sos_cmd_file = source_defs.get('sos_cmd_file')
 
-            success, output = self._read_sosreport(sos_path, node, sos_base)
-            self._access_methods_used[node] = 'sosreport'
+            success = False
+            output = ""
+
+            # If sos_cmd is defined (with sos_cmd_file), prefer it over sos_path
+            # This handles rules like CHK_CLUSTER_TYPE that use pcs -f cib.xml
+            if sos_cmd and sos_cmd_file:
+                cmd_success, cmd_output = self._run_sos_cmd(sos_cmd, sos_cmd_file, node, sos_base)
+                if cmd_success and cmd_output.strip():
+                    success, output = cmd_success, cmd_output
+                    self._used_cib_xml = True  # Track that we used cib.xml parsing
+                    self._access_methods_used[node] = 'sosreport'
+
+            # If sos_cmd not defined or failed, try sos_path
+            if not success and sos_path:
+                success, output = self._read_sosreport(sos_path, node, sos_base)
+                self._access_methods_used[node] = 'sosreport'
 
             # If output contains error indicators (cluster was stopped), try alternatives
             if not success or (success and output.strip().startswith('Error:')):
-                # First try sos_cmd if defined (e.g., pcs -f cib.xml)
-                if sos_cmd and sos_cmd_file:
-                    cmd_success, cmd_output = self._run_sos_cmd(sos_cmd, sos_cmd_file, node, sos_base)
-                    if cmd_success and cmd_output.strip():
-                        success, output = cmd_success, cmd_output
-                        self._used_cib_xml = True  # Track that we used cib.xml parsing
-
-                # Then try file alternates if still no success
-                if not success or (success and output.strip().startswith('Error:')):
-                    for alt_path in alternates:
-                        alt_success, alt_output = self._read_sosreport(alt_path, node, sos_base)
-                        if alt_success and not alt_output.strip().startswith('Error:'):
-                            success, output = alt_success, alt_output
-                            break
+                # Try file alternates if still no success
+                for alt_path in alternates:
+                    alt_success, alt_output = self._read_sosreport(alt_path, node, sos_base)
+                    if alt_success and not alt_output.strip().startswith('Error:'):
+                        success, output = alt_success, alt_output
+                        break
         else:
             cmd = source_defs.get('live_cmd')
             if not cmd:

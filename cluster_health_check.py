@@ -221,6 +221,11 @@ class ClusterHealthCheck:
             hana = extracted.get('sap_hana', {})
             stonith = extracted.get('stonith', {})
             constraints = extracted.get('constraints', {})
+            cluster = extracted.get('cluster', {})
+
+            # Cluster/system info
+            result['rhel_version'] = cluster.get('rhel_version')
+            result['pacemaker_version'] = cluster.get('pacemaker_version')
 
             # SAP HANA config
             result['sid'] = hana.get('sid')
@@ -339,11 +344,16 @@ class ClusterHealthCheck:
         majority_makers = list(self.majority_makers) if self.majority_makers else []
         if self.rules_engine:
             resource_config = self.rules_engine.get_cluster_resources_config()
-            # Extract majority maker from resource config ONLY for Scale-Out clusters
-            # Majority makers are not applicable to Scale-Up clusters (even with extra nodes)
+            # Majority maker only exists in Scale-Out (clone-max >= 4)
+            # Nodes with HANA exclusion constraints in Scale-Up are app servers, not majority makers
             if resource_config.get('available') and resource_config.get('majority_maker'):
-                if cluster_type == 'Scale-Out' and resource_config['majority_maker'] not in majority_makers:
-                    majority_makers.append(resource_config['majority_maker'])
+                mm_node = resource_config['majority_maker']
+                if cluster_type == 'Scale-Out':
+                    if mm_node not in majority_makers:
+                        majority_makers.append(mm_node)
+                    self._debug_print(f"Scale-Out majority maker: {mm_node}")
+                else:
+                    self._debug_print(f"Node {mm_node} has HANA exclusion constraints but cluster is {cluster_type} (app server, not majority maker)")
 
         # Build results list from check_results
         results_dict = [
@@ -415,9 +425,9 @@ class ClusterHealthCheck:
             nodes=node_list,
             majority_makers=majority_makers,
 
-            # OS/Software versions (from install_status)
-            rhel_version=install_status.get('rhel_version') if install_status else None,
-            pacemaker_version=install_status.get('pacemaker_version') if install_status else None,
+            # OS/Software versions (from install_status or extracted config)
+            rhel_version=(install_status.get('rhel_version') if install_status else None) or cluster_config.get('rhel_version'),
+            pacemaker_version=(install_status.get('pacemaker_version') if install_status else None) or cluster_config.get('pacemaker_version'),
 
             # SAP HANA config
             sid=cluster_config.get('sid'),
@@ -1571,8 +1581,11 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
             if cluster_type_result and cluster_type_result.details:
                 clone_max = cluster_type_result.details.get('clone_max', 2)
                 cluster_type = cluster_type_result.details.get('cluster_type', 'Unknown')
-                is_scale_out = cluster_type == 'Scale-Out' and clone_max > 2
-                self._debug_print(f"Cluster type: {cluster_type}, clone-max: {clone_max}, is_scale_out: {is_scale_out}")
+                has_majority_maker = cluster_type_result.details.get('has_majority_maker', False)
+                # Scale-Out requires clone-max >= 4 (at least 2 HANA instances per site)
+                # Majority maker only exists in Scale-Out clusters
+                is_scale_out = cluster_type == 'Scale-Out' and clone_max >= 4
+                self._debug_print(f"Cluster type: {cluster_type}, clone-max: {clone_max}, has_majority_maker: {has_majority_maker}, is_scale_out: {is_scale_out}")
 
             # Check for majority maker nodes ONLY for Scale-Out clusters
             # This must happen before the early return for "no HANA installed"

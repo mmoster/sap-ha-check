@@ -432,8 +432,12 @@ class ConfigExtractor:
             'location': [],
             'colocation': [],
             'order': [],
-            'majority_maker': None
+            'hana_excluded_node': None,  # Node with HANA exclusion constraints
+            'majority_maker': None       # Only set if clone-max >= 4 (Scale-Out)
         }
+        # Track which nodes have both SAPHanaTopology AND SAPHanaController exclusion constraints
+        nodes_excluded_from_controller = set()
+        nodes_excluded_from_topology = set()
 
         for line in lines:
             stripped = line.strip()
@@ -454,12 +458,22 @@ class ConfigExtractor:
             if current_section and stripped:
                 constraints[current_section].append(stripped)
 
-                # Detect majority maker from location constraints
-                if current_section == 'location' and 'avoids node' in stripped:
-                    # Pattern: resource 'X' avoids node 'nodename'
+                # Track location constraints that exclude HANA resources from nodes
+                if current_section == 'location' and 'avoids node' in stripped and 'INFINITY' in stripped:
                     match = re.search(r"avoids node '([^']+)'", stripped)
-                    if match and ('SAPHana' in stripped or 'resource-discovery=never' in stripped):
-                        constraints['majority_maker'] = match.group(1)
+                    if match:
+                        node = match.group(1)
+                        if 'SAPHanaController' in stripped:
+                            nodes_excluded_from_controller.add(node)
+                        if 'SAPHanaTopology' in stripped:
+                            nodes_excluded_from_topology.add(node)
+
+        # A node excluded from BOTH SAPHanaTopology AND SAPHanaController
+        # is either an app server (Scale-Up) or majority maker (Scale-Out)
+        # The distinction depends on clone-max which is checked later
+        excluded_from_both = nodes_excluded_from_controller & nodes_excluded_from_topology
+        if excluded_from_both:
+            constraints['hana_excluded_node'] = sorted(excluded_from_both)[0]
 
         self.config['constraints'] = constraints
 
@@ -493,6 +507,19 @@ class ConfigExtractor:
         if 'stonith-enabled' in properties:
             self.config['stonith']['enabled'] = properties['stonith-enabled'].lower() == 'true'
 
+        # Extract versions from dc-version (format: 2.1.9-1.el9-49aab9983)
+        dc_version = properties.get('dc-version', '')
+        if dc_version:
+            # Extract Pacemaker version (first part before -)
+            pacemaker_match = re.match(r'(\d+\.\d+\.\d+)', dc_version)
+            if pacemaker_match:
+                self.config['cluster']['pacemaker_version'] = pacemaker_match.group(1)
+
+            # Extract RHEL version from el<N> pattern
+            rhel_match = re.search(r'\.el(\d+)', dc_version)
+            if rhel_match:
+                self.config['cluster']['rhel_version'] = f"RHEL {rhel_match.group(1)}"
+
     def get_config(self) -> Dict[str, Any]:
         """Return the extracted configuration."""
         return self.config
@@ -523,9 +550,13 @@ class ConfigExtractor:
         stonith = self.config.get('stonith', {})
         constraints = self.config.get('constraints', {})
 
+        cluster = self.config.get('cluster', {})
+
         cluster_info = {
             # Cluster info
-            'cluster_name': self.config.get('cluster', {}).get('name', 'Unknown'),
+            'cluster_name': cluster.get('name', 'Unknown'),
+            'rhel_version': cluster.get('rhel_version'),
+            'pacemaker_version': cluster.get('pacemaker_version'),
 
             # SAP HANA info
             'sid': hana.get('sid'),
@@ -556,9 +587,27 @@ class ConfigExtractor:
                 'ssl_insecure': stonith.get('ssl_insecure', ''),
             },
 
-            # Majority maker
+            # Node with HANA exclusion constraints (may be app server or majority maker)
+            'hana_excluded_node': constraints.get('hana_excluded_node'),
+            # Majority maker only set for Scale-Out (clone-max >= 4)
             'majority_maker': constraints.get('majority_maker'),
         }
+
+        # Determine if the hana_excluded_node is a majority maker or app server
+        # Majority maker: only in Scale-Out (clone-max >= 4)
+        clone_max = hana.get('clone_max', 2) or 2
+        try:
+            clone_max = int(clone_max)
+        except (ValueError, TypeError):
+            clone_max = 2
+
+        excluded_node = constraints.get('hana_excluded_node')
+        if excluded_node and clone_max >= 4:
+            # Scale-Out: this is a majority maker
+            cluster_info['majority_maker'] = excluded_node
+        elif excluded_node:
+            # Scale-Up: this is an app server, not a majority maker
+            cluster_info['majority_maker'] = None
 
         return cluster_info
 

@@ -356,17 +356,20 @@ class CIBParser:
 
             previous_line = line_stripped
 
-        # Identify majority maker: node with both topology and controller constraints
+        # Identify node excluded from both SAPHanaTopology AND SAPHanaController
+        # This could be a majority maker (Scale-Out, clone-max>=4) or an app server (Scale-Up)
+        # The actual determination depends on clone-max, checked at a higher level
         for node, constraints in mm_constraints.items():
             if constraints['topology'] and constraints['controller']:
-                result['majority_maker'] = node
+                result['hana_excluded_node'] = node
+                result['majority_maker'] = node  # Legacy field - consumer must check clone-max
                 result['majority_maker_info'] = {
                     'node': node,
                     'has_topology_constraint': constraints['topology'],
                     'has_controller_constraint': constraints['controller'],
                     'has_resource_discovery': constraints['resource_discovery']
                 }
-                break  # Found the majority maker
+                break
 
         return result
     
@@ -535,7 +538,9 @@ class CIBParser:
                 'devices': config['stonith'].get('devices', [])
             },
             'properties': config['properties'].get('properties', {}),
-            'majority_maker': config['constraints'].get('majority_maker'),
+            # Node excluded from HANA resources (app server in Scale-Up, majority maker in Scale-Out)
+            'hana_excluded_node': config['constraints'].get('hana_excluded_node'),
+            'majority_maker': config['constraints'].get('majority_maker'),  # Legacy - check clone-max
             'majority_maker_info': config['constraints'].get('majority_maker_info', {})
         }
 

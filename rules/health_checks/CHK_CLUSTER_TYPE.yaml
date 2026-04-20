@@ -18,9 +18,20 @@ source_definitions:
     echo "=== HANA_RESOURCES ===" && pcs resource show 2>/dev/null | grep -E 'SAPHana|SAPHanaController|SAPHanaTopology' || crm_mon -1 2>/dev/null | grep -E 'SAPHana|SAPHanaController' || cat /var/lib/pacemaker/cib/cib.xml 2>/dev/null | grep -oE 'SAPHana[^"]*' | head -1;
     echo "=== CLONE_MAX ===" && (pcs resource config 2>/dev/null | grep -A10 'SAPHanaController\|SAPHana_' | grep -E 'clone-max' | head -1 || cat /var/lib/pacemaker/cib/cib.xml 2>/dev/null | grep -oE 'clone-max.*value="[0-9]+"' | grep -oE '[0-9]+' | head -1 | sed 's/^/clone-max=/') || echo "clone-max=2";
     echo "=== MAJORITY_MAKER ===";
-    # Detect majority maker by: 1) name pattern, 2) location constraints excluding from SAPHana
+    # Detect majority maker by: 1) name pattern, 2) location constraints excluding BOTH SAPHanaTopology AND SAPHanaController
+    # A node is a majority maker ONLY if BOTH resources are excluded from it (not just app servers)
     MM_BY_NAME=$(crm_node -l 2>/dev/null | grep -iE 'majority|mm-' | awk '{print $2}');
-    MM_BY_CONSTRAINT=$(pcs constraint location show 2>/dev/null | grep -E "SAPHana.*avoids node.*INFINITY|SAPHanaController.*avoids node.*INFINITY" | sed "s/.*avoids node '\([^']*\)'.*/\1/" | sort -u | head -1);
+    # Use 'pcs constraint location config' (pcs 0.12+) or 'pcs constraint location show' (older)
+    MM_CONSTRAINT_OUTPUT=$(pcs constraint location config 2>/dev/null || pcs constraint location show 2>/dev/null);
+    MM_CONTROLLER=$(echo "$MM_CONSTRAINT_OUTPUT" | grep -E "SAPHanaController.*avoids node.*INFINITY" | sed "s/.*avoids node '\([^']*\)'.*/\1/" | sort -u);
+    MM_TOPOLOGY=$(echo "$MM_CONSTRAINT_OUTPUT" | grep -E "SAPHanaTopology.*avoids node.*INFINITY" | sed "s/.*avoids node '\([^']*\)'.*/\1/" | sort -u);
+    MM_BY_CONSTRAINT="";
+    for node in $MM_CONTROLLER; do
+      if echo "$MM_TOPOLOGY" | grep -qx "$node"; then
+        MM_BY_CONSTRAINT="$node";
+        break;
+      fi;
+    done;
     if [ -n "$MM_BY_NAME" ]; then
       echo "majority_maker_node=$MM_BY_NAME (by name)";
     elif [ -n "$MM_BY_CONSTRAINT" ]; then
@@ -55,7 +66,32 @@ source_definitions:
     else
       echo "no_sidadm_user";
     fi
-  sos_path: "sos_commands/pacemaker/crm_mon_-1"
+  sos_cmd: |
+    echo "=== NODES ===";
+    pcs -f {file} status nodes 2>/dev/null;
+    echo "=== HANA_RESOURCES ===";
+    pcs -f {file} resource status 2>/dev/null | grep -E 'SAPHana|SAPHanaController|SAPHanaTopology' || pcs -f {file} resource show 2>/dev/null | grep -E 'SAPHana|SAPHanaController|SAPHanaTopology';
+    echo "=== CLONE_MAX ===";
+    pcs -f {file} resource config 2>/dev/null | grep -A10 'SAPHanaController\|SAPHana_' | grep -E 'clone-max' | head -1 || echo "clone-max=2";
+    echo "=== MAJORITY_MAKER ===";
+    # Detect majority maker by location constraints excluding SAPHanaTopology AND SAPHanaController
+    # A node is a majority maker ONLY if BOTH resources are excluded from it
+    # Use 'pcs constraint location config' (pcs 0.12+) or 'pcs constraint location show' (older)
+    MM_CONSTRAINT_OUTPUT=$(pcs -f {file} constraint location config 2>/dev/null || pcs -f {file} constraint location show 2>/dev/null);
+    # Find nodes where SAPHanaController is excluded
+    MM_CONTROLLER=$(echo "$MM_CONSTRAINT_OUTPUT" | grep -E "SAPHanaController.*avoids node.*INFINITY" | sed "s/.*avoids node '\([^']*\)'.*/\1/" | sort -u);
+    # Find nodes where SAPHanaTopology is excluded
+    MM_TOPOLOGY=$(echo "$MM_CONSTRAINT_OUTPUT" | grep -E "SAPHanaTopology.*avoids node.*INFINITY" | sed "s/.*avoids node '\([^']*\)'.*/\1/" | sort -u);
+    # Majority maker = node that appears in BOTH lists (has constraints for both resources)
+    MM="";
+    for node in $MM_CONTROLLER; do
+      if echo "$MM_TOPOLOGY" | grep -qx "$node"; then
+        MM="$node";
+        break;
+      fi;
+    done;
+    if [ -n "$MM" ]; then echo "majority_maker_node=$MM (by constraint)"; else echo "none"; fi
+  sos_cmd_file: "sos_commands/pacemaker/crm_report/*/cib.xml"
 
 parser:
   type: regex

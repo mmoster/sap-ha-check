@@ -25,6 +25,18 @@ def is_pdf_available() -> bool:
     return FPDF_AVAILABLE
 
 
+def is_valid_ip(value: str) -> bool:
+    """Check if a string is a valid IPv4 or IPv6 address."""
+    if not value:
+        return False
+    import re
+    # IPv4 pattern: x.x.x.x where x is 0-255
+    ipv4_pattern = r'^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$'
+    # IPv6 simplified check (colons present, hex chars)
+    ipv6_pattern = r'^(?:[0-9a-fA-F]{1,4}:){2,7}[0-9a-fA-F]{1,4}$|^::1$|^::$'
+    return bool(re.match(ipv4_pattern, value) or re.match(ipv6_pattern, value))
+
+
 class RedHatColors:
     """Red Hat brand colors"""
     RED = (204, 0, 0)           # Red Hat Red
@@ -536,29 +548,33 @@ def generate_health_check_report(
     node2_fqdn = cluster_info.get('node2_fqdn', '')
     node2_ip = cluster_info.get('node2_ip', '')
 
-    if verbose or node1_hostname or node1_ip:
-        if node1_hostname or node1_fqdn or node1_ip:
+    # Only display IP if it's actually a valid IP address (not a hostname)
+    node1_ip_valid = node1_ip if is_valid_ip(node1_ip) else ''
+    node2_ip_valid = node2_ip if is_valid_ip(node2_ip) else ''
+
+    if verbose or node1_hostname or node1_ip_valid:
+        if node1_hostname or node1_fqdn or node1_ip_valid:
             pdf.sub_section("Node 1 (Primary Site)")
             node1_info = {}
             if node1_hostname:
                 node1_info["Hostname"] = node1_hostname
             if node1_fqdn:
                 node1_info["FQDN"] = node1_fqdn
-            if node1_ip:
-                node1_info["IP Address"] = node1_ip
+            if node1_ip_valid:
+                node1_info["IP Address"] = node1_ip_valid
             if node1_info:
                 pdf.info_table(node1_info)
             pdf.ln(3)
 
-        if node2_hostname or node2_fqdn or node2_ip:
+        if node2_hostname or node2_fqdn or node2_ip_valid:
             pdf.sub_section("Node 2 (Secondary Site)")
             node2_info = {}
             if node2_hostname:
                 node2_info["Hostname"] = node2_hostname
             if node2_fqdn:
                 node2_info["FQDN"] = node2_fqdn
-            if node2_ip:
-                node2_info["IP Address"] = node2_ip
+            if node2_ip_valid:
+                node2_info["IP Address"] = node2_ip_valid
             if node2_info:
                 pdf.info_table(node2_info)
             pdf.ln(3)
