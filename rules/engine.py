@@ -1071,32 +1071,33 @@ class RulesEngine:
                 node=None
             )]
 
-        # Get majority maker node(s) if check is hana_nodes_only
-        majority_maker_nodes = set()
+        # Get nodes excluded from HANA by constraints (app servers or majority makers)
+        hana_excluded_nodes = set()
         if rule.hana_nodes_only:
             resource_config = self.get_cluster_resources_config()
             if resource_config.get('available'):
+                # hana_excluded_node: node with SAPHanaTopology + SAPHanaController exclusion constraints
+                excluded = resource_config.get('hana_excluded_node')
+                if excluded:
+                    hana_excluded_nodes.add(excluded)
+                # Also check legacy majority_maker field
                 mm_node = resource_config.get('majority_maker')
                 if mm_node:
-                    majority_maker_nodes.add(mm_node)
-                # Also check majority_maker_info for consistency
-                mm_info = resource_config.get('majority_maker_info', {})
-                if mm_info.get('node'):
-                    majority_maker_nodes.add(mm_info['node'])
+                    hana_excluded_nodes.add(mm_node)
 
         # Run on all nodes (multithreaded)
         with ThreadPoolExecutor(max_workers=self.MAX_WORKERS) as executor:
             futures = {}
 
             for node_name, node_info in nodes.items():
-                # Skip majority maker nodes for hana_nodes_only checks
-                if rule.hana_nodes_only and node_name in majority_maker_nodes:
+                # Skip nodes excluded from HANA resources by constraints
+                if rule.hana_nodes_only and node_name in hana_excluded_nodes:
                     results.append(CheckResult(
                         check_id=rule.check_id,
                         description=rule.description,
                         status=CheckStatus.SKIPPED,
                         severity=Severity[rule.severity],
-                        message="Majority maker node - HANA not installed",
+                        message="Node excluded from HANA resources by constraints",
                         node=node_name
                     ))
                     continue

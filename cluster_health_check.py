@@ -1569,89 +1569,35 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
             self._debug_print(f"Nodes with HANA: {nodes_with_hana}, Nodes without: {nodes_without_hana}")
             self._debug_print(f"HANA installed: {hana_installed}")
 
-            # Check cluster type to determine if majority makers are applicable
-            # Majority makers are ONLY used in Scale-Out clusters (clone-max > 2)
-            # Scale-Up clusters with extra nodes (app servers) should NOT have majority makers
-            is_scale_out = False
-            clone_max = 2
-            cluster_type_result = next(
-                (r for r in self.check_results if r.check_id == 'CHK_CLUSTER_TYPE'),
-                None
-            )
-            if cluster_type_result and cluster_type_result.details:
-                clone_max = cluster_type_result.details.get('clone_max', 2)
-                cluster_type = cluster_type_result.details.get('cluster_type', 'Unknown')
-                has_majority_maker = cluster_type_result.details.get('has_majority_maker', False)
-                # Scale-Out requires clone-max >= 4 (at least 2 HANA instances per site)
-                # Majority maker only exists in Scale-Out clusters
-                is_scale_out = cluster_type == 'Scale-Out' and clone_max >= 4
-                self._debug_print(f"Cluster type: {cluster_type}, clone-max: {clone_max}, has_majority_maker: {has_majority_maker}, is_scale_out: {is_scale_out}")
+            # Check which nodes are excluded from HANA by constraints
+            # These nodes don't run HANA (app servers in Scale-Up, majority makers in Scale-Out)
+            hana_excluded_nodes = set()
+            if self.rules_engine:
+                resource_config = self.rules_engine.get_cluster_resources_config()
+                if resource_config.get('available'):
+                    excluded = resource_config.get('hana_excluded_node')
+                    if excluded:
+                        hana_excluded_nodes.add(excluded)
 
-            # Check for majority maker nodes ONLY for Scale-Out clusters
-            # This must happen before the early return for "no HANA installed"
-            majority_makers = []
-            if nodes_without_hana and is_scale_out:
-                for node_name in nodes_without_hana:
-                    node_info = nodes.get(node_name, {})
-                    method = node_info.get('preferred_method', 'ssh')
-                    user = node_info.get('ssh_user', 'root')
-                    sos_path = node_info.get('sosreport_path')
+            # Update CHK_HANA_INSTALLED results for constraint-excluded nodes
+            if nodes_without_hana and hana_excluded_nodes:
+                excluded_without_hana = [n for n in nodes_without_hana if n in hana_excluded_nodes]
+                other_without_hana = [n for n in nodes_without_hana if n not in hana_excluded_nodes]
 
-                    # Check if resource agent is installed (indicates majority maker)
-                    # resource-agents-sap-hana-scaleout: Scale-Out specific
-                    has_resource_agent = False
-                    agent_name = ""
+                for node_name in excluded_without_hana:
+                    # Mark CHK_HANA_INSTALLED as SKIPPED (not ERROR) for excluded nodes
+                    for result in self.check_results:
+                        if result.check_id == 'CHK_HANA_INSTALLED' and result.node == node_name:
+                            result.status = CheckStatus.SKIPPED
+                            result.message = "Node excluded from HANA resources by constraints"
+                            break
 
-                    if method == 'sosreport' and sos_path:
-                        # Check installed-rpms file in sosreport
-                        # Majority maker has resource-agents-sap-hana-scaleout but NOT sap-hana-ha
-                        installed_rpms = Path(sos_path) / 'installed-rpms'
-                        if installed_rpms.exists():
-                            try:
-                                rpms_content = installed_rpms.read_text()
-                                has_sap_hana_ha = 'sap-hana-ha' in rpms_content
-                                has_scaleout_agent = 'resource-agents-sap-hana-scaleout' in rpms_content
-
-                                # Majority maker: has scaleout agent but NOT sap-hana-ha
-                                if has_scaleout_agent and not has_sap_hana_ha:
-                                    has_resource_agent = True
-                                    for line in rpms_content.split('\n'):
-                                        if 'resource-agents-sap-hana-scaleout' in line:
-                                            agent_name = line.split()[0] if line.split() else 'resource-agents-sap-hana-scaleout'
-                                            break
-                            except Exception:
-                                pass
-                    else:
-                        # Use live command - only check for scaleout agent on Scale-Out clusters
-                        check_cmd = "rpm -q resource-agents-sap-hana-scaleout 2>/dev/null | grep -v 'not installed' | head -1"
-                        success, output = self.rules_engine._execute_command(check_cmd, node_name, method, user)
-                        if success and output.strip():
-                            has_resource_agent = True
-                            agent_name = output.strip()
-
-                    if has_resource_agent:
-                        majority_makers.append(node_name)
-                        self._debug_print(f"Node {node_name} is a majority maker (has resource agent: {agent_name})")
-
-                        # Update the CHK_HANA_INSTALLED result for this majority maker to PASSED
-                        for result in self.check_results:
-                            if result.check_id == 'CHK_HANA_INSTALLED' and result.node == node_name:
-                                result.status = CheckStatus.PASSED
-                                result.message = "Majority maker node - HANA not required (resource agent installed)"
-                                break
-
-                if majority_makers:
-                    self.majority_makers = majority_makers  # Store for PDF report
-                    print(f"[OK] Majority maker node(s) detected: {', '.join(majority_makers)}")
-                    # Update nodes_without_hana to exclude majority makers for reporting
-                    non_majority_without_hana = [n for n in nodes_without_hana if n not in majority_makers]
-                    if non_majority_without_hana:
-                        print(f"[INFO] Nodes without HANA: {', '.join(non_majority_without_hana)}")
-                else:
-                    print(f"[INFO] Nodes without HANA (not majority makers): {', '.join(nodes_without_hana)}")
+                if excluded_without_hana:
+                    print(f"[OK] Nodes excluded from HANA by constraints: {', '.join(excluded_without_hana)}")
+                if other_without_hana:
+                    print(f"[INFO] Nodes without HANA: {', '.join(other_without_hana)}")
             elif nodes_without_hana:
-                # Scale-Up cluster with extra nodes - these are NOT majority makers
-                print(f"[INFO] Nodes without HANA (Scale-Up cluster, not majority makers): {', '.join(nodes_without_hana)}")
+                print(f"[INFO] Nodes without HANA: {', '.join(nodes_without_hana)}")
 
             # After majority maker check, if no HANA installed, skip SAP checks
             if not hana_installed:
