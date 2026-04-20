@@ -893,23 +893,22 @@ class RulesEngine:
             success = False
             output = ""
 
-            # If sos_cmd is defined (with sos_cmd_file), prefer it over sos_path
-            # This handles rules like CHK_CLUSTER_TYPE that use pcs -f cib.xml
-            if sos_cmd and sos_cmd_file:
-                cmd_success, cmd_output = self._run_sos_cmd(sos_cmd, sos_cmd_file, node, sos_base)
-                if cmd_success and cmd_output.strip():
-                    success, output = cmd_success, cmd_output
-                    self._used_cib_xml = True  # Track that we used cib.xml parsing
-                    self._access_methods_used[node] = 'sosreport'
-
-            # If sos_cmd not defined or failed, try sos_path
-            if not success and sos_path:
+            # Try sos_path first (has actual SOSreport data, e.g. crm_mon output)
+            if sos_path:
                 success, output = self._read_sosreport(sos_path, node, sos_base)
                 self._access_methods_used[node] = 'sosreport'
 
-            # If output contains error indicators (cluster was stopped), try alternatives
+            # If sos_path failed/missing, try sos_cmd (pcs -f cib.xml fallback)
             if not success or (success and output.strip().startswith('Error:')):
-                # Try file alternates if still no success
+                if sos_cmd and sos_cmd_file:
+                    cmd_success, cmd_output = self._run_sos_cmd(sos_cmd, sos_cmd_file, node, sos_base)
+                    if cmd_success and cmd_output.strip():
+                        success, output = cmd_success, cmd_output
+                        self._used_cib_xml = True
+                        self._access_methods_used[node] = 'sosreport'
+
+            # Try file alternates as last resort
+            if not success or (success and output.strip().startswith('Error:')):
                 for alt_path in alternates:
                     alt_success, alt_output = self._read_sosreport(alt_path, node, sos_base)
                     if alt_success and not alt_output.strip().startswith('Error:'):
