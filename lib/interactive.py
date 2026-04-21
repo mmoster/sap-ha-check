@@ -267,12 +267,13 @@ USAGE EXAMPLES
     return None, False
 
 
-def run_usage_scan(base_dir: str = None):
+def run_usage_scan(base_dir: str = None, seed_hosts: list = None):
     """
     Run the usage scan mode: find resources, present options, and help user get started.
 
     Args:
         base_dir: Base directory to scan for resources (default: current directory)
+        seed_hosts: Hostnames provided on CLI (used as seed node for SOSreport fetch)
     """
     # Use specified base directory or current directory
     scan_dir = base_dir if base_dir else "."
@@ -374,7 +375,10 @@ def run_usage_scan(base_dir: str = None):
         options.append(('i', f'Use inventory/hosts file: {inv_file}'))
 
     # Always offer the option to fetch SOSreports from a cluster
-    options.append(('f', 'Fetch SOSreports from cluster nodes (enter hostname)'))
+    if seed_hosts:
+        options.append(('f', f'Fetch SOSreports from cluster (using {seed_hosts[0]} to discover all nodes)'))
+    else:
+        options.append(('f', 'Fetch SOSreports from cluster (enter one node to discover all)'))
     options.append(('n', 'Enter hostnames manually'))
     options.append(('l', 'Run locally (on this cluster node)'))
     options.append(('h', 'Show help and examples'))
@@ -481,11 +485,14 @@ def run_usage_scan(base_dir: str = None):
         return {'action': 'hosts_file', 'hosts_file': inv_file}
 
     if choice == 'f':
-        # Fetch SOSreports from cluster nodes
+        # Fetch SOSreports from cluster - use seed_hosts from CLI or prompt
         try:
-            host = input("  Enter a cluster node hostname: ").strip()
+            if seed_hosts:
+                host = seed_hosts[0]
+                print(f"  Using {host} to discover all cluster nodes...")
+            else:
+                host = input("  Enter one cluster node hostname (all nodes will be discovered): ").strip()
             if host:
-                # Return action to collect sosreports, with output dir set to scan_dir
                 output_dir = scan_dir if scan_dir != "." else None
                 return {'action': 'fetch_sosreports', 'seed_node': host, 'output_dir': output_dir}
         except (EOFError, KeyboardInterrupt):

@@ -2687,8 +2687,8 @@ Examples:
 
     # Handle usage/scan action (-u)
     if args.usage:
-        # Pass sosreport_dir to limit scan to that directory if specified
-        result = run_usage_scan(base_dir=args.sosreport_dir)
+        # Pass sosreport_dir and any CLI-provided hosts to avoid re-prompting
+        result = run_usage_scan(base_dir=args.sosreport_dir, seed_hosts=args.hosts or None)
         if result is None:
             sys.exit(0)
 
