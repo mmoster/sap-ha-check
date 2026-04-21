@@ -3421,7 +3421,8 @@ def create_and_fetch_sosreports(seed_node: str, output_dir: str = None,
     # Step 4: Create SOSreports with cluster name label
     print("Step 4: Creating SOSreports on cluster nodes...")
     print(f"  Using cluster name as label: {cluster_name}")
-    print("  This may take several minutes per node...")
+    print(f"  Running on {len(reachable_nodes)} node(s) in parallel: {', '.join(reachable_nodes)}")
+    print("  This may take several minutes...")
     print()
 
     # SOSreport options with cluster name label
