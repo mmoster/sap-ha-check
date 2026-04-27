@@ -33,8 +33,8 @@ sudo dnf install git    # RHEL/Fedora
 sudo yum install git    # RHEL 7
 
 # Clone and run
-git clone https://github.com/mmoster/sap_hana_healthcheck.git
-cd sap_hana_healthcheck
+git clone https://github.com/mmoster/sap-ha-check.git
+cd sap-ha-check
 pip install pyyaml fpdf2  # fpdf2 is optional for PDF reports
 ./cluster_health_check.py --local
 ```
@@ -43,8 +43,8 @@ pip install pyyaml fpdf2  # fpdf2 is optional for PDF reports
 
 ```bash
 # Download and extract
-curl -L https://github.com/mmoster/sap_hana_healthcheck/archive/refs/heads/main.tar.gz | tar xz
-cd sap_hana_healthcheck-main
+curl -L https://github.com/mmoster/sap-ha-check/archive/refs/heads/main.tar.gz | tar xz
+cd sap-ha-check-main
 pip install pyyaml fpdf2  # fpdf2 is optional for PDF reports
 ./cluster_health_check.py --local
 ```

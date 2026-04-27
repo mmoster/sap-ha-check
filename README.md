@@ -8,8 +8,8 @@ A comprehensive health check tool for SAP HANA Pacemaker clusters on Red Hat Ent
 
 ```bash
 # Clone and run locally
-git clone https://github.com/mmoster/sap_hana_healthcheck.git
-cd sap_hana_healthcheck
+git clone https://github.com/mmoster/sap-ha-check.git
+cd sap-ha-check
 ./cluster_health_check.py --local
 ```
 
@@ -82,8 +82,8 @@ sudo dnf install git    # RHEL/Fedora
 sudo yum install git    # RHEL 7
 
 # Clone and run
-git clone https://github.com/mmoster/sap_hana_healthcheck.git
-cd sap_hana_healthcheck
+git clone https://github.com/mmoster/sap-ha-check.git
+cd sap-ha-check
 ./cluster_health_check.py --local
 ```
 
@@ -91,8 +91,8 @@ cd sap_hana_healthcheck
 
 ```bash
 # Download and extract
-curl -L https://github.com/mmoster/sap_hana_healthcheck/archive/refs/heads/main.tar.gz | tar xz
-cd sap_hana_healthcheck-main
+curl -L https://github.com/mmoster/sap-ha-check/archive/refs/heads/main.tar.gz | tar xz
+cd sap-ha-check-main
 ./cluster_health_check.py --local
 ```
 
