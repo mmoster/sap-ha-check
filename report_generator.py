@@ -543,8 +543,8 @@ def generate_health_check_report(
         pdf.set_text_color(100, 100, 100)
         if majority_makers:
             pdf.multi_cell(0, 4,
-                f"Note: MajorityMaker node(s) have location constraints with resource-discovery=never "
-                f"to prevent SAPHanaTopology and SAPHanaController from running on these nodes."
+                "Note: MajorityMaker node(s) have location constraints with resource-discovery=never "
+                "to prevent SAPHanaTopology and SAPHanaController from running on these nodes."
             )
         else:
             non_mm_excluded = excluded_nodes - set(majority_makers)

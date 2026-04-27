@@ -389,7 +389,7 @@ class AccessDiscovery:
 
         for hostname, sos_path in sosreports.items():
             extras_path = Path(sos_path) / "sos_commands/sos_extras/sap_hana_ha"
-            saphana_path = Path(sos_path) / "sos_commands/saphana"
+            saphana_path = Path(sos_path) / "sos_commands/saphana"  # noqa: F841
 
             # Check for SAPHanaSR-showAttr in extras
             has_sr_attr = (extras_path / "SAPHanaSR-showAttr").exists() if extras_path.exists() else False
@@ -1530,7 +1530,7 @@ class AccessDiscovery:
                     print(f"  Found {len(cluster_nodes)} cluster node(s) (static): {', '.join(cluster_nodes)}")
             else:
                 if not cluster_running:
-                    print(f"  Could not discover cluster nodes (cluster not running, no corosync.conf)")
+                    print("  Could not discover cluster nodes (cluster not running, no corosync.conf)")
                 else:
                     print(f"  Could not discover cluster nodes from {seed_host}")
                 print(f"  Using {seed_host} as only node")
@@ -1856,11 +1856,9 @@ class AccessDiscovery:
                             print(f"  STONITH Device: {cluster_config.get('stonith_device')}")
 
                     # Check if cluster was running when SOSreports were captured
-                    cluster_was_down = False
                     for hostname, sos_path in sosreports.items():
                         was_running, reason = self.was_cluster_running_in_sosreport(sos_path)
                         if not was_running:
-                            cluster_was_down = True
                             print(f"\n  ⚠️  WARNING: Cluster was NOT running when {hostname}'s SOSreport was captured")
                             print(f"     Reason: {reason}")
                             print("     Some health check results may be incomplete or show errors")
@@ -1967,7 +1965,7 @@ class AccessDiscovery:
                     elif not cluster_nodes or len(cluster_nodes) < len(file_hosts):
                         # Cluster discovery failed or incomplete, keep original hosts
                         if self.debug:
-                            print(f"  [DEBUG] Cluster discovery incomplete, keeping specified hosts")
+                            print("  [DEBUG] Cluster discovery incomplete, keeping specified hosts")
                     break
                 else:
                     if self.debug:
@@ -3159,7 +3157,7 @@ fi
                 else:
                     return (True, "Extensions configured successfully")
             else:
-                return (False, f"Deployment verification failed")
+                return (False, "Deployment verification failed")
         else:
             return (False, f"SSH command failed: {proc.stderr.strip()[:80]}")
 
@@ -3724,8 +3722,8 @@ def fetch_sosreports(config_path: Path, cluster_name: str = None, nodes: list = 
             create_missing = response in ('y', 'yes')
 
         if create_missing:
-            create_results = create_sosreports(nodes_without_sos, ssh_user,
-                                               cluster_name=discovered_cluster_name)
+            create_sosreports(nodes_without_sos, ssh_user,
+                             cluster_name=discovered_cluster_name)
 
             # Re-check for newly created sosreports
             new_existing = check_sosreports_on_nodes(nodes_without_sos, ssh_user)

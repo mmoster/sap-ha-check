@@ -51,8 +51,8 @@ from lib import (  # noqa: E402
 )
 from lib.config_extractor import ConfigExtractor  # noqa: E402
 
-import threading
-import itertools
+import threading  # noqa: E402
+import itertools  # noqa: E402
 
 
 class Spinner:
@@ -3290,7 +3290,7 @@ Examples:
                                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                                 elif system == 'Windows':
                                     os.startfile(str(pdf_file))
-                                print(f"  Opening PDF...")
+                                print("  Opening PDF...")
                             except Exception:
                                 pass  # Silently ignore if can't open
                         except Exception as e:

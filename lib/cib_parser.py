@@ -26,9 +26,8 @@ Requires: pcs package installed locally (dnf install pcs)
 
 import subprocess
 import shutil
-import glob
 from pathlib import Path
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple
 
 
 class CIBParser:

@@ -21,7 +21,7 @@ SCRIPT_DIR = Path(__file__).parent.parent.resolve()
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from lib import CIBParser
+from lib import CIBParser  # noqa: E402
 
 # Python 3.6 compatibility for dataclasses
 try:
