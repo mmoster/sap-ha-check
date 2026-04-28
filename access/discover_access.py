@@ -932,34 +932,45 @@ class AccessDiscovery:
 
         return clusters
 
-    def prompt_cluster_selection(self, clusters: Dict[str, Dict[str, Any]]) -> Optional[str]:
+    def prompt_cluster_selection(self, clusters: Dict[str, Dict[str, Any]],
+                                default_cluster: str = None) -> Optional[str]:
         """
         Prompt user to select which cluster to analyze when multiple clusters are found.
+        If default_cluster is set, pressing Enter selects that cluster.
         Returns selected cluster name or None if user cancels.
         """
         if len(clusters) <= 1:
             return list(clusters.keys())[0] if clusters else None
 
-        print("\n" + "=" * 60)
-        print(" Multiple clusters detected in SOSreports")
-        print("=" * 60)
-
         cluster_list = list(clusters.keys())
+        default_idx = None
         for i, cluster_name in enumerate(cluster_list, 1):
             nodes = list(clusters[cluster_name]['nodes'].keys())
-            print(f"\n  [{i}] Cluster: {cluster_name}")
+            marker = " (default)" if cluster_name == default_cluster else ""
+            print(f"\n  [{i}] Cluster: {cluster_name}{marker}")
             print(f"      Nodes ({len(nodes)}): {', '.join(sorted(nodes))}")
+            if cluster_name == default_cluster:
+                default_idx = i
 
         print("\n  [a] Analyze all clusters together")
         print("  [q] Quit")
 
+        if default_idx:
+            prompt = f"\nSelect cluster to analyze [1-{len(cluster_list)}/a/q] (Enter={default_idx}): "
+        else:
+            prompt = f"\nSelect cluster to analyze [1-{len(cluster_list)}/a/q]: "
+
         while True:
             try:
-                choice = input("\nSelect cluster to analyze [1-{}/a/q]: ".format(len(cluster_list))).strip().lower()
+                choice = input(prompt).strip().lower()
             except (EOFError, KeyboardInterrupt):
                 return None
 
-            if choice == 'q':
+            if choice == '' and default_idx:
+                selected = cluster_list[default_idx - 1]
+                print(f"\n  Selected: {selected}")
+                return selected
+            elif choice == 'q':
                 return None
             elif choice == 'a':
                 return '__all__'  # Special value to indicate all clusters
@@ -1803,7 +1814,22 @@ class AccessDiscovery:
 
                 if len(clusters) > 1:
                     # Multiple clusters detected - prompt for selection
-                    selected_cluster = self.prompt_cluster_selection(clusters)
+                    print("\n" + "=" * 60)
+                    print(" Multiple clusters detected in SOSreports")
+                    print("=" * 60)
+                    # Default to the cluster containing CLI-specified nodes
+                    default_cluster = None
+                    if self.hosts_file and os.path.exists(self.hosts_file):
+                        with open(self.hosts_file, 'r') as f:
+                            cli_hosts = [line.strip().split()[0] for line in f
+                                         if line.strip() and not line.strip().startswith('#')]
+                        if cli_hosts:
+                            for cname, cinfo in clusters.items():
+                                if set(cli_hosts) & set(cinfo['nodes'].keys()):
+                                    default_cluster = cname
+                                    break
+                    selected_cluster = self.prompt_cluster_selection(
+                        clusters, default_cluster=default_cluster)
 
                     if selected_cluster is None:
                         print("\n[INFO] Cluster selection cancelled.")
@@ -2092,7 +2118,15 @@ class AccessDiscovery:
                 print("\n" + "=" * 60)
                 print(" Multiple clusters discovered from hosts")
                 print("=" * 60)
-                selected_cluster = self.prompt_cluster_selection(clusters_for_selection)
+                # Default to the cluster containing CLI-specified nodes
+                default_cluster = None
+                if file_hosts:
+                    for cname, cinfo in clusters_for_selection.items():
+                        if set(file_hosts) & set(cinfo['nodes'].keys()):
+                            default_cluster = cname
+                            break
+                selected_cluster = self.prompt_cluster_selection(
+                    clusters_for_selection, default_cluster=default_cluster)
 
                 if selected_cluster is None:
                     print("\n[INFO] Cluster selection cancelled.")
