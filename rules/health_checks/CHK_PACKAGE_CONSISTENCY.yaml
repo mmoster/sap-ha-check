@@ -16,7 +16,7 @@ hana_nodes_only: true  # Only compare HANA nodes; nodes excluded by constraints 
 # different packages. Only HANA nodes are compared for consistency.
 
 source_definitions:
-  live_cmd: "rpm -qa | grep -E 'pacemaker|corosync|resource-agents|SAPHanaSR|sap-hana-ha' | sort 2>/dev/null || dpkg -l | grep -E 'pacemaker|corosync' 2>/dev/null"
+  live_cmd: "rpm -q pacemaker corosync resource-agents-sap-hana resource-agents-sap-hana-scaleout sap-hana-ha SAPHanaSR 2>/dev/null | grep -v 'not installed' | sort; true"
   sos_path: "sos_commands/rpm/package-data"
 
 parser:

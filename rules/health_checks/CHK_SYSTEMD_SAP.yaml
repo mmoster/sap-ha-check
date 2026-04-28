@@ -6,7 +6,7 @@ description: Validate SAP Host Agent is running and systemd integration
 enabled: true
 
 source_definitions:
-  live_cmd: "systemctl is-active sapinit 2>/dev/null; systemctl is-active saphostagent 2>/dev/null; /usr/sap/hostctrl/exe/saphostexec -status 2>/dev/null"
+  live_cmd: "systemctl is-active sapinit 2>/dev/null; systemctl is-active saphostagent 2>/dev/null; /usr/sap/hostctrl/exe/saphostexec -status 2>/dev/null; true"
   sos_path: "sos_commands/systemd/systemctl_status_--all"
 
 parser:
