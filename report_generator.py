@@ -940,46 +940,78 @@ def generate_health_check_report(
         pdf.info_table(db_status_info)
         pdf.ln(3)
 
-        # Replication info section
+        # System Replication topology table
+        sr_topology = hana_db_status.get('sr_topology')
         sr_source = hana_db_status.get('sr_source')
-        sr_info = hana_db_status.get('sr_info')
 
-        if sr_info:
-            pdf.sub_section("System Replication Status")
+        if sr_topology and sr_topology.get('sites'):
+            pdf.sub_section("System Replication")
+
+            # Mapping line: "DC1 → DC2 (sync / logreplay)"
+            mapping = sr_topology.get('mapping', '')
+            repl_mode = sr_topology.get('repl_mode', '')
+            op_mode = sr_topology.get('op_mode', '')
+            mode_info = f" ({repl_mode} / {op_mode})" if repl_mode else ""
+
+            pdf.set_font('Helvetica', 'B', 10)
+            pdf.set_text_color(*RedHatColors.BLACK)
+            mapping_display = mapping if mapping else 'Unknown'
+            pdf.cell(0, 6, f"{mapping_display}{mode_info}", ln=True)
 
             # Source attribution
-            pdf.set_font('Helvetica', 'I', 8)
-            pdf.set_text_color(100, 100, 100)
-            pdf.cell(0, 4, f"Source: {sr_source}", ln=True)
+            if sr_source:
+                pdf.set_font('Helvetica', 'I', 8)
+                pdf.set_text_color(100, 100, 100)
+                pdf.cell(0, 4, f"Source: {sr_source}", ln=True)
 
             if not hana_managed:
                 pdf.set_font('Helvetica', 'B', 8)
                 pdf.set_text_color(133, 100, 4)
-                pdf.cell(0, 4, "Note: HANA is NOT managed by Pacemaker in this state", ln=True)
+                pdf.cell(0, 4, "Note: HANA is NOT managed by Pacemaker", ln=True)
 
             pdf.set_text_color(*RedHatColors.BLACK)
             pdf.ln(2)
 
-            # Render SR info as monospace block
-            pdf.set_font('Courier', '', 7)
-            pdf.set_fill_color(245, 245, 245)
+            # Site topology table
+            row_h = 5
+            pdf.set_fill_color(240, 240, 240)
+            pdf.set_font('Helvetica', 'B', 8)
+            pdf.cell(30, row_h, "Site", border=1, fill=True)
+            pdf.cell(25, row_h, "Role", border=1, fill=True)
+            pdf.cell(30, row_h, "Mode", border=1, fill=True, align='C')
+            pdf.cell(105, row_h, "HANA Instances", border=1, fill=True)
+            pdf.ln()
 
-            # Limit output and render each line
-            sr_lines = sr_info.split('\n')[:30]
-            for line in sr_lines:
-                pdf.set_x(12)
-                pdf.cell(186, 3.5, line[:100], fill=True, ln=True)
+            pdf.set_font('Helvetica', '', 8)
+            for site in sr_topology['sites']:
+                pdf.set_font('Helvetica', 'B', 8)
+                pdf.cell(30, row_h, site.get('name', ''), border=1)
 
-            if len(sr_info.split('\n')) > 30:
-                pdf.set_font('Helvetica', 'I', 7)
-                pdf.set_x(12)
-                pdf.cell(0, 4, f"  ... ({len(sr_info.split(chr(10))) - 30} more lines)", ln=True)
+                role = site.get('role', '')
+                if role == 'primary':
+                    pdf.set_text_color(*RedHatColors.GREEN)
+                else:
+                    pdf.set_text_color(0, 100, 180)  # Blue for secondary
+                pdf.set_font('Helvetica', 'B', 8)
+                pdf.cell(25, row_h, role, border=1)
+                pdf.set_text_color(*RedHatColors.BLACK)
+
+                pdf.set_font('Helvetica', '', 8)
+                op_mode_str = site.get('op_mode', '') or ''
+                pdf.cell(30, row_h, op_mode_str, border=1, align='C')
+
+                # List hosts (coordinator first if detectable)
+                hosts = site.get('hosts', [])
+                hosts_str = ', '.join(hosts) if hosts else 'N/A'
+                pdf.set_font('Courier', '', 8)
+                pdf.cell(105, row_h, hosts_str, border=1)
+                pdf.ln()
 
             pdf.set_font('Helvetica', '', 10)
             pdf.ln(3)
 
         elif sr_source:
-            pdf.sub_section("System Replication Status")
+            pdf.sub_section("System Replication")
             pdf.set_font('Helvetica', 'I', 9)
             pdf.cell(0, 5, f"Source: {sr_source}", ln=True)
             pdf.ln(3)

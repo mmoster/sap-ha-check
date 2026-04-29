@@ -1826,77 +1826,211 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
         if db_running:
             print(f"  [INFO] HANA database running on: {', '.join(running_nodes)}")
         else:
-            print(f"  [INFO] HANA database NOT running on any node")
+            print("  [INFO] HANA database NOT running on any node")
+
+        # Always gather SR topology when DB is running (for the report table)
+        if db_running:
+            self._query_sr_topology(hana_running_nodes, hana_nodes)
 
         if hana_managed:
             print(f"  [INFO] HANA is managed by the cluster (resource {self._hana_resource_state})")
-            # Replication info already gathered by CHK_HANA_SR_STATUS
-            self._hana_db_status['sr_source'] = 'Pacemaker (CHK_HANA_SR_STATUS)'
+            self._hana_db_status['sr_source'] = 'hdbnsutil -sr_state'
             return
 
         print(f"  [INFO] HANA is NOT managed by the cluster"
               f" (resource {self._hana_resource_state})")
 
-        # --- Gather replication info based on DB running state ---
+        # --- Gather replication info for non-managed scenarios ---
 
         if db_running:
-            # DB running but resource not managed: query hdbnsutil directly
-            self._query_hdbnsutil_replication(hana_running_nodes[0], hana_nodes)
+            # Topology already gathered above; add maintenance check result
+            self._add_maintenance_sr_result(hana_running_nodes[0]['node'])
         else:
-            # DB not running: try SAPHanaSR-stateConfiguration for last known config
+            # DB not running: try offline config queries and global.ini
             self._query_sr_state_configuration(hana_nodes, sidadm)
+            self._query_sr_topology_offline(hana_nodes, sidadm)
 
-    def _query_hdbnsutil_replication(self, node_info: dict, hana_nodes: dict):
-        """Query replication status directly from a running HANA database via hdbnsutil."""
-        sidadm = node_info['sidadm']
-        node_name = node_info['node']
+    def _query_sr_topology(self, hana_running_nodes: list, hana_nodes: dict):
+        """Query hdbnsutil -sr_state from running nodes and parse SR topology."""
+        for node_info in hana_running_nodes:
+            sidadm = node_info['sidadm']
+            node_name = node_info['node']
 
-        # Validate sidadm to prevent command injection
-        if not re.match(r'^[a-z0-9]+adm$', sidadm):
-            self._debug_print(f"Invalid sidadm user: {sidadm}")
+            if not re.match(r'^[a-z0-9]+adm$', sidadm):
+                self._debug_print(f"Invalid sidadm user: {sidadm}")
+                continue
+
+            node_access = hana_nodes.get(node_name, {})
+            method = node_access.get('preferred_method', 'ssh')
+            user = node_access.get('ssh_user')
+
+            sr_cmd = f"su - {sidadm} -c 'hdbnsutil -sr_state' 2>/dev/null"
+            self._debug_print(f"Running: {sr_cmd} on {node_name}")
+
+            success, output = self.rules_engine._execute_command_raw(
+                sr_cmd, node_name, method, user)
+
+            if success and output and output.strip():
+                self._hana_db_status['sr_source'] = 'hdbnsutil -sr_state'
+                self._hana_db_status['sr_info'] = output.strip()
+                topology = self._parse_sr_topology(output)
+                if topology:
+                    self._hana_db_status['sr_topology'] = topology
+                    print(f"  [OK] SR topology retrieved from {node_name}")
+                    return  # Got what we need from one node
+                else:
+                    self._debug_print(f"Could not parse SR topology from {node_name}")
+            else:
+                self._debug_print(f"hdbnsutil query failed on {node_name}")
+
+    def _parse_sr_topology(self, output: str) -> dict:
+        """Parse hdbnsutil -sr_state output into structured topology data.
+
+        Returns dict with:
+            mapping: str       - e.g. "DC1 -> DC2"
+            repl_mode: str     - e.g. "sync"
+            op_mode: str       - e.g. "logreplay"
+            sites: list[dict]  - [{name, role, tier, hosts: [hostname, ...]}, ...]
+        """
+        topology = {'mapping': None, 'repl_mode': None, 'op_mode': None, 'sites': []}
+
+        # Extract site mapping direction: "Mapping: DC1 -> DC2"
+        m = re.search(r'^Mapping:\s*(.+?)\s*$', output, re.MULTILINE)
+        if m:
+            topology['mapping'] = m.group(1).strip()
+
+        # Extract host-to-site mappings: "hostname -> [SiteName] hostname"
+        host_site_map = {}  # {site_name: [hostname, ...]}
+        for hm in re.finditer(r'(\S+)\s+->\s+\[(\S+)\]\s+(\S+)', output):
+            site_name = hm.group(2)
+            host = hm.group(3)
+            if site_name not in host_site_map:
+                host_site_map[site_name] = []
+            if host not in host_site_map[site_name]:
+                host_site_map[site_name].append(host)
+
+        # Extract replication/operation modes per site
+        site_repl_mode = {}
+        site_op_mode = {}
+        for rm in re.finditer(r'Replication mode of (\S+):\s*(\S+)', output):
+            site_repl_mode[rm.group(1)] = rm.group(2)
+        for om in re.finditer(r'Operation mode of (\S+):\s*(\S+)', output):
+            site_op_mode[om.group(1)] = om.group(2)
+
+        # Extract tiers: "Tier of DC1: 1"
+        site_tiers = {}
+        for tm in re.finditer(r'Tier of (\S+):\s*(\d+)', output):
+            site_tiers[tm.group(1)] = int(tm.group(2))
+
+        # Build sites list, ordered by tier (primary first)
+        for site_name in sorted(host_site_map, key=lambda s: site_tiers.get(s, 99)):
+            role = site_repl_mode.get(site_name, 'unknown')
+            op_mode = site_op_mode.get(site_name, '')
+            tier = site_tiers.get(site_name)
+            hosts = host_site_map[site_name]
+
+            if role != 'primary' and op_mode:
+                topology['repl_mode'] = role
+                topology['op_mode'] = op_mode
+
+            topology['sites'].append({
+                'name': site_name,
+                'role': role,
+                'op_mode': op_mode,
+                'tier': tier,
+                'hosts': hosts,
+            })
+
+        return topology if topology['sites'] else None
+
+    def _add_maintenance_sr_result(self, node_name: str):
+        """Add a CHK_HANA_SR_STATUS check result for maintenance (not-managed) scenarios."""
+        sr_info = self._hana_db_status.get('sr_info', '')
+        self._hana_db_status['sr_source'] = 'hdbnsutil -sr_state (direct query)'
+
+        self.check_results.append(CheckResult(
+            check_id='CHK_HANA_SR_STATUS',
+            description='HANA System Replication status (direct query - resource not managed)',
+            status=CheckStatus.PASSED,
+            severity=Severity.WARNING,
+            message=(f"Replication info gathered directly from HANA (NOT via Pacemaker). "
+                     f"HANA resource is {self._hana_resource_state}."),
+            details={
+                'maintenance_mode': True,
+                'hana_resource_state': self._hana_resource_state,
+                'sr_state_output': sr_info[:1000],
+                'source': 'hdbnsutil -sr_state',
+                'note': 'HANA is NOT managed by Pacemaker in this state'
+            },
+            node=node_name
+        ))
+        # Remove the SKIPPED result we added earlier for CHK_HANA_SR_STATUS
+        self.check_results = [
+            r for r in self.check_results
+            if not (r.check_id == 'CHK_HANA_SR_STATUS'
+                    and r.status == CheckStatus.SKIPPED
+                    and 'HANA resource is' in (r.message or ''))
+        ]
+        print(f"  [OK] Replication status retrieved from {node_name} (via hdbnsutil)")
+
+    def _query_sr_topology_offline(self, hana_nodes: dict, sidadm: str = None):
+        """Parse global.ini from each node to build SR topology when DB is stopped."""
+        if not sidadm or not re.match(r'^[a-z0-9]+adm$', sidadm):
             return
+        sid = sidadm[:-3].upper()
 
-        node_access = hana_nodes.get(node_name, {})
-        method = node_access.get('preferred_method', 'ssh')
-        user = node_access.get('ssh_user')
+        sites = []
+        for node_name, node_access in hana_nodes.items():
+            method = node_access.get('preferred_method', 'ssh')
+            user = node_access.get('ssh_user')
 
-        sr_cmd = f"su - {sidadm} -c 'hdbnsutil -sr_state' 2>/dev/null"
-        self._debug_print(f"Running: {sr_cmd} on {node_name}")
+            ini_cmd = (f"su - {sidadm} -c "
+                       f"'grep -E \"^(mode|site_id|site_name)\" "
+                       f"/usr/sap/{sid}/SYS/global/hdb/custom/config/global.ini' "
+                       f"2>/dev/null")
+            self._debug_print(f"Reading global.ini from {node_name}")
 
-        success, output = self.rules_engine._execute_command_raw(sr_cmd, node_name, method, user)
+            success, output = self.rules_engine._execute_command_raw(
+                ini_cmd, node_name, method, user)
 
-        if success and output and output.strip():
-            self._hana_db_status['sr_source'] = 'hdbnsutil -sr_state (direct query)'
-            self._hana_db_status['sr_info'] = output.strip()
+            if success and output:
+                site_name = None
+                role = None
+                for line in output.strip().split('\n'):
+                    line = line.strip()
+                    if line.startswith('site_name'):
+                        site_name = line.split('=', 1)[1].strip()
+                    elif line.startswith('mode') and '=' in line:
+                        role = line.split('=', 1)[1].strip()
+                if site_name:
+                    # Check if site already in list
+                    existing = next((s for s in sites if s['name'] == site_name), None)
+                    if existing:
+                        if node_name not in existing['hosts']:
+                            existing['hosts'].append(node_name)
+                    else:
+                        sites.append({
+                            'name': site_name,
+                            'role': role or 'unknown',
+                            'op_mode': '',
+                            'tier': None,
+                            'hosts': [node_name],
+                        })
 
-            # Add a CHK_HANA_SR_STATUS result with maintenance context
-            self.check_results.append(CheckResult(
-                check_id='CHK_HANA_SR_STATUS',
-                description='HANA System Replication status (direct query - resource not managed)',
-                status=CheckStatus.PASSED,
-                severity=Severity.WARNING,
-                message=(f"Replication info gathered directly from HANA (NOT via Pacemaker). "
-                         f"HANA resource is {self._hana_resource_state}."),
-                details={
-                    'maintenance_mode': True,
-                    'hana_resource_state': self._hana_resource_state,
-                    'sr_state_output': output[:1000],
-                    'source': 'hdbnsutil -sr_state',
-                    'note': 'HANA is NOT managed by Pacemaker in this state'
-                },
-                node=node_name
-            ))
-            # Remove the SKIPPED result we added earlier for CHK_HANA_SR_STATUS
-            # (only the one from resource gating, not from other skip reasons)
-            self.check_results = [
-                r for r in self.check_results
-                if not (r.check_id == 'CHK_HANA_SR_STATUS'
-                        and r.status == CheckStatus.SKIPPED
-                        and 'HANA resource is' in (r.message or ''))
-            ]
-            print(f"  [OK] Replication status retrieved from {node_name} (via hdbnsutil)")
-        else:
-            self._debug_print(f"hdbnsutil query failed or returned empty output on {node_name}")
+        if sites:
+            # Sort: primary first
+            sites.sort(key=lambda s: 0 if s['role'] == 'primary' else 1)
+            primary = next((s['name'] for s in sites if s['role'] == 'primary'), None)
+            secondary = next((s['name'] for s in sites if s['role'] != 'primary'), None)
+            mapping = f"{primary} -> {secondary}" if primary and secondary else None
+
+            self._hana_db_status['sr_topology'] = {
+                'mapping': mapping,
+                'repl_mode': None,
+                'op_mode': None,
+                'sites': sites,
+            }
+            print(f"  [OK] SR topology from global.ini ({len(sites)} site(s))")
 
     def _query_sr_state_configuration(self, hana_nodes: dict, sidadm: str = None):
         """
