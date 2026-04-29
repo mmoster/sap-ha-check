@@ -1,0 +1,14 @@
+[ha_dr_provider_hanasr]
+provider = HanaSR
+path = /usr/share/sap-hana-ha/
+execution_order = 1
+
+[ha_dr_provider_chksrv]
+provider = ChkSrv
+path = /usr/share/sap-hana-ha/
+execution_order = 2
+action_on_lost = stop
+
+[trace]
+ha_dr_hanasr = info
+ha_dr_chksrv = info

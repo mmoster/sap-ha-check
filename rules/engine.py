@@ -21,6 +21,11 @@ SCRIPT_DIR = Path(__file__).parent.parent.resolve()
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
+# Add lib/ to path for hadr_provider imports
+_LIB_DIR = str(Path(__file__).parent.parent / 'lib')
+if _LIB_DIR not in sys.path:
+    sys.path.insert(0, _LIB_DIR)
+
 from lib import CIBParser  # noqa: E402
 
 # Python 3.6 compatibility for dataclasses
@@ -754,6 +759,220 @@ class RulesEngine:
             node=node
         )
 
+    # ------------------------------------------------------------------
+    # HA/DR provider hook validation (CHK_HADR_HOOKS v2.0)
+    # ------------------------------------------------------------------
+
+    def _validate_hadr_hooks(self, rule: RuleDefinition, parsed: Dict,
+                             node: str, raw_output: str) -> CheckResult:
+        """Architecture-aware HA/DR provider hook validation.
+
+        Uses context from prior checks (CHK_CLUSTER_TYPE, CHK_PACKAGE_CONSISTENCY,
+        CHK_HANA_INSTALLED) plus the collected raw_output (global.ini, sudoers,
+        provider files, packages, RHEL version).
+
+        Skips when running from SOSreport (insufficient data).
+        """
+        try:
+            from hadr_provider import (
+                has_required_data, parse_collected_output,
+                get_expected_config, detect_arch_type,
+                validate_rhel_arch_compatibility, HadrValidator,
+                ArchType, Topology,
+            )
+            from hadr_provider.suggestions import format_finding_message
+        except ImportError:
+            return CheckResult(
+                check_id=rule.check_id,
+                description=rule.description,
+                status=CheckStatus.SKIPPED,
+                severity=Severity[rule.severity],
+                message="hadr_provider module not available (check HA_DR_PROVIDER installation)",
+                node=node
+            )
+
+        # Skip if data is insufficient (SOSreport mode or empty output)
+        if not has_required_data(raw_output):
+            return CheckResult(
+                check_id=rule.check_id,
+                description=rule.description,
+                status=CheckStatus.SKIPPED,
+                severity=Severity[rule.severity],
+                message="Skipped: requires SSH/local access (SOSreport data insufficient)",
+                node=node
+            )
+
+        # Gather context from prior check results
+        rhel_major = self._get_rhel_major()
+        topology = self._get_hadr_topology()
+        sid = self._get_hadr_sid()
+        arch_type = self._detect_hadr_arch_type()
+
+        if not sid:
+            return CheckResult(
+                check_id=rule.check_id,
+                description=rule.description,
+                status=CheckStatus.SKIPPED,
+                severity=Severity[rule.severity],
+                message="Skipped: SID not detected (CHK_HANA_INSTALLED may have failed)",
+                node=node
+            )
+
+        if arch_type is None:
+            return CheckResult(
+                check_id=rule.check_id,
+                description=rule.description,
+                status=CheckStatus.SKIPPED,
+                severity=Severity[rule.severity],
+                message="Skipped: resource agent package not detected (sap-hana-ha / resource-agents-sap-hana)",
+                node=node
+            )
+
+        # Validate RHEL/arch compatibility
+        compatible, compat_msg = validate_rhel_arch_compatibility(rhel_major, arch_type)
+        if not compatible:
+            return CheckResult(
+                check_id=rule.check_id,
+                description=rule.description,
+                status=CheckStatus.FAILED,
+                severity=Severity.CRITICAL,
+                message=compat_msg,
+                details={'rhel_major': rhel_major, 'arch_type': arch_type.value},
+                node=node
+            )
+
+        # Get expected config and parse actual config
+        expected = get_expected_config(rhel_major, topology, arch_type, sid)
+        actual = parse_collected_output(raw_output, node, sid)
+
+        # Validate
+        findings = HadrValidator().validate(actual, expected)
+
+        if not findings:
+            return CheckResult(
+                check_id=rule.check_id,
+                description=rule.description,
+                status=CheckStatus.PASSED,
+                severity=Severity.INFO,
+                message=(
+                    f"HA/DR hooks correctly configured "
+                    f"({arch_type.value}, {topology.value}, RHEL {rhel_major})"
+                ),
+                details={
+                    'arch_type': arch_type.value,
+                    'topology': topology.value,
+                    'rhel_major': rhel_major,
+                    'hooks': [h.section_name for h in expected.hooks if not h.is_optional],
+                },
+                node=node
+            )
+
+        # Build result with findings
+        critical_findings = [f for f in findings if f.severity == 'CRITICAL']
+        warning_findings = [f for f in findings if f.severity == 'WARNING']
+        info_findings = [f for f in findings if f.severity == 'INFO']
+
+        max_severity = 'CRITICAL' if critical_findings else ('WARNING' if warning_findings else 'INFO')
+
+        messages = [format_finding_message(f) for f in findings if f.severity != 'INFO']
+        summary = '; '.join(messages[:3])
+        if len(messages) > 3:
+            summary += f' (+{len(messages) - 3} more)'
+
+        return CheckResult(
+            check_id=rule.check_id,
+            description=rule.description,
+            status=CheckStatus.FAILED if max_severity != 'INFO' else CheckStatus.PASSED,
+            severity=Severity[max_severity],
+            message=summary or f"HA/DR hooks: {len(info_findings)} info note(s)",
+            details={
+                'arch_type': arch_type.value,
+                'topology': topology.value,
+                'rhel_major': rhel_major,
+                'findings': [
+                    {
+                        'category': f.category,
+                        'severity': f.severity,
+                        'what_is_wrong': f.what_is_wrong,
+                        'expected': f.expected_value,
+                        'actual': f.actual_value,
+                        'fix': f.fix_description,
+                        'fix_command': f.fix_command,
+                    }
+                    for f in findings
+                ],
+                'total_findings': len(findings),
+                'critical_count': len(critical_findings),
+                'warning_count': len(warning_findings),
+                'info_count': len(info_findings),
+            },
+            node=node
+        )
+
+    def _get_rhel_major(self) -> int:
+        """Get RHEL major version from access config or prior results."""
+        # Try access config first (set during discovery)
+        if hasattr(self.access_config, 'clusters'):
+            for cluster_info in self.access_config.clusters.values():
+                rv = cluster_info.get('rhel_version', '')
+                match = re.search(r'(\d+)', str(rv))
+                if match:
+                    return int(match.group(1))
+        elif isinstance(self.access_config, dict):
+            rv = self.access_config.get('rhel_version', '')
+            match = re.search(r'(\d+)', str(rv))
+            if match:
+                return int(match.group(1))
+        # Fallback: check CHK_PACKAGE_CONSISTENCY results for el<N> in package names
+        for result in self.results:
+            if result.check_id == 'CHK_PACKAGE_CONSISTENCY' and result.details:
+                parsed = result.details.get('parsed', {})
+                for key, val in parsed.items():
+                    if val:
+                        el_match = re.search(r'\.el(\d+)', str(val))
+                        if el_match:
+                            return int(el_match.group(1))
+        return 9  # Safe default (RHEL 9 supports both ANGI and Legacy)
+
+    def _get_hadr_topology(self):
+        """Get cluster topology from CHK_CLUSTER_TYPE result."""
+        from hadr_provider.models import Topology
+        for result in self.results:
+            if result.check_id == 'CHK_CLUSTER_TYPE' and result.details:
+                ct = result.details.get('cluster_type', 'Scale-Up')
+                if ct == 'Scale-Out':
+                    return Topology.SCALE_OUT
+        return Topology.SCALE_UP
+
+    def _get_hadr_sid(self) -> str:
+        """Get SID from CHK_HANA_INSTALLED result."""
+        for result in self.results:
+            if result.check_id == 'CHK_HANA_INSTALLED' and result.details:
+                parsed = result.details.get('parsed', {})
+                sid = parsed.get('sid')
+                if sid:
+                    return sid
+        # Fallback: try the cluster config
+        resource_config = self.get_cluster_resources_config()
+        return resource_config.get('sid', '')
+
+    def _detect_hadr_arch_type(self):
+        """Detect resource agent arch type from CHK_PACKAGE_CONSISTENCY results."""
+        from hadr_provider.config_matrix import detect_arch_type
+        for result in self.results:
+            if result.check_id == 'CHK_PACKAGE_CONSISTENCY' and result.details:
+                parsed = result.details.get('parsed', {})
+                packages = []
+                for key in ('sap_hana_ha_version', 'resource_agents_sap_hana',
+                            'resource_agents_sap_hana_scaleout'):
+                    val = parsed.get(key)
+                    if val:
+                        packages.append(val)
+                arch = detect_arch_type(packages)
+                if arch is not None:
+                    return arch
+        return None
+
     def _evaluate_expectation(self, parsed: Dict, expectation: Dict) -> Tuple[bool, str, str]:
         """Evaluate a single expectation against parsed data.
 
@@ -971,10 +1190,12 @@ class RulesEngine:
         if validation.get('type') == 'detection':
             return self._handle_detection_check(rule, parsed, node)
 
-        # Handle custom checks (e.g., clone_max_validation)
+        # Handle custom checks (e.g., clone_max_validation, hadr_hooks_validation)
         custom_check = validation.get('custom_check')
         if custom_check == 'clone_max_validation':
             return self._validate_clone_max(rule, parsed, node)
+        elif custom_check == 'hadr_hooks_validation':
+            return self._validate_hadr_hooks(rule, parsed, node, output)
 
         # Evaluate expectations
         expectations = validation.get('expectations', [])

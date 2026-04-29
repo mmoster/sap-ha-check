@@ -1,0 +1,8 @@
+# global.ini with no HA/DR provider hooks configured
+
+[persistence]
+basepath_datavolumes = /hana/data/S4D
+basepath_logvolumes = /hana/log/S4D
+
+[system_replication]
+preload_column_tables = true

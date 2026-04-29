@@ -1,0 +1,2 @@
+s4dadm ALL=(ALL) NOPASSWD: /usr/sbin/crm_attribute -n hana_s4d_*
+s4dadm ALL=(ALL) NOPASSWD: /usr/sbin/SAPHanaSR-hookHelper *
