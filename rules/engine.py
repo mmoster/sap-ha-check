@@ -1279,21 +1279,20 @@ class RulesEngine:
                 # Determine status: if only SAP HANA package differences, it's INFO (expected for majority maker)
                 only_sap_hana_diffs = len(critical_mismatches) == 0 and len(sap_hana_mismatches) > 0
 
-                # Build message with details
-                msg_parts = []
-                if version_diffs:
-                    msg_parts.append(f"Version mismatch: {'; '.join(version_diffs[:3])}")
-                    if len(version_diffs) > 3:
-                        msg_parts.append(f"...and {len(version_diffs) - 3} more")
-                if missing_packages:
-                    msg_parts.append(f"Package differences: {'; '.join(missing_packages[:3])}")
-                    if len(missing_packages) > 3:
-                        msg_parts.append(f"...and {len(missing_packages) - 3} more")
+                # Build concise message listing only which packages differ
+                diff_keys = sorted(set(m['key'] for m in mismatches))
+                pkg_short_names = {
+                    'pacemaker_version': 'pacemaker',
+                    'corosync_version': 'corosync',
+                    'sap_hana_ha_version': 'sap-hana-ha',
+                    'resource_agents_sap_hana': 'resource-agents-sap-hana',
+                    'resource_agents_sap_hana_scaleout': 'res-agents-sap-hana-scaleout',
+                    'saphanasr_version': 'SAPHanaSR',
+                }
+                diff_names = [pkg_short_names.get(k, k) for k in diff_keys]
 
                 if only_sap_hana_diffs:
-                    # Only SAP HANA package differences - expected for majority maker nodes
-                    msg_parts.append("(expected for MajorityMaker nodes)")
-                    message = " | ".join(msg_parts)
+                    message = f"Differs: {', '.join(diff_names)} (expected for MajorityMaker)"
                     results.append(CheckResult(
                         check_id=rule.check_id,
                         description=rule.description,
@@ -1304,7 +1303,7 @@ class RulesEngine:
                         node="(comparison)"
                     ))
                 else:
-                    message = " | ".join(msg_parts) if msg_parts else f"Values differ across nodes: {', '.join(set(m['key'] for m in mismatches))}"
+                    message = f"Differs across nodes: {', '.join(diff_names)}"
                     # Add a comparison failure result
                     results.append(CheckResult(
                         check_id=rule.check_id,
