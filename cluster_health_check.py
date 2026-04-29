@@ -2988,7 +2988,15 @@ Examples:
                 if behind_int > 0:
                     print(f"\n[INFO] A newer version is available ({behind_count} commit(s) behind)")
                     try:
-                        response = input("  Update to latest version? [y/N]: ").strip().lower()
+                        import select as _select
+                        sys.stdout.write("  Update to latest version? [y/N] (auto-skip in 20s): ")
+                        sys.stdout.flush()
+                        ready, _, _ = _select.select([sys.stdin], [], [], 20)
+                        if ready:
+                            response = sys.stdin.readline().strip().lower()
+                        else:
+                            response = ''
+                            print("\n  No response, skipping update.")
                         if response == 'y' or response == 'yes':
                             print("  Updating...")
                             result = subprocess.run(
