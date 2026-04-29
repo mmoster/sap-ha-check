@@ -12,6 +12,7 @@ Results are stored in a YAML config file for incremental investigation.
 
 import os
 import sys
+import select
 import subprocess
 import yaml
 import argparse
@@ -955,14 +956,30 @@ class AccessDiscovery:
         print("\n  [a] Analyze all clusters together")
         print("  [q] Quit")
 
+        timeout_seconds = 5
+
         if default_idx:
-            prompt = f"\nSelect cluster to analyze [1-{len(cluster_list)}/a/q] (Enter={default_idx}): "
+            prompt = f"\nSelect cluster to analyze [1-{len(cluster_list)}/a/q] (Enter={default_idx}, auto-select in {timeout_seconds}s): "
         else:
             prompt = f"\nSelect cluster to analyze [1-{len(cluster_list)}/a/q]: "
 
         while True:
             try:
-                choice = input(prompt).strip().lower()
+                sys.stdout.write(prompt)
+                sys.stdout.flush()
+
+                if default_idx:
+                    # Wait for input with timeout; auto-select default if no response
+                    ready, _, _ = select.select([sys.stdin], [], [], timeout_seconds)
+                    if ready:
+                        choice = sys.stdin.readline().strip().lower()
+                    else:
+                        # Timeout reached, auto-select default
+                        selected = cluster_list[default_idx - 1]
+                        print(f"\n\n  Auto-selected (timeout): {selected}")
+                        return selected
+                else:
+                    choice = input().strip().lower()
             except (EOFError, KeyboardInterrupt):
                 return None
 
