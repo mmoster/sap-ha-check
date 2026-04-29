@@ -838,7 +838,7 @@ def generate_health_check_report(
             clone_desc = f"clone (runs on: {', '.join(hana_nodes)})"
             topo_config = {
                 "Resource Name": topology_resource,
-                "Resource Agent": "ocf:suse:SAPHanaTopology",
+                "Resource Agent": "SAPHanaTopology",
                 "Clone Type": clone_desc,
                 "interleave": "true",
             }
@@ -855,7 +855,7 @@ def generate_health_check_report(
             if resource_type == 'SAPHanaController':
                 pdf.sub_section("SAPHanaController Resource")
                 res_config["Resource Name"] = resource_name
-                res_config["Resource Agent"] = "ocf:suse:SAPHanaController"
+                res_config["Resource Agent"] = "SAPHanaController"
                 res_config["Clone Type"] = "promotable (master/slave)"
                 res_config["interleave"] = "true"
                 if excluded_nodes:
@@ -863,7 +863,7 @@ def generate_health_check_report(
             else:
                 pdf.sub_section("SAPHana Resource")
                 res_config["Resource Name"] = resource_name
-                res_config["Resource Agent"] = "ocf:suse:SAPHana"
+                res_config["Resource Agent"] = "SAPHana"
                 res_config["Clone Type"] = "promotable (master/slave)"
             pdf.info_table(res_config)
             pdf.ln(3)
