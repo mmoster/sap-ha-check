@@ -955,16 +955,13 @@ def generate_health_check_report(
         if sr_topology and sr_topology.get('sites'):
             pdf.sub_section("System Replication")
 
-            # Mapping line: "DC1 → DC2 (sync / logreplay)"
+            # Mapping line: "DC1 -> DC2, DC1 -> DC3"
             mapping = sr_topology.get('mapping', '')
-            repl_mode = sr_topology.get('repl_mode', '')
-            op_mode = sr_topology.get('op_mode', '')
-            mode_info = f" ({repl_mode} / {op_mode})" if repl_mode else ""
 
             pdf.set_font('Helvetica', 'B', 10)
             pdf.set_text_color(*RedHatColors.BLACK)
             mapping_display = mapping if mapping else 'Unknown'
-            pdf.cell(0, 6, f"{mapping_display}{mode_info}", ln=True)
+            pdf.cell(0, 6, mapping_display, ln=True)
 
             # Source attribution
             if sr_source:

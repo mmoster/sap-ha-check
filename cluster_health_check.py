@@ -1886,18 +1886,19 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
     def _parse_sr_topology(self, output: str) -> dict:
         """Parse hdbnsutil -sr_state output into structured topology data.
 
-        Returns dict with:
-            mapping: str       - e.g. "DC1 -> DC2"
-            repl_mode: str     - e.g. "sync"
-            op_mode: str       - e.g. "logreplay"
-            sites: list[dict]  - [{name, role, tier, hosts: [hostname, ...]}, ...]
-        """
-        topology = {'mapping': None, 'repl_mode': None, 'op_mode': None, 'sites': []}
+        Supports multi-target replication (e.g., DC1 -> DC2, DC1 -> DC3).
 
-        # Extract site mapping direction: "Mapping: DC1 -> DC2"
-        m = re.search(r'^Mapping:\s*(.+?)\s*$', output, re.MULTILINE)
-        if m:
-            topology['mapping'] = m.group(1).strip()
+        Returns dict with:
+            mapping: str       - e.g. "DC1 -> DC2, DC1 -> DC3"
+            sites: list[dict]  - [{name, role, op_mode, tier, hosts}, ...]
+        """
+        topology = {'mapping': None, 'sites': []}
+
+        # Extract all site mapping directions (multi-target has multiple lines)
+        # "Mapping: DC1 -> DC2"
+        mappings = re.findall(r'^Mapping:\s*(.+?)\s*$', output, re.MULTILINE)
+        if mappings:
+            topology['mapping'] = ', '.join(m.strip() for m in mappings)
 
         # Extract host-to-site mappings: "hostname -> [SiteName] hostname"
         host_site_map = {}  # {site_name: [hostname, ...]}
@@ -1928,10 +1929,6 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
             op_mode = site_op_mode.get(site_name, '')
             tier = site_tiers.get(site_name)
             hosts = host_site_map[site_name]
-
-            if role != 'primary' and op_mode:
-                topology['repl_mode'] = role
-                topology['op_mode'] = op_mode
 
             topology['sites'].append({
                 'name': site_name,
@@ -2026,8 +2023,6 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
 
             self._hana_db_status['sr_topology'] = {
                 'mapping': mapping,
-                'repl_mode': None,
-                'op_mode': None,
                 'sites': sites,
             }
             print(f"  [OK] SR topology from global.ini ({len(sites)} site(s))")
