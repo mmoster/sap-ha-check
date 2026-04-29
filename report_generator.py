@@ -519,22 +519,25 @@ def generate_health_check_report(
             "SR status via Pacemaker) have been skipped. "
         )
 
+        # Include DB running status if available
+        hana_db_status_info = cluster_info.get('hana_db_status') or {}
+        db_running = hana_db_status_info.get('db_running', False)
+
+        if db_running:
+            running_on = hana_db_status_info.get('running_nodes', [])
+            warning_text += (
+                f"The HANA database is still running ({', '.join(running_on)}). "
+                "Replication info was gathered directly from HANA. "
+            )
+        else:
+            warning_text += "The HANA database is NOT running. "
+
         if hana_resource_state == 'disabled':
-            warning_text += (
-                "The resource appears to be intentionally disabled (maintenance). "
-                "If the HANA database is still running, replication info was gathered directly. "
-                "To re-enable: pcs resource enable <resource_name>"
-            )
+            warning_text += "To re-enable: pcs resource enable <resource_name>"
         elif hana_resource_state == 'stopped':
-            warning_text += (
-                "If the HANA database is still running, replication info was gathered directly. "
-                "To start the resource: pcs resource start <resource_name>"
-            )
+            warning_text += "To start the resource: pcs resource start <resource_name>"
         elif hana_resource_state == 'unmanaged':
-            warning_text += (
-                "The resource is not under cluster control. "
-                "To restore management: pcs resource manage <resource_name>"
-            )
+            warning_text += "To restore management: pcs resource manage <resource_name>"
 
         # Yellow warning box (same style as "Cluster Not Running")
         pdf.set_fill_color(255, 243, 205)  # Light yellow background
@@ -788,6 +791,85 @@ def generate_health_check_report(
                         pdf.cell(80, 5, target, border=1, ln=True)
 
         pdf.ln(5)
+
+    # =========================================================================
+    # HANA DATABASE STATUS & REPLICATION
+    # =========================================================================
+    hana_db_status = cluster_info.get('hana_db_status')
+    if hana_db_status:
+        pdf.sub_section("HANA Database Status")
+
+        db_running = hana_db_status.get('db_running', False)
+        hana_managed = hana_db_status.get('hana_managed', False)
+        running_nodes = hana_db_status.get('running_nodes', [])
+        stopped_nodes = hana_db_status.get('stopped_nodes', [])
+        resource_state = hana_db_status.get('hana_resource_state', 'unknown')
+
+        # Build status info table
+        db_status_info = {}
+        if db_running:
+            db_status_info["Database Running"] = f"Yes ({', '.join(running_nodes)})"
+        else:
+            db_status_info["Database Running"] = "No"
+        if stopped_nodes:
+            db_status_info["Database Stopped On"] = ", ".join(stopped_nodes)
+
+        if hana_managed:
+            db_status_info["Managed by Cluster"] = f"Yes (resource {resource_state})"
+        else:
+            reason = f"resource {resource_state}" if resource_state != 'unknown' else "cluster not running"
+            db_status_info["Managed by Cluster"] = f"No ({reason})"
+
+        db_status_info["Resource State"] = resource_state
+
+        pdf.info_table(db_status_info)
+        pdf.ln(3)
+
+        # Replication info section
+        sr_source = hana_db_status.get('sr_source')
+        sr_info = hana_db_status.get('sr_info')
+
+        if sr_info:
+            pdf.sub_section("System Replication Status")
+
+            # Source attribution
+            pdf.set_font('Helvetica', 'I', 8)
+            pdf.set_text_color(100, 100, 100)
+            pdf.cell(0, 4, f"Source: {sr_source}", ln=True)
+
+            if not hana_managed:
+                pdf.set_font('Helvetica', 'B', 8)
+                pdf.set_text_color(133, 100, 4)
+                pdf.cell(0, 4, "Note: HANA is NOT managed by Pacemaker in this state", ln=True)
+
+            pdf.set_text_color(*RedHatColors.BLACK)
+            pdf.ln(2)
+
+            # Render SR info as monospace block
+            pdf.set_font('Courier', '', 7)
+            pdf.set_fill_color(245, 245, 245)
+
+            # Limit output and render each line
+            sr_lines = sr_info.split('\n')[:30]
+            for line in sr_lines:
+                pdf.set_x(12)
+                pdf.cell(186, 3.5, line[:100], fill=True, ln=True)
+
+            if len(sr_info.split('\n')) > 30:
+                pdf.set_font('Helvetica', 'I', 7)
+                pdf.set_x(12)
+                pdf.cell(0, 4, f"  ... ({len(sr_info.split(chr(10))) - 30} more lines)", ln=True)
+
+            pdf.set_font('Helvetica', '', 10)
+            pdf.ln(3)
+
+        elif sr_source:
+            pdf.sub_section("System Replication Status")
+            pdf.set_font('Helvetica', 'I', 9)
+            pdf.cell(0, 5, f"Source: {sr_source}", ln=True)
+            pdf.ln(3)
+
+    pdf.ln(5)
 
     # =========================================================================
     # CONFIGURED RESOURCES (from cib.xml)
@@ -1155,6 +1237,7 @@ def load_unified_yaml_report(yaml_path: str) -> tuple:
             'used_cib_xml': data.get('used_cib_xml', False),
             'cluster_running': data.get('cluster_running', True),
             'hana_resource_state': data.get('hana_resource_state'),
+            'hana_db_status': data.get('hana_db_status'),
 
             # OS/Software versions
             'rhel_version': data.get('rhel_version'),

@@ -138,6 +138,7 @@ class ClusterHealthCheck:
         self.majority_makers = []  # Nodes that are majority makers (Scale-Out)
         self.last_pdf_file = None  # Track last generated PDF for auto-open
         self._hana_resource_state = 'unknown'  # running/stopped/disabled/unmanaged/absent
+        self._hana_db_status = {}  # HANA DB status and replication info
 
     def _debug_print(self, message: str):
         """Print debug message if debug mode is enabled."""
@@ -420,6 +421,7 @@ class ClusterHealthCheck:
             used_cib_xml=data_source_info.get('used_cib_xml', False),
             cluster_running=cluster_running,
             hana_resource_state=self._hana_resource_state,
+            hana_db_status=self._hana_db_status if self._hana_db_status else None,
 
             # Cluster info
             cluster_name=cluster_name,
@@ -1729,11 +1731,11 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                         node="all"
                     ))
 
-            # Maintenance-aware: try to gather replication info directly from HANA
-            self._gather_maintenance_replication_info(install_results, hana_nodes)
-
             sap_checks = resource_independent_sap
             rules_to_run = [r for r in self.rules_engine.rules if r.check_id in sap_checks]
+
+        # Always gather HANA database status and replication info
+        self._gather_hana_db_status(install_results, hana_nodes)
 
         self._debug_print(f"Checks to run: {[r.check_id for r in rules_to_run]}")
 
@@ -1752,36 +1754,99 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                   and r.check_id in all_sap_checks]
         return len([f for f in failed if f.severity == Severity.CRITICAL]) == 0
 
-    def _gather_maintenance_replication_info(self, install_results: list,
-                                              hana_nodes: dict):
+    def _gather_hana_db_status(self, install_results: list, hana_nodes: dict):
         """
-        In maintenance scenarios (HANA resource stopped/disabled but DB running),
-        gather replication info directly from HANA via hdbnsutil.
+        Gather comprehensive HANA database status and replication info.
 
-        This provides useful replication status even when Pacemaker is not
-        managing the resource, but clearly notes that HANA is NOT managed.
+        Determines:
+        - Whether the HANA database is running on each node
+        - Whether HANA is managed by the cluster (resource running) or not
+        - Replication status via the appropriate source:
+          * DB running + resource running: already gathered by CHK_HANA_SR_STATUS
+          * DB running + resource stopped/disabled: hdbnsutil -sr_state (direct)
+          * DB NOT running: SAPHanaSR-stateConfiguration (last known config from CIB)
+
+        Results are stored in self._hana_db_status for report generation.
         """
-        # Find nodes where HANA is actually running
+        cluster_running = True
+        if self.access_config and hasattr(self.access_config, 'clusters'):
+            for cinfo in self.access_config.clusters.values():
+                if cinfo.get('cluster_running') is False:
+                    cluster_running = False
+                    break
+
+        hana_resource_active = self._hana_resource_state == 'running'
+
+        # Determine HANA managed state:
+        # Managed = cluster is running AND resource is started/running
+        hana_managed = cluster_running and hana_resource_active
+
+        # Find nodes where HANA is installed and their running status
         hana_running_nodes = []
-        for result in install_results:
-            if result.status == CheckStatus.PASSED and result.details:
-                parsed = result.details.get('parsed', {})
-                if parsed.get('hana_running') == 'yes' and parsed.get('sidadm'):
-                    hana_running_nodes.append({
-                        'node': result.node,
-                        'sidadm': parsed['sidadm']
-                    })
+        hana_stopped_nodes = []
+        sidadm = None
 
-        if not hana_running_nodes:
-            self._debug_print("HANA database not running on any node - no direct replication query")
+        for result in install_results:
+            if result.status != CheckStatus.PASSED or not result.details:
+                continue
+            parsed = result.details.get('parsed', {})
+            node_sidadm = parsed.get('sidadm')
+            if node_sidadm:
+                sidadm = node_sidadm  # Keep last valid sidadm for offline queries
+
+            if parsed.get('hana_running') == 'yes' and node_sidadm:
+                hana_running_nodes.append({
+                    'node': result.node,
+                    'sidadm': node_sidadm,
+                    'sid': parsed.get('sid'),
+                })
+            elif parsed.get('hana_installed') == 'HANA_INSTALLED':
+                hana_stopped_nodes.append({
+                    'node': result.node,
+                    'sidadm': node_sidadm,
+                    'sid': parsed.get('sid'),
+                })
+
+        db_running = len(hana_running_nodes) > 0
+        running_nodes = [n['node'] for n in hana_running_nodes]
+        stopped_nodes = [n['node'] for n in hana_stopped_nodes]
+
+        # Store status for report generation
+        self._hana_db_status = {
+            'db_running': db_running,
+            'hana_managed': hana_managed,
+            'running_nodes': running_nodes,
+            'stopped_nodes': stopped_nodes,
+            'hana_resource_state': self._hana_resource_state,
+            'sr_source': None,
+            'sr_info': None,
+        }
+
+        if db_running:
+            print(f"  [INFO] HANA database running on: {', '.join(running_nodes)}")
+        else:
+            print(f"  [INFO] HANA database NOT running on any node")
+
+        if hana_managed:
+            print(f"  [INFO] HANA is managed by the cluster (resource {self._hana_resource_state})")
+            # Replication info already gathered by CHK_HANA_SR_STATUS
+            self._hana_db_status['sr_source'] = 'Pacemaker (CHK_HANA_SR_STATUS)'
             return
 
-        print(f"  [INFO] HANA database running on {len(hana_running_nodes)} node(s)"
-              f" despite resource being {self._hana_resource_state}")
-        print("  [INFO] Gathering replication info directly from HANA (not via Pacemaker)")
+        print(f"  [INFO] HANA is NOT managed by the cluster"
+              f" (resource {self._hana_resource_state})")
 
-        # Try to get replication status from first running HANA node
-        node_info = hana_running_nodes[0]
+        # --- Gather replication info based on DB running state ---
+
+        if db_running:
+            # DB running but resource not managed: query hdbnsutil directly
+            self._query_hdbnsutil_replication(hana_running_nodes[0], hana_nodes)
+        else:
+            # DB not running: try SAPHanaSR-stateConfiguration for last known config
+            self._query_sr_state_configuration(hana_nodes, sidadm)
+
+    def _query_hdbnsutil_replication(self, node_info: dict, hana_nodes: dict):
+        """Query replication status directly from a running HANA database via hdbnsutil."""
         sidadm = node_info['sidadm']
         node_name = node_info['node']
 
@@ -1800,6 +1865,10 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
         success, output = self.rules_engine._execute_command_raw(sr_cmd, node_name, method, user)
 
         if success and output and output.strip():
+            self._hana_db_status['sr_source'] = 'hdbnsutil -sr_state (direct query)'
+            self._hana_db_status['sr_info'] = output.strip()
+
+            # Add a CHK_HANA_SR_STATUS result with maintenance context
             self.check_results.append(CheckResult(
                 check_id='CHK_HANA_SR_STATUS',
                 description='HANA System Replication status (direct query - resource not managed)',
@@ -1827,6 +1896,48 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
             print(f"  [OK] Replication status retrieved from {node_name} (via hdbnsutil)")
         else:
             self._debug_print(f"hdbnsutil query failed or returned empty output on {node_name}")
+
+    def _query_sr_state_configuration(self, hana_nodes: dict, sidadm: str = None):
+        """
+        Query last known SR configuration when HANA database is NOT running.
+
+        Uses SAPHanaSR-stateConfiguration which reads cluster attributes from the CIB
+        to show the last known replication configuration.
+        """
+        # Try on any accessible node (cluster-wide command)
+        for node_name, node_access in hana_nodes.items():
+            method = node_access.get('preferred_method', 'ssh')
+            if not method:
+                continue
+            user = node_access.get('ssh_user')
+
+            # Try SAPHanaSR-stateConfiguration first (reads CIB attributes)
+            sr_cmd = "SAPHanaSR-stateConfiguration 2>/dev/null"
+            self._debug_print(f"Running: {sr_cmd} on {node_name}")
+
+            success, output = self.rules_engine._execute_command_raw(
+                sr_cmd, node_name, method, user)
+
+            if success and output and output.strip() and 'not found' not in output.lower():
+                self._hana_db_status['sr_source'] = 'SAPHanaSR-stateConfiguration (CIB attributes)'
+                self._hana_db_status['sr_info'] = output.strip()
+                print(f"  [OK] SR configuration retrieved from CIB via {node_name}")
+                return
+
+            # Fallback: try SAPHanaSR-showAttr (may work if CIB has cached attributes)
+            sr_cmd = "SAPHanaSR-showAttr 2>/dev/null"
+            self._debug_print(f"Fallback: {sr_cmd} on {node_name}")
+
+            success, output = self.rules_engine._execute_command_raw(
+                sr_cmd, node_name, method, user)
+
+            if success and output and output.strip() and 'not found' not in output.lower():
+                self._hana_db_status['sr_source'] = 'SAPHanaSR-showAttr (CIB attributes)'
+                self._hana_db_status['sr_info'] = output.strip()
+                print(f"  [OK] SR attributes retrieved from CIB via {node_name}")
+                return
+
+        self._debug_print("Could not retrieve SR configuration from any node")
 
     def step_generate_report(self) -> bool:
         """

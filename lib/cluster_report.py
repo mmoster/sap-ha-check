@@ -107,6 +107,7 @@ class ClusterReportData:
     used_cib_xml: bool = False  # True if parsed cib.xml (cluster was stopped)
     cluster_running: bool = True  # False if cluster services not running
     hana_resource_state: str = None  # running/stopped/disabled/unmanaged/absent/unknown
+    hana_db_status: Dict[str, Any] = None  # HANA DB running state, managed flag, SR info
 
     # =========================================================================
     # CLUSTER INFORMATION
@@ -187,6 +188,8 @@ class ClusterReportData:
             self.stonith_params = {}
         if self.resource_config is None:
             self.resource_config = {}
+        if self.hana_db_status is None:
+            self.hana_db_status = {}
         if self.install_status is None:
             self.install_status = {}
         if self.results is None:
@@ -242,6 +245,7 @@ class ClusterReportData:
             'used_cib_xml': self.used_cib_xml,
             'cluster_running': self.cluster_running,
             'hana_resource_state': self.hana_resource_state,
+            'hana_db_status': self.hana_db_status,
 
             # OS/Software versions
             'rhel_version': self.rhel_version,
