@@ -77,6 +77,9 @@ class HadrValidator:
     ) -> List[Finding]:
         findings: List[Finding] = []
 
+        # Valid alternatives for action_on_lost: stop (default), fence (requires hookHelper)
+        _ACTION_ON_LOST_VALID = {'stop', 'fence'}
+
         checks = [
             ('provider', hook.provider),
             ('path', hook.path),
@@ -103,6 +106,9 @@ class HadrValidator:
                     section=hook.section_name,
                 ))
             elif actual_val != expected_val:
+                # action_on_lost accepts multiple valid values (stop, fence)
+                if key == 'action_on_lost' and actual_val in _ACTION_ON_LOST_VALID:
+                    continue
                 severity = 'WARNING' if key == 'execution_order' else 'CRITICAL'
                 desc, cmd = generate_fix_for_wrong_value(
                     hook.section_name, key, expected_val, actual_val, actual.sid)
@@ -170,10 +176,23 @@ class HadrValidator:
 
         all_sudoers = '\n'.join(actual.sudoers_lines)
 
+        # Check if any hook uses action_on_lost=fence (makes hookHelper required)
+        uses_fence = any(
+            section.get('action_on_lost') == 'fence'
+            for section in actual.global_ini_sections.values()
+        )
+
         for entry in expected.sudoers_entries:
             pattern = entry.line_pattern
             if not re.search(pattern, all_sudoers, re.IGNORECASE):
-                severity = 'WARNING' if entry.is_optional else 'CRITICAL'
+                is_optional = entry.is_optional
+                # hookHelper becomes required when action_on_lost=fence
+                if 'hookhelper' in entry.description.lower() and uses_fence:
+                    is_optional = False
+                # hookHelper is unnecessary when action_on_lost!=fence
+                elif 'hookhelper' in entry.description.lower() and not uses_fence:
+                    continue
+                severity = 'WARNING' if is_optional else 'CRITICAL'
                 desc, cmd = generate_fix_for_missing_sudoers(
                     entry, actual.sid)
                 findings.append(Finding(
