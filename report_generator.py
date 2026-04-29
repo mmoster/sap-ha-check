@@ -264,6 +264,99 @@ class HealthCheckPDF(FPDF):
         self.ln(5)
 
 
+def _render_version_table(pdf, check):
+    """Render a version comparison table for CHK_PACKAGE_CONSISTENCY results.
+
+    Shows a table with package names as rows and nodes as columns,
+    displaying version differences side-by-side for easy comparison.
+    Only renders when the check has a version_table in its details.
+    """
+    if check.get('check_id') != 'CHK_PACKAGE_CONSISTENCY':
+        return
+    details = check.get('details', {})
+    version_table = details.get('version_table')
+    if not version_table:
+        return
+
+    # Collect all nodes from the version_table values
+    all_nodes = []
+    for pkg_versions in version_table.values():
+        for node in pkg_versions:
+            if node not in all_nodes:
+                all_nodes.append(node)
+
+    if not all_nodes:
+        return
+
+    # Friendly display names for package keys
+    pkg_display_names = {
+        'pacemaker_version': 'pacemaker',
+        'corosync_version': 'corosync',
+        'sap_hana_ha_version': 'sap-hana-ha',
+        'resource_agents_sap_hana': 'resource-agents-sap-hana',
+        'resource_agents_sap_hana_scaleout': 'resource-agents-sap-hana-scaleout',
+        'saphanasr_version': 'SAPHanaSR',
+    }
+
+    # Calculate column widths
+    # Package column + one column per node, fitting in 190mm page width
+    pkg_col_width = 62
+    remaining = 190 - pkg_col_width
+    node_col_width = min(remaining / len(all_nodes), 64)
+
+    # Check if we need a page break (estimate table height)
+    row_height = 5
+    table_height = (len(version_table) + 1) * row_height + 8  # header + rows + padding
+    if pdf.get_y() + table_height > 270:
+        pdf.add_page()
+
+    pdf.ln(2)
+    pdf.set_x(14)
+
+    # Table header
+    pdf.set_fill_color(240, 240, 240)
+    pdf.set_font('Helvetica', 'B', 7)
+    pdf.set_text_color(*RedHatColors.BLACK)
+    pdf.cell(pkg_col_width, row_height, "Package", border=1, fill=True)
+    for node in all_nodes:
+        # Truncate long node names
+        display_node = node[:15] if len(node) > 15 else node
+        pdf.cell(node_col_width, row_height, display_node, border=1, fill=True, align='C')
+    pdf.ln()
+
+    # Table rows
+    pdf.set_font('Courier', '', 7)
+    for pkg_key, node_versions in version_table.items():
+        pdf.set_x(14)
+        display_name = pkg_display_names.get(pkg_key, pkg_key)
+        pdf.set_font('Helvetica', 'B', 7)
+        pdf.set_text_color(*RedHatColors.BLACK)
+        pdf.cell(pkg_col_width, row_height, display_name, border=1)
+
+        # Determine if values differ (to highlight)
+        values = list(node_versions.values())
+        has_diff = len(set(str(v) for v in values)) > 1
+
+        pdf.set_font('Courier', '', 7)
+        for node in all_nodes:
+            version = node_versions.get(node, 'N/A')
+            version_str = str(version) if version else 'not installed'
+            # Highlight cells that differ from the first node's value
+            ref_value = node_versions.get(all_nodes[0], 'N/A')
+            if has_diff and str(version) != str(ref_value):
+                pdf.set_text_color(*RedHatColors.RED)
+            else:
+                pdf.set_text_color(*RedHatColors.BLACK)
+            # Truncate long version strings
+            if len(version_str) > 20:
+                version_str = version_str[:20]
+            pdf.cell(node_col_width, row_height, version_str, border=1, align='C')
+        pdf.ln()
+
+    pdf.set_text_color(*RedHatColors.BLACK)
+    pdf.ln(2)
+
+
 def generate_health_check_report(
     results: List[Dict],
     summary: Dict,
@@ -1021,6 +1114,8 @@ def generate_health_check_report(
                 check.get('message', ''),
                 check.get('node', '')
             )
+            # Render version comparison table for package consistency checks
+            _render_version_table(pdf, check)
 
         # Add note about errors when cluster is stopped (for running cluster case)
         if error_checks and cluster_running:
@@ -1045,6 +1140,8 @@ def generate_health_check_report(
                 check.get('message', ''),
                 check.get('node', '')
             )
+            # Render version comparison table for package consistency checks
+            _render_version_table(pdf, check)
 
     # Passed checks
     if passed_checks:
@@ -1060,6 +1157,8 @@ def generate_health_check_report(
                     check.get('message', ''),
                     check.get('node', '')
                 )
+                # Render version comparison table for package consistency checks
+                _render_version_table(pdf, check)
         else:
             # Compact mode: list passed checks in 3-column format
             pdf.set_font('Helvetica', '', 9)

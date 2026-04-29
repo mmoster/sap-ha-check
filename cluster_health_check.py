@@ -365,7 +365,8 @@ class ClusterHealthCheck:
                 'status': r.status.value,
                 'severity': r.severity.value,
                 'message': r.message,
-                'description': r.description
+                'description': r.description,
+                'details': r.details if r.details else {}
             }
             for r in self.check_results
         ]

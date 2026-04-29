@@ -1265,6 +1265,17 @@ class RulesEngine:
                         else:
                             critical_mismatches.append(m)
 
+                # Build version_table for structured rendering (e.g., PDF comparison table)
+                # Maps each mismatched key to {node: version_string}
+                version_table = {}
+                for m in mismatches:
+                    key = m['key']
+                    if key not in version_table:
+                        ref_val = reference_values.get(key)
+                        version_table[key] = {reference_node: ref_val if ref_val else 'not installed'}
+                    actual = m.get('actual')
+                    version_table[key][m['node']] = actual if actual else 'not installed'
+
                 # Determine status: if only SAP HANA package differences, it's INFO (expected for majority maker)
                 only_sap_hana_diffs = len(critical_mismatches) == 0 and len(sap_hana_mismatches) > 0
 
@@ -1289,7 +1300,7 @@ class RulesEngine:
                         status=CheckStatus.PASSED,
                         severity=Severity.INFO,
                         message=message,
-                        details={'mismatches': mismatches, 'reference_node': reference_node, 'majority_maker_expected': True},
+                        details={'mismatches': mismatches, 'reference_node': reference_node, 'majority_maker_expected': True, 'version_table': version_table},
                         node="(comparison)"
                     ))
                 else:
@@ -1301,7 +1312,7 @@ class RulesEngine:
                         status=CheckStatus.FAILED,
                         severity=Severity[rule.severity],
                         message=message,
-                        details={'mismatches': mismatches, 'reference_node': reference_node},
+                        details={'mismatches': mismatches, 'reference_node': reference_node, 'version_table': version_table},
                         node="(comparison)"
                     ))
 
