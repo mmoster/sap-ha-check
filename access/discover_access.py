@@ -392,10 +392,11 @@ class AccessDiscovery:
             extras_path = Path(sos_path) / "sos_commands/sos_extras/sap_hana_ha"
             saphana_path = Path(sos_path) / "sos_commands/saphana"  # noqa: F841
 
-            # Check for SAPHanaSR-showAttr in extras
+            # Check for extended data: SAPHanaSR-showAttr or HADR collect script output
             has_sr_attr = (extras_path / "SAPHanaSR-showAttr").exists() if extras_path.exists() else False
+            has_hadr = (extras_path / "usr.local.sbin.sap-ha-collect-hadr").exists() if extras_path.exists() else False
 
-            if has_sr_attr:
+            if has_sr_attr or has_hadr:
                 has_extended.append(hostname)
             else:
                 missing_extended.append(hostname)
@@ -412,28 +413,11 @@ class AccessDiscovery:
   To collect extended SAP HANA HA data in future SOSreports, deploy
   the following configuration to all cluster nodes:
 
-  1. Update /etc/sos/sos.conf:
-     ─────────────────────────────────────────────────────────────
-     [report]
-     enable-plugins = saphana, sapnw, pacemaker, corosync, sos_extras
+  Run: ./cluster_health_check.py -R --configure-extensions
+  Or:  ./cluster_health_check.py -R <node>
 
-     [plugin_options]
-     pacemaker.crm-scrub = on
-     ─────────────────────────────────────────────────────────────
-
-  2. Create /etc/sos/extras.d/sap_hana_ha:
-     ─────────────────────────────────────────────────────────────
-     SAPHanaSR-showAttr
-     SAPHanaSR-showAttr --format=script
-     crm_mon -1 -r -n
-     pcs status --full
-     pcs resource config
-     pcs constraint config
-     cibadmin --query --scope resources
-     cibadmin --query --scope constraints
-     ─────────────────────────────────────────────────────────────
-
-  Then regenerate SOSreports with: sos report --batch
+  This will configure SAP HANA HA data collection (global.ini,
+  sudoers, SAPHanaSR-showAttr, cluster state) and create SOSreports.
 """)
             print("=" * 63)
 
@@ -1853,11 +1837,13 @@ class AccessDiscovery:
                         sys.exit(0)
                     elif selected_cluster == '__all__':
                         # Use all sosreports
+                        cluster_name = list(clusters.keys())[0]
                         print(f"\n[INFO] Analyzing all {len(clusters)} clusters together")
                         for cluster_info in clusters.values():
                             sosreports.update(cluster_info['nodes'])
                     else:
                         # Use only selected cluster's sosreports
+                        cluster_name = selected_cluster
                         sosreports = clusters[selected_cluster]['nodes']
                         print(f"\n[INFO] Analyzing cluster '{selected_cluster}' only")
                         # Store cluster info
@@ -3031,6 +3017,7 @@ def check_sos_sap_extensions(hostname: str, ssh_user: str = 'root') -> dict:
         'reachable': False,
         'sos_conf_ok': False,
         'extras_ok': False,
+        'hadr_script_ok': False,
         'sos_extras_installed': False,
     }
 
@@ -3058,6 +3045,13 @@ def check_sos_sap_extensions(hostname: str, ssh_user: str = 'root') -> dict:
             else
                 echo "EXTRAS_OK=no"
             fi
+
+            # Check if HADR collection script is deployed
+            if [ -x /usr/local/sbin/sap-ha-collect-hadr ]; then
+                echo "HADR_SCRIPT_OK=yes"
+            else
+                echo "HADR_SCRIPT_OK=no"
+            fi
             """
         ]
 
@@ -3076,6 +3070,7 @@ def check_sos_sap_extensions(hostname: str, ssh_user: str = 'root') -> dict:
             result['sos_extras_installed'] = 'SOS_INSTALLED=yes' in output
             result['sos_conf_ok'] = 'SOS_CONF_OK=yes' in output
             result['extras_ok'] = 'EXTRAS_OK=yes' in output
+            result['hadr_script_ok'] = 'HADR_SCRIPT_OK=yes' in output
         else:
             result['reachable'] = False
 
@@ -3109,6 +3104,26 @@ pcs resource config
 pcs constraint config
 cibadmin --query --scope resources
 cibadmin --query --scope constraints
+/usr/local/sbin/sap-ha-collect-hadr
+"""
+
+    # Script that collects HA/DR provider hook configuration
+    # (global.ini, sudoers, provider files, packages, RHEL version)
+    # Output uses section markers so the CHK_HADR_HOOKS parser can split it.
+    hadr_collect_script = """#!/bin/bash
+# SAP HANA HA/DR provider hook data collection for SOSreport
+# Generates marker-delimited output for CHK_HADR_HOOKS analysis
+echo '=== GLOBAL_INI ==='
+cat /hana/shared/*/global/hdb/custom/config/global.ini 2>/dev/null \\
+  || cat /usr/sap/*/SYS/global/hdb/custom/config/global.ini 2>/dev/null
+echo '=== SUDOERS ==='
+cat /etc/sudoers.d/20-saphana /etc/sudoers.d/*sap* /etc/sudoers.d/*hana* 2>/dev/null
+echo '=== PROVIDER_FILES ==='
+ls /usr/share/sap-hana-ha/HanaSR.py /usr/share/SAPHanaSR/SAPHanaSR.py 2>&1
+echo '=== PACKAGES ==='
+rpm -q sap-hana-ha resource-agents-sap-hana resource-agents-sap-hana-scaleout 2>/dev/null
+echo '=== RHEL ==='
+cat /etc/redhat-release 2>/dev/null
 """
 
     # Commands to deploy configuration
@@ -3117,8 +3132,14 @@ cibadmin --query --scope constraints
 # Create directories if needed
 {sudo_prefix}mkdir -p /etc/sos/extras.d
 
+# Deploy HADR collection script
+cat << 'HADREOF' | {sudo_prefix}tee /usr/local/sbin/sap-ha-collect-hadr >/dev/null
+{hadr_collect_script}
+HADREOF
+{sudo_prefix}chmod +x /usr/local/sbin/sap-ha-collect-hadr
+
 # Check if sos.conf already has SAP plugins configured
-if grep -q 'saphana' /etc/sos/sos.conf 2>/dev/null && grep -q 'pacemaker.crm-scrub' /etc/sos/sos.conf 2>/dev/null; then
+if grep -q 'saphana' /etc/sos/sos.conf 2>/dev/null && grep -q 'sos_extras' /etc/sos/sos.conf 2>/dev/null; then
     echo "SOS_CONF_ALREADY_OK"
 else
     # Backup existing sos.conf
@@ -3158,8 +3179,9 @@ for p in needed_plugins:
         current.append(p)
 config.set('report', 'enable-plugins', ', '.join(current))
 
-# Add pacemaker.crm-scrub to [plugin_options]
-config.set('plugin_options', 'pacemaker.crm-scrub', 'on')
+# Remove pacemaker.crm-scrub if present (not supported in all sos versions)
+if config.has_option('plugin_options', 'pacemaker.crm-scrub'):
+    config.remove_option('plugin_options', 'pacemaker.crm-scrub')
 
 # Write back
 with open(conf_path, 'w') as f:
@@ -3179,6 +3201,13 @@ if [ -f /etc/sos/extras.d/sap_hana_ha ] && grep -q 'SAPHanaSR-showAttr' /etc/sos
     echo "EXTRAS_DEPLOYED_OK"
 else
     echo "EXTRAS_DEPLOY_FAILED"
+fi
+
+# Verify HADR collection script
+if [ -x /usr/local/sbin/sap-ha-collect-hadr ]; then
+    echo "HADR_SCRIPT_OK"
+else
+    echo "HADR_SCRIPT_FAILED"
 fi
 """
 

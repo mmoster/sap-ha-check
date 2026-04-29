@@ -6,7 +6,7 @@
 # Checks: global.ini sections, sudoers, trace settings, provider files.
 # Provides actionable remediation suggestions for every finding.
 #
-# Requires: SSH or local access (skipped for SOSreport -- insufficient data).
+# Requires: SSH, local, or SOSreport with sap-ha-collect-hadr extension.
 # Depends on: CHK_CLUSTER_TYPE, CHK_PACKAGE_CONSISTENCY, CHK_HANA_INSTALLED
 #
 check_id: CHK_HADR_HOOKS
@@ -31,8 +31,8 @@ source_definitions:
     rpm -q sap-hana-ha resource-agents-sap-hana resource-agents-sap-hana-scaleout 2>/dev/null;
     echo '=== RHEL ===';
     cat /etc/redhat-release 2>/dev/null
-  # No sos_path: this check requires live access (SSH/local).
-  # SOSreports lack sudoers, provider files, and may lack global.ini.
+  # SOSreport: collected by /usr/local/sbin/sap-ha-collect-hadr via sos_extras
+  sos_path: "sos_commands/sos_extras/sap_hana_ha/usr.local.sbin.sap-ha-collect-hadr"
 
 parser:
   type: regex
