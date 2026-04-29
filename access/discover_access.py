@@ -956,7 +956,7 @@ class AccessDiscovery:
         print("\n  [a] Analyze all clusters together")
         print("  [q] Quit")
 
-        timeout_seconds = 5
+        timeout_seconds = 10
 
         if default_idx:
             prompt = f"\nSelect cluster to analyze [1-{len(cluster_list)}/a/q] (Enter={default_idx}, auto-select in {timeout_seconds}s): "
