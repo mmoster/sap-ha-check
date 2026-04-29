@@ -501,6 +501,63 @@ def generate_health_check_report(
         pdf.ln(20)
 
     # =========================================================================
+    # HANA RESOURCE NOT MANAGED WARNING
+    # =========================================================================
+    hana_resource_state = cluster_info.get('hana_resource_state')
+    if hana_resource_state and hana_resource_state in ('stopped', 'disabled', 'unmanaged'):
+        state_descriptions = {
+            'stopped': 'HANA resource is stopped in Pacemaker',
+            'disabled': 'HANA resource is disabled in Pacemaker (target-role=Stopped)',
+            'unmanaged': 'HANA resource is in unmanaged state',
+        }
+
+        warning_title = f"WARNING: {state_descriptions.get(hana_resource_state)}"
+        warning_text = (
+            f"The SAP HANA cluster resource is {hana_resource_state}. "
+            "HANA is NOT managed by Pacemaker in this state. "
+            "Checks that depend on Pacemaker resource status (master/slave roles, site roles, "
+            "SR status via Pacemaker) have been skipped. "
+        )
+
+        if hana_resource_state == 'disabled':
+            warning_text += (
+                "The resource appears to be intentionally disabled (maintenance). "
+                "If the HANA database is still running, replication info was gathered directly. "
+                "To re-enable: pcs resource enable <resource_name>"
+            )
+        elif hana_resource_state == 'stopped':
+            warning_text += (
+                "If the HANA database is still running, replication info was gathered directly. "
+                "To start the resource: pcs resource start <resource_name>"
+            )
+        elif hana_resource_state == 'unmanaged':
+            warning_text += (
+                "The resource is not under cluster control. "
+                "To restore management: pcs resource manage <resource_name>"
+            )
+
+        # Yellow warning box (same style as "Cluster Not Running")
+        pdf.set_fill_color(255, 243, 205)  # Light yellow background
+        pdf.set_draw_color(255, 193, 7)    # Yellow border
+        pdf.set_line_width(0.5)
+        pdf.set_font('Helvetica', 'B', 11)
+        pdf.set_text_color(133, 100, 4)    # Dark yellow/brown text
+
+        y_start = pdf.get_y()
+        # Dynamic height: disabled state has longer text
+        box_height = 36 if hana_resource_state == 'disabled' else 30
+        pdf.rect(10, y_start, 190, box_height, 'DF')
+        pdf.set_xy(15, y_start + 3)
+        pdf.cell(0, 5, warning_title, ln=True)
+        pdf.set_xy(15, y_start + 10)
+        pdf.set_font('Helvetica', '', 9)
+        pdf.multi_cell(180, 4, warning_text)
+
+        pdf.set_text_color(*RedHatColors.BLACK)
+        pdf.set_line_width(0.2)
+        pdf.ln(8)
+
+    # =========================================================================
     # CLUSTER CONFIGURATION
     # =========================================================================
     pdf.chapter_title("Cluster Configuration")
@@ -1096,6 +1153,8 @@ def load_unified_yaml_report(yaml_path: str) -> tuple:
             'data_source': data.get('data_source', 'Unknown'),
             'access_method': data.get('access_method', 'unknown'),
             'used_cib_xml': data.get('used_cib_xml', False),
+            'cluster_running': data.get('cluster_running', True),
+            'hana_resource_state': data.get('hana_resource_state'),
 
             # OS/Software versions
             'rhel_version': data.get('rhel_version'),

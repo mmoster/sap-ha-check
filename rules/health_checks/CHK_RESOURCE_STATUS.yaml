@@ -1,12 +1,42 @@
 # CHK_RESOURCE_STATUS - Verify SAP HANA resources are running
+#
+# Detects resource states:
+#   - running: Resource is active with Master/Slave or Promoted/Unpromoted roles
+#   - stopped: Resource is stopped (may be due to failure or manual stop)
+#   - disabled: Resource is intentionally disabled (target-role=Stopped)
+#   - unmanaged: Resource is set to unmanaged (is-managed=false)
+#   - absent: No SAP HANA resource found in cluster
+#
+# Downstream checks (CHK_MASTER_SLAVE_ROLES, CHK_SITE_ROLES, CHK_HANA_SR_STATUS)
+# depend on this check passing to avoid misleading failures when resources are
+# intentionally stopped during maintenance.
+#
 check_id: CHK_RESOURCE_STATUS
-version: "1.0"
+version: "2.0"
 severity: CRITICAL
 description: Verify SAP HANA cluster resources are running
 enabled: true
 
 source_definitions:
-  live_cmd: "crm_mon -1 -r 2>/dev/null || pcs status resources 2>/dev/null"
+  live_cmd: |
+    OUTPUT=$(crm_mon -1 -r 2>/dev/null || pcs status resources 2>/dev/null)
+    echo "$OUTPUT"
+    # Emit resource state summary for downstream checks
+    if echo "$OUTPUT" | grep -qiE 'SAPHana|SAPHanaTopology|rsc_SAPHana'; then
+      if echo "$OUTPUT" | grep -qi 'unmanaged'; then
+        echo "HANA_RESOURCE_STATE=unmanaged"
+      elif echo "$OUTPUT" | grep -qiE 'target-role.*Stopped|Stopped.*disabled|disabled'; then
+        echo "HANA_RESOURCE_STATE=disabled"
+      elif echo "$OUTPUT" | grep -qiE 'Stopped|FAILED' && ! echo "$OUTPUT" | grep -qiE 'Started|Master|Slave|Promoted'; then
+        echo "HANA_RESOURCE_STATE=stopped"
+      elif echo "$OUTPUT" | grep -qiE 'Started|Master|Slave|Promoted|running'; then
+        echo "HANA_RESOURCE_STATE=running"
+      else
+        echo "HANA_RESOURCE_STATE=unknown"
+      fi
+    else
+      echo "HANA_RESOURCE_STATE=absent"
+    fi
   sos_path: "sos_commands/pacemaker/crm_mon_-1*"
   # Fallback: run pcs -f cib.xml locally when cluster was stopped
   sos_cmd: "pcs -f {file} status resources 2>/dev/null"
@@ -23,8 +53,17 @@ parser:
       regex: "(Stopped|FAILED|stopped)"
       group: 0
     - name: resource_started
-      regex: "(Started|Master|Slave|running)"
+      regex: "(Started|Master|Slave|Promoted|running)"
       group: 0
+    - name: resource_disabled
+      regex: "(target-role.*Stopped|Stopped.*disabled|disabled)"
+      group: 0
+    - name: resource_unmanaged
+      regex: "(unmanaged)"
+      group: 0
+    - name: hana_resource_state
+      regex: "HANA_RESOURCE_STATE=(\\w+)"
+      group: 1
 
 validation_logic:
   scope: cluster  # Resource status is cluster-wide
@@ -36,4 +75,10 @@ validation_logic:
     - key: resource_started
       operator: exists
       value: true
-      message: "SAP HANA resources are not running"
+      message: "SAP HANA resources are not running (resource may be stopped or disabled)"
+    - key: resource_disabled
+      operator: info_if_exists
+      pass_message: "HANA resource is disabled in Pacemaker (target-role=Stopped or is-managed=false)"
+    - key: resource_unmanaged
+      operator: info_if_exists
+      pass_message: "HANA resource is in unmanaged state"

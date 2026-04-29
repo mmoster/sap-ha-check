@@ -123,6 +123,16 @@ class RulesEngine:
         # Track data source information
         self._access_methods_used: Dict[str, str] = {}  # node -> method (ssh, sosreport, local, ansible)
         self._used_cib_xml: bool = False  # True if sos_cmd with cib.xml was used
+        # Track HANA resource state (running/stopped/disabled/unmanaged/absent/unknown)
+        self._hana_resource_state: str = 'unknown'
+
+    def set_hana_resource_state(self, state: str):
+        """Set the HANA resource state detected by CHK_RESOURCE_STATUS."""
+        self._hana_resource_state = state
+
+    def get_hana_resource_state(self) -> str:
+        """Get the detected HANA resource state."""
+        return self._hana_resource_state
 
     def get_data_source_info(self) -> Dict[str, Any]:
         """Get summary of data sources used for checks.
@@ -1046,6 +1056,26 @@ class RulesEngine:
         - cluster: Run only on one node (cluster-wide info)
         """
         results = []
+
+        # Check requires dependency - skip if required check did not pass
+        # NOTE: This only works when results are accumulated in self.results
+        # (i.e., via run_all_checks). The orchestrator handles gating separately
+        # for the parallel execution path via _run_rules_parallel.
+        if rule.requires:
+            required_passed = any(
+                r.check_id == rule.requires and r.status == CheckStatus.PASSED
+                for r in self.results
+            )
+            if not required_passed:
+                return [CheckResult(
+                    check_id=rule.check_id,
+                    description=rule.description,
+                    status=CheckStatus.SKIPPED,
+                    severity=Severity.WARNING,
+                    message=f"Skipped: required check {rule.requires} did not pass",
+                    node=None
+                )]
+
         scope = rule.validation_logic.get('scope', 'per_node')
         compare_keys = rule.validation_logic.get('compare_keys', [])
 

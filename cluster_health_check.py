@@ -137,6 +137,7 @@ class ClusterHealthCheck:
         self.verbose_pdf = verbose_pdf  # Show all checks in detail in PDF
         self.majority_makers = []  # Nodes that are majority makers (Scale-Out)
         self.last_pdf_file = None  # Track last generated PDF for auto-open
+        self._hana_resource_state = 'unknown'  # running/stopped/disabled/unmanaged/absent
 
     def _debug_print(self, message: str):
         """Print debug message if debug mode is enabled."""
@@ -418,6 +419,7 @@ class ClusterHealthCheck:
             access_method=data_source_info.get('primary_method', 'unknown'),
             used_cib_xml=data_source_info.get('used_cib_xml', False),
             cluster_running=cluster_running,
+            hana_resource_state=self._hana_resource_state,
 
             # Cluster info
             cluster_name=cluster_name,
@@ -1493,11 +1495,47 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                   and r.check_id in config_checks]
         return len([f for f in failed if f.severity == Severity.CRITICAL]) == 0
 
+    def _extract_hana_resource_state(self, results: list) -> str:
+        """Extract HANA resource state from CHK_RESOURCE_STATUS results.
+
+        Checks parsed 'hana_resource_state' first (live_cmd emits this),
+        then falls back to inferring from individual regex matches (SOSreport).
+        """
+        resource_status_result = next(
+            (r for r in results if r.check_id == 'CHK_RESOURCE_STATUS'), None
+        )
+        if not resource_status_result or not resource_status_result.details:
+            return 'unknown'
+
+        parsed = resource_status_result.details.get('parsed', {})
+
+        # Primary: use the explicit state summary (from live_cmd)
+        state = parsed.get('hana_resource_state')
+        if state and state != 'unknown':
+            return state
+
+        # Fallback: infer from individual regex matches (SOSreport data)
+        has_resource = parsed.get('sap_hana_resource') is not None
+        if not has_resource:
+            return 'absent'
+        if parsed.get('resource_unmanaged') is not None:
+            return 'unmanaged'
+        if parsed.get('resource_disabled') is not None:
+            return 'disabled'
+        if parsed.get('resource_started') is not None:
+            return 'running'
+        if parsed.get('resource_stopped') is not None:
+            return 'stopped'
+        return 'unknown'
+
     def step_pacemaker_check(self) -> bool:
         """
         Step 3: Check Pacemaker/Corosync status.
-        Runs: CHK_STONITH_CONFIG, CHK_RESOURCE_STATUS, CHK_RESOURCE_FAILURES,
-              CHK_ALERT_FENCING, CHK_MASTER_SLAVE_ROLES
+
+        Runs in two phases:
+        Phase 1: Resource-independent checks (STONITH, resource status, failures, etc.)
+        Phase 2: Resource-dependent checks (master/slave roles) - skipped if HANA
+                 resource is stopped/disabled/unmanaged.
         """
         print("\n" + "=" * 63)
         print(" STEP 3: Pacemaker/Corosync Check")
@@ -1506,28 +1544,66 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
         self._debug_print("Starting Pacemaker/Corosync checks...")
         self._load_rules_engine()
 
-        pacemaker_checks = ['CHK_STONITH_CONFIG', 'CHK_RESOURCE_STATUS', 'CHK_RESOURCE_FAILURES',
-                           'CHK_ALERT_FENCING', 'CHK_MASTER_SLAVE_ROLES', 'CHK_MAJORITY_MAKER']
-
-        rules_to_run = [r for r in self.rules_engine.rules if r.check_id in pacemaker_checks]
-
-        self._debug_print(f"Checks to run: {[r.check_id for r in rules_to_run]}")
-
-        if not rules_to_run:
-            print("[SKIP] No Pacemaker checks found")
-            return True
+        all_pacemaker_checks = ['CHK_STONITH_CONFIG', 'CHK_RESOURCE_STATUS', 'CHK_RESOURCE_FAILURES',
+                                'CHK_ALERT_FENCING', 'CHK_MASTER_SLAVE_ROLES', 'CHK_MAJORITY_MAKER']
 
         nodes = self.access_config.nodes if self.access_config else {}
         self._debug_print(f"Target nodes: {list(nodes.keys())}")
 
-        # Run rules in parallel with spinner
-        with Spinner(f"Running {len(rules_to_run)} Pacemaker/Corosync checks"):
-            results = self._run_rules_parallel(rules_to_run, nodes)
+        # Phase 1: Run resource-independent checks first
+        independent_checks = ['CHK_STONITH_CONFIG', 'CHK_RESOURCE_STATUS', 'CHK_RESOURCE_FAILURES',
+                              'CHK_ALERT_FENCING', 'CHK_MAJORITY_MAKER']
+        independent_rules = [r for r in self.rules_engine.rules if r.check_id in independent_checks]
+
+        self._debug_print(f"Phase 1 checks: {[r.check_id for r in independent_rules]}")
+
+        if not independent_rules:
+            print("[SKIP] No Pacemaker checks found")
+            return True
+
+        with Spinner(f"Running {len(independent_rules)} Pacemaker/Corosync checks"):
+            results = self._run_rules_parallel(independent_rules, nodes)
         self.check_results.extend(results)
-        print(f"  Completed {len(rules_to_run)} Pacemaker/Corosync checks")
+
+        # Extract HANA resource state from CHK_RESOURCE_STATUS
+        self._hana_resource_state = self._extract_hana_resource_state(results)
+        self._debug_print(f"HANA resource state: {self._hana_resource_state}")
+        if self.rules_engine:
+            self.rules_engine.set_hana_resource_state(self._hana_resource_state)
+
+        # Phase 2: Resource-dependent checks
+        resource_dependent_checks = ['CHK_MASTER_SLAVE_ROLES']
+
+        if self._hana_resource_state == 'running':
+            dependent_rules = [r for r in self.rules_engine.rules
+                               if r.check_id in resource_dependent_checks]
+            if dependent_rules:
+                self._debug_print(f"Phase 2 checks: {[r.check_id for r in dependent_rules]}")
+                with Spinner("Running resource-dependent checks"):
+                    dep_results = self._run_rules_parallel(dependent_rules, nodes)
+                self.check_results.extend(dep_results)
+                results.extend(dep_results)
+        else:
+            # Skip resource-dependent checks with WARNING
+            for check_id in resource_dependent_checks:
+                rule = next((r for r in self.rules_engine.rules if r.check_id == check_id), None)
+                if rule:
+                    skip_msg = f"Skipped: HANA resource is {self._hana_resource_state} (not managed by Pacemaker)"
+                    self.check_results.append(CheckResult(
+                        check_id=check_id,
+                        description=rule.description,
+                        status=CheckStatus.SKIPPED,
+                        severity=Severity.WARNING,
+                        message=skip_msg,
+                        node="all"
+                    ))
+            print(f"  [WARN] HANA resource is {self._hana_resource_state}"
+                  " - skipping master/slave role check")
+
+        print(f"  Completed Pacemaker/Corosync checks")
 
         failed = [r for r in self.check_results if r.status == CheckStatus.FAILED
-                  and r.check_id in pacemaker_checks]
+                  and r.check_id in all_pacemaker_checks]
         return len([f for f in failed if f.severity == Severity.CRITICAL]) == 0
 
     def step_sap_check(self) -> bool:
@@ -1619,19 +1695,51 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                 return True
 
         # HANA is installed on some nodes, run SAP checks only on those nodes
-        sap_checks = ['CHK_HANA_SR_STATUS', 'CHK_REPLICATION_MODE', 'CHK_HADR_HOOKS',
-                     'CHK_HANA_AUTOSTART', 'CHK_SYSTEMD_SAP', 'CHK_SITE_ROLES']
+        # Filter nodes to only those with HANA installed
+        hana_nodes = {k: v for k, v in nodes.items() if k in nodes_with_hana} if nodes_with_hana else nodes
 
-        rules_to_run = [r for r in self.rules_engine.rules if r.check_id in sap_checks]
+        hana_resource_active = self._hana_resource_state == 'running'
+
+        # Split SAP checks based on resource state
+        # Resource-dependent: require HANA resource active in Pacemaker
+        resource_dependent_sap = ['CHK_HANA_SR_STATUS', 'CHK_SITE_ROLES']
+        # Resource-independent: can run even if HANA resource is stopped/disabled
+        resource_independent_sap = ['CHK_REPLICATION_MODE', 'CHK_HADR_HOOKS',
+                                    'CHK_HANA_AUTOSTART', 'CHK_SYSTEMD_SAP']
+
+        if hana_resource_active:
+            # Normal path: run all SAP checks
+            sap_checks = resource_dependent_sap + resource_independent_sap
+            rules_to_run = [r for r in self.rules_engine.rules if r.check_id in sap_checks]
+        else:
+            # Resource stopped/disabled: skip dependent checks, run independent ones
+            print(f"  [WARN] HANA resource is {self._hana_resource_state}"
+                  " - skipping Pacemaker-dependent SAP checks")
+
+            # Skip resource-dependent checks with WARNING
+            for check_id in resource_dependent_sap:
+                rule = next((r for r in self.rules_engine.rules if r.check_id == check_id), None)
+                if rule:
+                    self.check_results.append(CheckResult(
+                        check_id=check_id,
+                        description=rule.description,
+                        status=CheckStatus.SKIPPED,
+                        severity=Severity.WARNING,
+                        message=f"Skipped: HANA resource is {self._hana_resource_state} in Pacemaker",
+                        node="all"
+                    ))
+
+            # Maintenance-aware: try to gather replication info directly from HANA
+            self._gather_maintenance_replication_info(install_results, hana_nodes)
+
+            sap_checks = resource_independent_sap
+            rules_to_run = [r for r in self.rules_engine.rules if r.check_id in sap_checks]
 
         self._debug_print(f"Checks to run: {[r.check_id for r in rules_to_run]}")
 
         if not rules_to_run:
-            print("[SKIP] No SAP checks found")
+            print("[SKIP] No SAP checks to run")
             return True
-
-        # Filter nodes to only those with HANA installed
-        hana_nodes = {k: v for k, v in nodes.items() if k in nodes_with_hana} if nodes_with_hana else nodes
 
         # Run rules in parallel only on nodes with HANA
         with Spinner(f"Running {len(rules_to_run)} SAP-specific checks on {len(hana_nodes)} node(s)"):
@@ -1639,9 +1747,86 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
         self.check_results.extend(results)
         print(f"  Completed {len(rules_to_run)} SAP-specific checks")
 
+        all_sap_checks = resource_dependent_sap + resource_independent_sap
         failed = [r for r in self.check_results if r.status == CheckStatus.FAILED
-                  and r.check_id in sap_checks]
+                  and r.check_id in all_sap_checks]
         return len([f for f in failed if f.severity == Severity.CRITICAL]) == 0
+
+    def _gather_maintenance_replication_info(self, install_results: list,
+                                              hana_nodes: dict):
+        """
+        In maintenance scenarios (HANA resource stopped/disabled but DB running),
+        gather replication info directly from HANA via hdbnsutil.
+
+        This provides useful replication status even when Pacemaker is not
+        managing the resource, but clearly notes that HANA is NOT managed.
+        """
+        # Find nodes where HANA is actually running
+        hana_running_nodes = []
+        for result in install_results:
+            if result.status == CheckStatus.PASSED and result.details:
+                parsed = result.details.get('parsed', {})
+                if parsed.get('hana_running') == 'yes' and parsed.get('sidadm'):
+                    hana_running_nodes.append({
+                        'node': result.node,
+                        'sidadm': parsed['sidadm']
+                    })
+
+        if not hana_running_nodes:
+            self._debug_print("HANA database not running on any node - no direct replication query")
+            return
+
+        print(f"  [INFO] HANA database running on {len(hana_running_nodes)} node(s)"
+              f" despite resource being {self._hana_resource_state}")
+        print("  [INFO] Gathering replication info directly from HANA (not via Pacemaker)")
+
+        # Try to get replication status from first running HANA node
+        node_info = hana_running_nodes[0]
+        sidadm = node_info['sidadm']
+        node_name = node_info['node']
+
+        # Validate sidadm to prevent command injection
+        if not re.match(r'^[a-z0-9]+adm$', sidadm):
+            self._debug_print(f"Invalid sidadm user: {sidadm}")
+            return
+
+        node_access = hana_nodes.get(node_name, {})
+        method = node_access.get('preferred_method', 'ssh')
+        user = node_access.get('ssh_user')
+
+        sr_cmd = f"su - {sidadm} -c 'hdbnsutil -sr_state' 2>/dev/null"
+        self._debug_print(f"Running: {sr_cmd} on {node_name}")
+
+        success, output = self.rules_engine._execute_command_raw(sr_cmd, node_name, method, user)
+
+        if success and output and output.strip():
+            self.check_results.append(CheckResult(
+                check_id='CHK_HANA_SR_STATUS',
+                description='HANA System Replication status (direct query - resource not managed)',
+                status=CheckStatus.PASSED,
+                severity=Severity.WARNING,
+                message=(f"Replication info gathered directly from HANA (NOT via Pacemaker). "
+                         f"HANA resource is {self._hana_resource_state}."),
+                details={
+                    'maintenance_mode': True,
+                    'hana_resource_state': self._hana_resource_state,
+                    'sr_state_output': output[:1000],
+                    'source': 'hdbnsutil -sr_state',
+                    'note': 'HANA is NOT managed by Pacemaker in this state'
+                },
+                node=node_name
+            ))
+            # Remove the SKIPPED result we added earlier for CHK_HANA_SR_STATUS
+            # (only the one from resource gating, not from other skip reasons)
+            self.check_results = [
+                r for r in self.check_results
+                if not (r.check_id == 'CHK_HANA_SR_STATUS'
+                        and r.status == CheckStatus.SKIPPED
+                        and 'HANA resource is' in (r.message or ''))
+            ]
+            print(f"  [OK] Replication status retrieved from {node_name} (via hdbnsutil)")
+        else:
+            self._debug_print(f"hdbnsutil query failed or returned empty output on {node_name}")
 
     def step_generate_report(self) -> bool:
         """
