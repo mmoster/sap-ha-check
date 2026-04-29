@@ -4,6 +4,7 @@ PDF Report Generator for SAP HANA Cluster Health Check
 Following Red Hat Documentation Style Guidelines
 """
 
+import re
 from datetime import datetime
 from typing import Dict, List
 
@@ -264,6 +265,28 @@ class HealthCheckPDF(FPDF):
         self.ln(5)
 
 
+def _strip_pkg_prefix(version_str, pkg_key):
+    """Strip the package name prefix from an RPM version string.
+
+    RPM versions follow the pattern 'name-version-release.dist'.
+    Since the package name is shown in the row label, we only need
+    the version-release part in the table cells.
+
+    Examples:
+        corosync-3.1.5-2.el8        -> 3.1.5-2.el8
+        pacemaker-2.1.5-9.el8_9.3   -> 2.1.5-9.el8_9.3
+        sap-hana-ha-1.0.2-3.el9     -> 1.0.2-3.el9
+        not installed                -> not installed
+    """
+    if not version_str or version_str in ('not installed', 'N/A'):
+        return version_str
+    # Match: everything up to the first hyphen followed by a digit
+    m = re.match(r'^[a-zA-Z][a-zA-Z0-9_-]*?-(\d.*)$', version_str)
+    if m:
+        return m.group(1)
+    return version_str
+
+
 def _render_version_table(pdf, check):
     """Render a version comparison table for CHK_PACKAGE_CONSISTENCY results.
 
@@ -294,19 +317,21 @@ def _render_version_table(pdf, check):
         'corosync_version': 'corosync',
         'sap_hana_ha_version': 'sap-hana-ha',
         'resource_agents_sap_hana': 'resource-agents-sap-hana',
-        'resource_agents_sap_hana_scaleout': 'resource-agents-sap-hana-scaleout',
+        'resource_agents_sap_hana_scaleout': 'res-agents-sap-hana-scaleout',
         'saphanasr_version': 'SAPHanaSR',
     }
 
-    # Calculate column widths
-    # Package column + one column per node, fitting in 190mm page width
-    pkg_col_width = 62
-    remaining = 190 - pkg_col_width
-    node_col_width = min(remaining / len(all_nodes), 64)
+    # Adapt layout for node count
+    num_nodes = len(all_nodes)
+    pkg_col_width = 52
+    remaining = 186 - pkg_col_width  # 186 = usable width (14mm left margin)
+    node_col_width = remaining / num_nodes
+    # Use smaller font when many nodes make columns tight
+    version_font_size = 7 if node_col_width >= 28 else 6
 
     # Check if we need a page break (estimate table height)
     row_height = 5
-    table_height = (len(version_table) + 1) * row_height + 8  # header + rows + padding
+    table_height = (len(version_table) + 1) * row_height + 8
     if pdf.get_y() + table_height > 270:
         pdf.add_page()
 
@@ -319,13 +344,11 @@ def _render_version_table(pdf, check):
     pdf.set_text_color(*RedHatColors.BLACK)
     pdf.cell(pkg_col_width, row_height, "Package", border=1, fill=True)
     for node in all_nodes:
-        # Truncate long node names
-        display_node = node[:15] if len(node) > 15 else node
+        display_node = node[:12] if len(node) > 12 else node
         pdf.cell(node_col_width, row_height, display_node, border=1, fill=True, align='C')
     pdf.ln()
 
-    # Table rows
-    pdf.set_font('Courier', '', 7)
+    # Table rows — show version-release only (strip package name prefix)
     for pkg_key, node_versions in version_table.items():
         pdf.set_x(14)
         display_name = pkg_display_names.get(pkg_key, pkg_key)
@@ -337,19 +360,18 @@ def _render_version_table(pdf, check):
         values = list(node_versions.values())
         has_diff = len(set(str(v) for v in values)) > 1
 
-        pdf.set_font('Courier', '', 7)
+        ref_value = node_versions.get(all_nodes[0], 'N/A')
+        pdf.set_font('Courier', '', version_font_size)
         for node in all_nodes:
             version = node_versions.get(node, 'N/A')
             version_str = str(version) if version else 'not installed'
-            # Highlight cells that differ from the first node's value
-            ref_value = node_versions.get(all_nodes[0], 'N/A')
+            # Strip package name prefix — row label already shows it
+            version_str = _strip_pkg_prefix(version_str, pkg_key)
+            # Highlight cells that differ from the reference node
             if has_diff and str(version) != str(ref_value):
                 pdf.set_text_color(*RedHatColors.RED)
             else:
                 pdf.set_text_color(*RedHatColors.BLACK)
-            # Truncate long version strings
-            if len(version_str) > 20:
-                version_str = version_str[:20]
             pdf.cell(node_col_width, row_height, version_str, border=1, align='C')
         pdf.ln()
 
