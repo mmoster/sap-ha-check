@@ -1233,7 +1233,20 @@ def generate_health_check_report(
         pdf.sub_section(f"Skipped Checks ({len(skipped_checks)})")
         pdf.set_font('Helvetica', 'I', 9)
         pdf.set_text_color(*RedHatColors.GRAY)
-        pdf.body_text(f"Skipped {len(skipped_checks)} checks (SAP HANA not installed or not applicable)")
+        # Group skip reasons for a meaningful summary
+        skip_reasons = set()
+        for c in skipped_checks:
+            msg = c.get('message', '')
+            if 'not installed' in msg.lower() or 'not applicable' in msg.lower():
+                skip_reasons.add('SAP HANA not installed')
+            elif 'majority maker' in msg.lower():
+                skip_reasons.add('not applicable (Majority Maker)')
+            elif 'scale-out' in msg.lower() or 'scale-up' in msg.lower():
+                skip_reasons.add('not applicable (cluster type)')
+            else:
+                skip_reasons.add('not applicable')
+        reason_text = ', '.join(sorted(skip_reasons)) if skip_reasons else 'not applicable'
+        pdf.body_text(f"Skipped {len(skipped_checks)} checks ({reason_text})")
 
     # =========================================================================
     # RECOMMENDATIONS

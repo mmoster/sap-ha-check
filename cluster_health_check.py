@@ -1452,6 +1452,10 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                 except Exception as e:
                     self._debug_print(f"Error in {check_id}: {e}")
 
+        # Sync results to the engine so requires/context lookups work
+        # (e.g., _get_hadr_sid, _get_rhel_major, requires gate)
+        self.rules_engine.results.extend(all_results)
+
         return all_results
 
     def _filter_rules_by_prefix(self, prefixes: list) -> list:
