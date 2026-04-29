@@ -2389,16 +2389,31 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
 
             else:
                 # All checks passed - show healthy banner
+                resources_not_managed = self._hana_resource_state in (
+                    'stopped', 'disabled', 'unmanaged')
                 print()
                 print("=" * 63)
-                print("  ╔═══════════════════════════════════════════════════════╗")
-                print("  ║                                                       ║")
-                print("  ║            ✓  CLUSTER IS HEALTHY  ✓                   ║")
-                print("  ║                                                       ║")
-                print("  ║     All health checks passed successfully.            ║")
-                print("  ║     Your SAP HANA cluster is properly configured.     ║")
-                print("  ║                                                       ║")
-                print("  ╚═══════════════════════════════════════════════════════╝")
+                if resources_not_managed:
+                    print("  ╔═══════════════════════════════════════════════════════╗")
+                    print("  ║                                                       ║")
+                    print("  ║         ⚠  CLUSTER CHECKS PASSED  ⚠                  ║")
+                    print("  ║                                                       ║")
+                    print("  ║     All runnable checks passed, but HANA resource     ║")
+                    state_msg = f"is {self._hana_resource_state}"
+                    print(f"  ║     {state_msg:<42}       ║")
+                    print("  ║     and NOT managed by Pacemaker.                     ║")
+                    print("  ║     Some checks were skipped.                         ║")
+                    print("  ║                                                       ║")
+                    print("  ╚═══════════════════════════════════════════════════════╝")
+                else:
+                    print("  ╔═══════════════════════════════════════════════════════╗")
+                    print("  ║                                                       ║")
+                    print("  ║            ✓  CLUSTER IS HEALTHY  ✓                   ║")
+                    print("  ║                                                       ║")
+                    print("  ║     All health checks passed successfully.            ║")
+                    print("  ║     Your SAP HANA cluster is properly configured.     ║")
+                    print("  ║                                                       ║")
+                    print("  ╚═══════════════════════════════════════════════════════╝")
                 print("=" * 63)
 
                 # Auto-generate PDF report on success (fpdf2 availability checked at startup)

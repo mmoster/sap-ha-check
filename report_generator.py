@@ -452,6 +452,9 @@ def generate_health_check_report(
             missing_steps.append("cluster")
 
     # Determine overall status considering both checks and installation
+    hana_resource_state = cluster_info.get('hana_resource_state')
+    resources_not_managed = hana_resource_state in ('stopped', 'disabled', 'unmanaged')
+
     status_descriptions = {
         "CRITICAL - INCOMPLETE": "Critical issues found and installation incomplete",
         "FAILED - INCOMPLETE": "Failed checks and installation incomplete",
@@ -472,6 +475,11 @@ def generate_health_check_report(
         overall_status = "NEEDS ATTENTION"
     elif not install_complete:
         overall_status = "INCOMPLETE"
+    elif resources_not_managed:
+        overall_status = "WARNING"
+        status_descriptions["WARNING"] = (
+            f"HANA resource is {hana_resource_state} - not managed by Pacemaker"
+        )
     elif warnings > 0:
         overall_status = "WARNING"
     else:
