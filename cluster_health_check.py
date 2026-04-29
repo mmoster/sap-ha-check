@@ -3319,12 +3319,41 @@ Examples:
     generate_pdf = not args.no_pdf
     verbose_pdf = args.verbose  # Show all checks in detail in PDF
 
-    # Check upfront if fpdf2 is available - inform user and disable PDF generation if not
+    # Check upfront if PDF dependencies are available - inform user of missing packages
     if generate_pdf:
         from report_generator import is_pdf_available
         if not is_pdf_available():
-            print("  [INFO] PDF reports will not be created (fpdf2 not installed)")
-            print("         To enable: pip install fpdf2")
+            # Check which PDF-related packages are missing
+            pdf_packages = {
+                'fpdf2': 'fpdf',       # PDF generation library (import name differs)
+            }
+            recommended_packages = {
+                'PyYAML': 'yaml',      # YAML report serialization
+                'paramiko': 'paramiko',  # SSH access to cluster nodes
+            }
+            missing_required = []
+            missing_recommended = []
+            for pkg_name, import_name in pdf_packages.items():
+                try:
+                    __import__(import_name)
+                except ImportError:
+                    missing_required.append(pkg_name)
+            for pkg_name, import_name in recommended_packages.items():
+                try:
+                    __import__(import_name)
+                except ImportError:
+                    missing_recommended.append(pkg_name)
+
+            print("\n  [INFO] PDF report cannot be created - missing packages")
+            print("  " + "-" * 50)
+            if missing_required:
+                print(f"    Required (for PDF):   {', '.join(missing_required)}")
+            if missing_recommended:
+                print(f"    Recommended:          {', '.join(missing_recommended)}")
+            install_all = missing_required + missing_recommended
+            if install_all:
+                print(f"\n    Install with: pip install {' '.join(install_all)}")
+            print("  " + "-" * 50)
             generate_pdf = False
 
     health_check = ClusterHealthCheck(
