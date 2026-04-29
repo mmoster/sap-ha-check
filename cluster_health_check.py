@@ -1903,8 +1903,9 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
 
         Tries in order:
         1. hdbnsutil -sr_stateConfiguration (works even when DB is down, requires sidadm)
-        2. SAPHanaSR-stateConfiguration (reads CIB attributes, may not exist on legacy packages)
-        3. SAPHanaSR-showAttr (fallback, reads CIB cached attributes)
+        2. SAPHanaSR-stateConfiguration (ANGI/sap-hana-ha packages only, not on legacy Scale-Up)
+        3. SAPHanaSR-showAttr (ANGI/sap-hana-ha packages only, not on legacy Scale-Up)
+        4. crm_mon -A1 (works on all setups including legacy resource-agents-sap-hana)
         """
         # Try on any accessible node
         for node_name, node_access in hana_nodes.items():
@@ -1927,9 +1928,9 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                     print(f"  [OK] SR configuration retrieved via hdbnsutil on {node_name}")
                     return
 
-            # 2. Try SAPHanaSR-stateConfiguration (may not exist on legacy packages)
+            # 2. Try SAPHanaSR-stateConfiguration (ANGI packages only)
             sr_cmd = "SAPHanaSR-stateConfiguration 2>/dev/null"
-            self._debug_print(f"Fallback: {sr_cmd} on {node_name}")
+            self._debug_print(f"Trying: {sr_cmd} on {node_name}")
 
             success, output = self.rules_engine._execute_command_raw(
                 sr_cmd, node_name, method, user)
@@ -1940,9 +1941,9 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                 print(f"  [OK] SR configuration retrieved from CIB via {node_name}")
                 return
 
-            # 3. Fallback: try SAPHanaSR-showAttr (reads CIB cached attributes)
+            # 3. Try SAPHanaSR-showAttr (ANGI packages only)
             sr_cmd = "SAPHanaSR-showAttr 2>/dev/null"
-            self._debug_print(f"Fallback: {sr_cmd} on {node_name}")
+            self._debug_print(f"Trying: {sr_cmd} on {node_name}")
 
             success, output = self.rules_engine._execute_command_raw(
                 sr_cmd, node_name, method, user)
@@ -1951,6 +1952,20 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                 self._hana_db_status['sr_source'] = 'SAPHanaSR-showAttr (CIB attributes)'
                 self._hana_db_status['sr_info'] = output.strip()
                 print(f"  [OK] SR attributes retrieved from CIB via {node_name}")
+                return
+
+            # 4. Fallback for legacy Scale-Up (resource-agents-sap-hana):
+            #    crm_mon -A1 shows node attributes including SR state from CIB
+            sr_cmd = "crm_mon -A1 2>/dev/null | grep -iE 'hana|srmode|sync|site|sra|srah|lss|srr'"
+            self._debug_print(f"Legacy fallback: crm_mon -A1 on {node_name}")
+
+            success, output = self.rules_engine._execute_command_raw(
+                sr_cmd, node_name, method, user)
+
+            if success and output and output.strip():
+                self._hana_db_status['sr_source'] = 'crm_mon -A1 (CIB node attributes)'
+                self._hana_db_status['sr_info'] = output.strip()
+                print(f"  [OK] SR attributes retrieved from CIB node attributes via {node_name}")
                 return
 
         self._debug_print("Could not retrieve SR configuration from any node")
