@@ -1098,7 +1098,7 @@ def generate_health_check_report(
 
     # Group results by status
     passed_checks = [r for r in results if r.get('status') == 'PASSED']
-    failed_checks = [r for r in results if r.get('status') == 'FAILED']
+    failed_checks = [r for r in results if r.get('status') == 'FAILED' and r.get('severity') != 'WARNING']
     warning_checks = [r for r in results if r.get('severity') == 'WARNING' and r.get('status') == 'FAILED']
     error_checks = [r for r in results if r.get('status') == 'ERROR']
     skipped_checks = [r for r in results if r.get('status') == 'SKIPPED']
