@@ -158,9 +158,11 @@ class TestExpectedConfigLegacy:
         crm = next(e for e in cfg.sudoers_entries if 'crm_attribute' in e.description)
         assert 'hana_s4d_*' in crm.example_line
 
-    def test_legacy_sudoers_no_requiretty(self):
+    def test_legacy_sudoers_requiretty(self):
         cfg = get_expected_config(8, Topology.SCALE_UP, ArchType.LEGACY, 'S4D')
-        assert not any('requiretty' in e.description for e in cfg.sudoers_entries)
+        requiretty = [e for e in cfg.sudoers_entries if 'requiretty' in e.description]
+        assert len(requiretty) == 1
+        assert 'Defaults' in requiretty[0].example_line
 
     def test_legacy_provider_files(self):
         cfg = get_expected_config(8, Topology.SCALE_UP, ArchType.LEGACY, 'S4D')

@@ -53,17 +53,26 @@ def _angi_sudoers(sid: str) -> List[SudoersEntry]:
     sid_lower = sid.lower()
     return [
         SudoersEntry(
-            line_pattern=rf'Defaults:{sid_lower}adm\s+!requiretty',
+            # Match both styles:
+            #   Defaults:rh1adm !requiretty          (direct user style)
+            #   Defaults!ALIAS1, ALIAS2 !requiretty  (Cmnd_Alias style)
+            line_pattern=rf'Defaults[:!].*!requiretty',
             description='Disable requiretty for sidadm',
             example_line=f'Defaults:{sid_lower}adm !requiretty',
         ),
         SudoersEntry(
-            line_pattern=rf'{sid_lower}adm\s+ALL=\(ALL\)\s+NOPASSWD:\s+/usr/sbin/crm_attribute\s+-n\s+hana_\*',
-            description='Allow crm_attribute for all hana_* attributes',
+            # Match both styles:
+            #   rh1adm ALL=(ALL) NOPASSWD: /usr/sbin/crm_attribute -n hana_*
+            #   rh1adm ALL=(ALL) NOPASSWD: ..., /usr/sbin/crm_attribute -n hana_rh1_*
+            line_pattern=rf'{sid_lower}adm\s+ALL=\(ALL\)\s+NOPASSWD:.*(/usr/sbin/crm_attribute\s+-n\s+hana_|Cmnd_Alias.*crm_attribute.*hana_)',
+            description='Allow crm_attribute for hana_* attributes',
             example_line=f'{sid_lower}adm ALL=(ALL) NOPASSWD: /usr/sbin/crm_attribute -n hana_*',
         ),
         SudoersEntry(
-            line_pattern=rf'{sid_lower}adm\s+ALL=\(ALL\)\s+NOPASSWD:\s+/usr/bin/SAPHanaSR-hookHelper',
+            # Match both styles:
+            #   rh1adm ALL=(ALL) NOPASSWD: /usr/bin/SAPHanaSR-hookHelper
+            #   Cmnd_Alias FENCE = /usr/bin/SAPHanaSR-hookHelper --sid=RH1 --case=*
+            line_pattern=rf'({sid_lower}adm\s+ALL=\(ALL\)\s+NOPASSWD:.*SAPHanaSR-hookHelper|Cmnd_Alias\s+\w+\s*=\s*/usr/bin/SAPHanaSR-hookHelper)',
             description='Allow SAPHanaSR-hookHelper (required when action_on_lost=fence)',
             example_line=f'{sid_lower}adm ALL=(ALL) NOPASSWD: /usr/bin/SAPHanaSR-hookHelper',
             is_optional=True,
@@ -109,14 +118,29 @@ def _legacy_sudoers(sid: str) -> List[SudoersEntry]:
     sid_lower = sid.lower()
     return [
         SudoersEntry(
-            line_pattern=rf'{sid_lower}adm\s+ALL=\(ALL\)\s+NOPASSWD:\s+/usr/sbin/crm_attribute\s+-n\s+hana_{sid_lower}_\*',
+            # Match both styles:
+            #   Defaults:rh1adm !requiretty          (direct user style)
+            #   Defaults!ALIAS1, ALIAS2 !requiretty  (Cmnd_Alias style)
+            line_pattern=rf'Defaults[:!].*!requiretty',
+            description='Disable requiretty for sidadm',
+            example_line=f'Defaults:{sid_lower}adm !requiretty',
+        ),
+        SudoersEntry(
+            # Match both styles:
+            #   rh1adm ALL=(ALL) NOPASSWD: /usr/sbin/crm_attribute -n hana_rh1_*
+            #   rh1adm ALL=(ALL) NOPASSWD: ..., /usr/sbin/crm_attribute -n hana_rh1_*
+            line_pattern=rf'{sid_lower}adm\s+ALL=\(ALL\)\s+NOPASSWD:.*(/usr/sbin/crm_attribute\s+-n\s+hana_|Cmnd_Alias.*crm_attribute.*hana_)',
             description=f'Allow crm_attribute for hana_{sid_lower}_* attributes',
             example_line=f'{sid_lower}adm ALL=(ALL) NOPASSWD: /usr/sbin/crm_attribute -n hana_{sid_lower}_*',
         ),
         SudoersEntry(
-            line_pattern=rf'{sid_lower}adm\s+ALL=\(ALL\)\s+NOPASSWD:\s+/usr/sbin/SAPHanaSR-hookHelper',
+            # Match both styles:
+            #   rh1adm ALL=(ALL) NOPASSWD: /usr/sbin/SAPHanaSR-hookHelper
+            #   Cmnd_Alias FENCE = /usr/sbin/SAPHanaSR-hookHelper --sid=RH1 --case=*
+            line_pattern=rf'({sid_lower}adm\s+ALL=\(ALL\)\s+NOPASSWD:.*SAPHanaSR-hookHelper|Cmnd_Alias\s+\w+\s*=\s*/usr/sbin/SAPHanaSR-hookHelper)',
             description='Allow SAPHanaSR-hookHelper',
             example_line=f'{sid_lower}adm ALL=(ALL) NOPASSWD: /usr/sbin/SAPHanaSR-hookHelper *',
+            is_optional=True,
         ),
     ]
 
