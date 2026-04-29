@@ -381,6 +381,7 @@ def generate_health_check_report(
     info_data = {
         "Cluster Name": cluster_name,
         "Nodes": ", ".join(nodes) if nodes else "N/A",
+        "RHEL Version": cluster_info.get('rhel_version', 'N/A'),
         "Data Source": data_source,
         "Report Date": datetime.now().strftime("%d %B %Y, %H:%M"),
         "Total Checks": str(total),
@@ -507,7 +508,6 @@ def generate_health_check_report(
     pdf.info_table({
         "Cluster Type": cluster_info.get('cluster_type', 'Scale-Up'),
         "Node Count": str(len(nodes)),
-        "RHEL Version": cluster_info.get('rhel_version', 'N/A'),
         "Pacemaker": cluster_info.get('pacemaker_version', 'N/A'),
     })
 
