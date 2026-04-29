@@ -1901,19 +1901,35 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
         """
         Query last known SR configuration when HANA database is NOT running.
 
-        Uses SAPHanaSR-stateConfiguration which reads cluster attributes from the CIB
-        to show the last known replication configuration.
+        Tries in order:
+        1. hdbnsutil -sr_stateConfiguration (works even when DB is down, requires sidadm)
+        2. SAPHanaSR-stateConfiguration (reads CIB attributes, may not exist on legacy packages)
+        3. SAPHanaSR-showAttr (fallback, reads CIB cached attributes)
         """
-        # Try on any accessible node (cluster-wide command)
+        # Try on any accessible node
         for node_name, node_access in hana_nodes.items():
             method = node_access.get('preferred_method', 'ssh')
             if not method:
                 continue
             user = node_access.get('ssh_user')
 
-            # Try SAPHanaSR-stateConfiguration first (reads CIB attributes)
+            # 1. Try hdbnsutil -sr_stateConfiguration via sidadm (primary method)
+            if sidadm and re.match(r'^[a-z0-9]+adm$', sidadm):
+                sr_cmd = f"su - {sidadm} -c 'hdbnsutil -sr_stateConfiguration' 2>/dev/null"
+                self._debug_print(f"Running: {sr_cmd} on {node_name}")
+
+                success, output = self.rules_engine._execute_command_raw(
+                    sr_cmd, node_name, method, user)
+
+                if success and output and output.strip() and 'not found' not in output.lower():
+                    self._hana_db_status['sr_source'] = 'hdbnsutil -sr_stateConfiguration'
+                    self._hana_db_status['sr_info'] = output.strip()
+                    print(f"  [OK] SR configuration retrieved via hdbnsutil on {node_name}")
+                    return
+
+            # 2. Try SAPHanaSR-stateConfiguration (may not exist on legacy packages)
             sr_cmd = "SAPHanaSR-stateConfiguration 2>/dev/null"
-            self._debug_print(f"Running: {sr_cmd} on {node_name}")
+            self._debug_print(f"Fallback: {sr_cmd} on {node_name}")
 
             success, output = self.rules_engine._execute_command_raw(
                 sr_cmd, node_name, method, user)
@@ -1924,7 +1940,7 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                 print(f"  [OK] SR configuration retrieved from CIB via {node_name}")
                 return
 
-            # Fallback: try SAPHanaSR-showAttr (may work if CIB has cached attributes)
+            # 3. Fallback: try SAPHanaSR-showAttr (reads CIB cached attributes)
             sr_cmd = "SAPHanaSR-showAttr 2>/dev/null"
             self._debug_print(f"Fallback: {sr_cmd} on {node_name}")
 
