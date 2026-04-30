@@ -169,6 +169,7 @@ class ClusterHealthCheck:
         self._hana_installed = False  # Whether HANA is installed on any node
         self._hana_db_status = {}  # HANA DB status and replication info
         self._detected_topology = None  # 'Scale-Up' or 'Scale-Out'
+        self._detected_arch_type = None  # 'legacy' or 'angi' (from detect_arch_type)
         self._install_results = []  # CHK_HANA_INSTALLED results (for _gather_hana_db_status)
         self._hana_nodes = {}  # Nodes where HANA is installed (filtered node dict)
 
@@ -186,6 +187,9 @@ class ClusterHealthCheck:
                                      lambda: self._hana_resource_state == 'running')
         self._gate_registry.register('hana_installed',
                                      lambda: self._hana_installed)
+        self._gate_registry.register('not_legacy_scaleup',
+                                     lambda: not (self._detected_arch_type == 'legacy'
+                                                  and self._detected_topology == 'Scale-Up'))
 
     def _debug_print(self, message: str):
         """Print debug message if debug mode is enabled."""
@@ -1652,6 +1656,8 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
             return f"Skipped: HANA resource is {self._hana_resource_state} (not managed by Pacemaker)"
         elif gate_name == 'hana_installed':
             return "SAP HANA not installed"
+        elif gate_name == 'not_legacy_scaleup':
+            return "Skipped: not applicable for legacy scale-up (resource-agents-sap-hana)"
         return f"Skipped: gate '{gate_name}' is closed"
 
     def _post_phase_hook(self, step_name: str, phase: int, results: list, nodes: dict):
@@ -1679,6 +1685,24 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                 if self.rules_engine:
                     self.rules_engine.set_detected_topology(topology)
                 self._debug_print(f"Detected topology: {topology}")
+
+        # Extract architecture type from CHK_PACKAGE_CONSISTENCY result
+        pkg_result = next(
+            (r for r in results if r.check_id == 'CHK_PACKAGE_CONSISTENCY'), None
+        )
+        if pkg_result and pkg_result.details:
+            parsed = pkg_result.details.get('parsed', {})
+            packages = []
+            for key in ('sap_hana_ha_version', 'resource_agents_sap_hana',
+                        'resource_agents_sap_hana_scaleout'):
+                val = parsed.get(key)
+                if val:
+                    packages.append(val)
+            from hadr_provider.config_matrix import detect_arch_type
+            arch = detect_arch_type(packages)
+            if arch is not None:
+                self._detected_arch_type = arch.value  # 'legacy' or 'angi'
+                self._debug_print(f"Detected architecture: {self._detected_arch_type}")
 
         # Retroactive topology filtering: downgrade results for checks that
         # don't match the detected topology (they ran in the same phase because

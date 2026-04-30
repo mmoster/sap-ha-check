@@ -79,6 +79,7 @@ steps:
             gate: hana_resource_running
           - check_id: CHK_REPLICATION_MODE
           - check_id: CHK_HADR_HOOKS
+            gate: not_legacy_scaleup
           - check_id: CHK_HANA_AUTOSTART
           - check_id: CHK_SYSTEMD_SAP
           - check_id: CHK_SITE_ROLES
