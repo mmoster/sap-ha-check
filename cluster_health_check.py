@@ -37,7 +37,7 @@ sys.path.insert(0, str(SCRIPT_DIR / "access"))
 sys.path.insert(0, str(SCRIPT_DIR / "rules"))
 
 from discover_access import AccessDiscovery, show_config, delete_config, export_ansible_vars, fetch_sosreports, create_and_fetch_sosreports  # noqa: E402
-from engine import RulesEngine, CheckResult, CheckStatus, Severity  # noqa: E402
+from engine import RulesEngine, CheckResult, CheckStatus, Severity, CheckDispatch  # noqa: E402
 
 # Import lib modules
 from lib import (  # noqa: E402
@@ -108,6 +108,34 @@ class Spinner:
         self.message = message
 
 
+class GateRegistry:
+    """Registry of named gate functions for dispatch-driven check execution.
+
+    Gates are boolean predicates that control whether a check or phase runs.
+    They represent runtime cluster state (e.g. HANA resource running, HANA installed).
+    """
+
+    def __init__(self):
+        self._gates = {}
+
+    def register(self, name, fn):
+        """Register a gate function by name."""
+        self._gates[name] = fn
+
+    def evaluate(self, name):
+        """Evaluate a gate. Returns True if gate passes (check should run).
+
+        Returns True for unknown gates (fail-open) to avoid silently skipping checks.
+        """
+        fn = self._gates.get(name)
+        if fn is None:
+            return True
+        try:
+            return bool(fn())
+        except Exception:
+            return True
+
+
 class ClusterHealthCheck:
     """Main orchestrator for SAP Pacemaker cluster health checks."""
 
@@ -138,7 +166,24 @@ class ClusterHealthCheck:
         self.majority_makers = []  # Nodes that are majority makers (Scale-Out)
         self.last_pdf_file = None  # Track last generated PDF for auto-open
         self._hana_resource_state = 'unknown'  # running/stopped/disabled/unmanaged/absent
+        self._hana_installed = False  # Whether HANA is installed on any node
         self._hana_db_status = {}  # HANA DB status and replication info
+        self._detected_topology = None  # 'Scale-Up' or 'Scale-Out'
+        self._install_results = []  # CHK_HANA_INSTALLED results (for _gather_hana_db_status)
+        self._hana_nodes = {}  # Nodes where HANA is installed (filtered node dict)
+
+        # Load dispatch manifest (fallback to hardcoded if not found)
+        self.dispatch = CheckDispatch()
+        self._dispatch_available = self.dispatch.load()
+
+        # Gate registry for dispatch-driven execution.
+        # Lambdas capture `self` and read fields at evaluation time (late binding),
+        # so gate results reflect current state when _run_step evaluates them.
+        self._gate_registry = GateRegistry()
+        self._gate_registry.register('hana_resource_running',
+                                     lambda: self._hana_resource_state == 'running')
+        self._gate_registry.register('hana_installed',
+                                     lambda: self._hana_installed)
 
     def _debug_print(self, message: str):
         """Print debug message if debug mode is enabled."""
@@ -1430,6 +1475,12 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                 if optional_count > 0:
                     self._debug_print(f"Non-strict mode: {optional_count} optional checks will be warnings")
 
+            # Validate dispatch manifest against loaded rules
+            if self._dispatch_available:
+                warnings = self.dispatch.validate_against_rules(self.rules_engine.rules)
+                for w in warnings:
+                    print(f"  [WARN] {w}")
+
     def _run_rules_parallel(self, rules: list, nodes: dict) -> list:
         """Run multiple rules in parallel using thread pool."""
         from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -1451,9 +1502,20 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                     self._debug_print(f"Completed: {check_id} ({len(results)} results)")
                 except Exception as e:
                     self._debug_print(f"Error in {check_id}: {e}")
+                    all_results.append(CheckResult(
+                        check_id=check_id,
+                        description="Check failed with exception",
+                        status=CheckStatus.ERROR,
+                        severity=Severity.WARNING,
+                        message=str(e),
+                        node=None
+                    ))
 
         # Sync results to the engine so requires/context lookups work
         # (e.g., _get_hadr_sid, _get_rhel_major, requires gate)
+        # NOTE: Within a single phase, checks run in parallel and cannot see
+        # each other's results via self.results. This is intentional -- checks
+        # in the same phase should not depend on each other.
         self.rules_engine.results.extend(all_results)
 
         return all_results
@@ -1463,44 +1525,241 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
         return [r for r in self.rules_engine.rules
                 if any(r.check_id.startswith(p) for p in prefixes)]
 
-    def step_cluster_config_check(self) -> bool:
+    # ------------------------------------------------------------------
+    # Dispatch-driven step execution
+    # ------------------------------------------------------------------
+
+    def _run_step(self, step_name: str) -> bool:
+        """Generic dispatch-driven step execution.
+
+        Reads phases and checks from the dispatch manifest, evaluates gates,
+        filters by topology, runs checks in parallel within each phase,
+        and calls post-phase hooks for state extraction.
+
+        Falls back to the hardcoded step methods if the dispatch manifest
+        is not available.
         """
-        Step 2: Check cluster configuration.
-        Runs: CHK_NODE_STATUS, CHK_CLUSTER_QUORUM, CHK_QUORUM_CONFIG,
-              CHK_CLONE_CONFIG, CHK_SETUP_VALIDATION
-        """
+        if not self._dispatch_available:
+            return self._run_step_hardcoded(step_name)
+
+        step = self.dispatch.get_step(step_name)
+        if not step:
+            print(f"[SKIP] No dispatch entry for step '{step_name}'")
+            return True
+
+        step_number = step.step_number
+        step_display = step.name
+
         print("\n" + "=" * 63)
-        print(" STEP 2: Cluster Configuration Check")
+        print(f" STEP {step_number}: {step_display}")
         print("=" * 63)
 
-        self._debug_print("Starting cluster configuration checks...")
+        self._debug_print(f"Starting {step_display}...")
         self._load_rules_engine()
-
-        # Filter relevant checks
-        config_checks = ['CHK_NODE_STATUS', 'CHK_CLUSTER_QUORUM', 'CHK_QUORUM_CONFIG',
-                        'CHK_CLONE_CONFIG', 'CHK_SETUP_VALIDATION', 'CHK_CIB_TIME_SYNC',
-                        'CHK_PACKAGE_CONSISTENCY', 'CHK_CLUSTER_TYPE']
-
-        rules_to_run = [r for r in self.rules_engine.rules if r.check_id in config_checks]
-
-        self._debug_print(f"Checks to run: {[r.check_id for r in rules_to_run]}")
-
-        if not rules_to_run:
-            print("[SKIP] No cluster configuration checks found")
-            return True
 
         nodes = self.access_config.nodes if self.access_config else {}
         self._debug_print(f"Target nodes: {list(nodes.keys())}")
 
-        # Run rules in parallel with spinner
-        with Spinner(f"Running {len(rules_to_run)} cluster configuration checks"):
-            results = self._run_rules_parallel(rules_to_run, nodes)
-        self.check_results.extend(results)
-        print(f"  Completed {len(rules_to_run)} cluster configuration checks")
+        # For the SAP step, use filtered hana_nodes if available
+        effective_nodes = nodes
+        if step_name == 'sap' and self._hana_nodes:
+            effective_nodes = self._hana_nodes
 
+        # Get phases with topology filtering (if topology is known)
+        phases = self.dispatch.get_phases(step_name, self._detected_topology)
+
+        all_check_ids = self.dispatch.get_all_check_ids(step_name)
+        all_step_results = []
+
+        for phase in phases:
+            # Evaluate phase-level gate
+            if phase.gate and not self._gate_registry.evaluate(phase.gate):
+                self._debug_print(f"Phase {phase.phase} skipped: gate '{phase.gate}' is closed")
+                # Add SKIPPED results for all checks in this phase
+                for chk_entry in phase.checks:
+                    rule = next((r for r in self.rules_engine.rules
+                                 if r.check_id == chk_entry.check_id), None)
+                    if rule:
+                        skip_msg = self._gate_skip_message(phase.gate)
+                        # hana_installed skip is INFO (not applicable), others are WARNING
+                        skip_sev = Severity.INFO if phase.gate == 'hana_installed' else Severity.WARNING
+                        self.check_results.append(CheckResult(
+                            check_id=chk_entry.check_id,
+                            description=rule.description,
+                            status=CheckStatus.SKIPPED,
+                            severity=skip_sev,
+                            message=skip_msg,
+                            node="all"
+                        ))
+                if phase.gate == 'hana_installed':
+                    print("[SKIP] SAP HANA not installed - skipping HANA-specific checks")
+                elif phase.gate == 'hana_resource_running':
+                    print(f"  [WARN] HANA resource is {self._hana_resource_state}"
+                          " - skipping resource-dependent checks")
+                continue
+
+            # Collect rules to run in this phase, evaluating per-check gates
+            rules_to_run = []
+            for chk_entry in phase.checks:
+                # Check per-check gate
+                if chk_entry.gate and not self._gate_registry.evaluate(chk_entry.gate):
+                    rule = next((r for r in self.rules_engine.rules
+                                 if r.check_id == chk_entry.check_id), None)
+                    if rule:
+                        skip_msg = self._gate_skip_message(chk_entry.gate)
+                        self.check_results.append(CheckResult(
+                            check_id=chk_entry.check_id,
+                            description=rule.description,
+                            status=CheckStatus.SKIPPED,
+                            severity=Severity.WARNING,
+                            message=skip_msg,
+                            node="all"
+                        ))
+                    continue
+
+                rule = next((r for r in self.rules_engine.rules
+                             if r.check_id == chk_entry.check_id), None)
+                if rule:
+                    rules_to_run.append(rule)
+
+            if not rules_to_run:
+                self._debug_print(f"Phase {phase.phase}: no checks to run")
+                continue
+
+            self._debug_print(f"Phase {phase.phase} checks: {[r.check_id for r in rules_to_run]}")
+
+            # Run checks (parallel or sequential)
+            spinner_msg = f"Running {len(rules_to_run)} {step_display.lower()} checks"
+            if step_name == 'sap' and phase.phase == 1:
+                spinner_msg = "Checking if SAP HANA is installed"
+
+            with Spinner(spinner_msg):
+                results = self._run_rules_parallel(rules_to_run, effective_nodes)
+            self.check_results.extend(results)
+            all_step_results.extend(results)
+
+            # Post-phase hook: extract state needed by subsequent phases/steps
+            self._post_phase_hook(step_name, phase.phase, results, nodes)
+
+        # Print completion
+        total_run = len([r for r in all_step_results])
+        if total_run > 0:
+            print(f"  Completed {step_display.lower()} checks")
+
+        # Determine success (no CRITICAL failures in this step)
         failed = [r for r in self.check_results if r.status == CheckStatus.FAILED
-                  and r.check_id in config_checks]
+                  and r.check_id in all_check_ids]
         return len([f for f in failed if f.severity == Severity.CRITICAL]) == 0
+
+    def _gate_skip_message(self, gate_name: str) -> str:
+        """Return a human-readable skip message for a gate."""
+        if gate_name == 'hana_resource_running':
+            return f"Skipped: HANA resource is {self._hana_resource_state} (not managed by Pacemaker)"
+        elif gate_name == 'hana_installed':
+            return "SAP HANA not installed"
+        return f"Skipped: gate '{gate_name}' is closed"
+
+    def _post_phase_hook(self, step_name: str, phase: int, results: list, nodes: dict):
+        """Execute post-phase hooks to extract state from results.
+
+        These hooks extract runtime state needed by subsequent phases or steps.
+        """
+        if step_name == 'config' and phase == 1:
+            self._post_config_phase1(results)
+        elif step_name == 'pacemaker' and phase == 1:
+            self._post_pacemaker_phase1(results)
+        elif step_name == 'sap' and phase == 1:
+            self._post_sap_phase1(results, nodes)
+
+    def _post_config_phase1(self, results: list):
+        """After config phase 1: extract topology, apply retroactive filtering."""
+        # Extract topology from CHK_CLUSTER_TYPE result
+        cluster_type_result = next(
+            (r for r in results if r.check_id == 'CHK_CLUSTER_TYPE'), None
+        )
+        if cluster_type_result and cluster_type_result.details:
+            topology = cluster_type_result.details.get('cluster_type')
+            if topology in ('Scale-Up', 'Scale-Out'):
+                self._detected_topology = topology
+                if self.rules_engine:
+                    self.rules_engine.set_detected_topology(topology)
+                self._debug_print(f"Detected topology: {topology}")
+
+        # Retroactive topology filtering: downgrade results for checks that
+        # don't match the detected topology (they ran in the same phase because
+        # topology wasn't known yet)
+        if self._detected_topology and self._dispatch_available:
+            phases = self.dispatch.get_phases('config')  # Unfiltered
+            if phases:
+                for chk_entry in phases[0].checks:
+                    if chk_entry.topology != 'all' and self._detected_topology not in chk_entry.topology:
+                        # Find and downgrade results for this check
+                        for result in self.check_results:
+                            if result.check_id == chk_entry.check_id:
+                                result.status = CheckStatus.SKIPPED
+                                result.severity = Severity.INFO
+                                result.message = f"Not applicable for {self._detected_topology} topology"
+                                self._debug_print(
+                                    f"Retroactive skip: {chk_entry.check_id} "
+                                    f"(topology {chk_entry.topology} vs {self._detected_topology})")
+
+    def _post_pacemaker_phase1(self, results: list):
+        """After pacemaker phase 1: extract HANA resource state."""
+        self._hana_resource_state = self._extract_hana_resource_state(results)
+        self._debug_print(f"HANA resource state: {self._hana_resource_state}")
+        if self.rules_engine:
+            self.rules_engine.set_hana_resource_state(self._hana_resource_state)
+
+    def _post_sap_phase1(self, results: list, nodes: dict):
+        """After SAP phase 1: determine HANA install status, handle majority maker nodes."""
+        install_results = [r for r in results if r.check_id == 'CHK_HANA_INSTALLED']
+        self._install_results = install_results
+
+        nodes_with_hana = [r.node for r in install_results if r.status == CheckStatus.PASSED]
+        nodes_without_hana = [r.node for r in install_results if r.status != CheckStatus.PASSED]
+
+        self._hana_installed = len(nodes_with_hana) > 0
+
+        self._debug_print(f"HANA install check: nodes_with={nodes_with_hana}, nodes_without={nodes_without_hana}")
+        self._debug_print(f"HANA installed: {self._hana_installed}")
+
+        # Check which nodes are excluded from HANA by constraints
+        hana_excluded_nodes = set()
+        if self.rules_engine:
+            resource_config = self.rules_engine.get_cluster_resources_config()
+            if resource_config.get('available'):
+                excluded = resource_config.get('hana_excluded_node')
+                if excluded:
+                    hana_excluded_nodes.add(excluded)
+
+        # Update CHK_HANA_INSTALLED results for constraint-excluded nodes
+        if nodes_without_hana and hana_excluded_nodes:
+            excluded_without_hana = [n for n in nodes_without_hana if n in hana_excluded_nodes]
+            other_without_hana = [n for n in nodes_without_hana if n not in hana_excluded_nodes]
+
+            for node_name in excluded_without_hana:
+                for result in self.check_results:
+                    if result.check_id == 'CHK_HANA_INSTALLED' and result.node == node_name:
+                        result.status = CheckStatus.SKIPPED
+                        result.message = "Node excluded from HANA resources by constraints"
+                        break
+
+            if excluded_without_hana:
+                print(f"[OK] Nodes excluded from HANA by constraints: {', '.join(excluded_without_hana)}")
+            if other_without_hana:
+                print(f"[INFO] Nodes without HANA: {', '.join(other_without_hana)}")
+        elif nodes_without_hana:
+            print(f"[INFO] Nodes without HANA: {', '.join(nodes_without_hana)}")
+
+        # Filter nodes to only those with HANA installed (for subsequent phases)
+        if nodes_with_hana:
+            self._hana_nodes = {k: v for k, v in nodes.items() if k in nodes_with_hana}
+        else:
+            self._hana_nodes = nodes
+
+        # Gather HANA database status and replication info
+        if self._hana_installed:
+            self._gather_hana_db_status(install_results, self._hana_nodes)
 
     def _extract_hana_resource_state(self, results: list) -> str:
         """Extract HANA resource state from CHK_RESOURCE_STATUS results.
@@ -1535,229 +1794,162 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
             return 'stopped'
         return 'unknown'
 
-    def step_pacemaker_check(self) -> bool:
-        """
-        Step 3: Check Pacemaker/Corosync status.
+    # ------------------------------------------------------------------
+    # Hardcoded fallback step methods (used when dispatch manifest is missing)
+    # ------------------------------------------------------------------
 
-        Runs in two phases:
-        Phase 1: Resource-independent checks (STONITH, resource status, failures, etc.)
-        Phase 2: Resource-dependent checks (master/slave roles) - skipped if HANA
-                 resource is stopped/disabled/unmanaged.
-        """
+    def _run_step_hardcoded(self, step_name: str) -> bool:
+        """Fallback: run a step using the original hardcoded check lists."""
+        if step_name == 'config':
+            return self._step_config_hardcoded()
+        elif step_name == 'pacemaker':
+            return self._step_pacemaker_hardcoded()
+        elif step_name == 'sap':
+            return self._step_sap_hardcoded()
+        return True
+
+    def _step_config_hardcoded(self) -> bool:
+        """Hardcoded fallback for config step."""
+        print("\n" + "=" * 63)
+        print(" STEP 2: Cluster Configuration Check")
+        print("=" * 63)
+        self._load_rules_engine()
+        config_checks = ['CHK_NODE_STATUS', 'CHK_CLUSTER_QUORUM', 'CHK_QUORUM_CONFIG',
+                        'CHK_CLUSTER_READY', 'CHK_CLONE_CONFIG', 'CHK_SETUP_VALIDATION',
+                        'CHK_CIB_TIME_SYNC', 'CHK_PACKAGE_CONSISTENCY', 'CHK_CLUSTER_TYPE']
+        rules_to_run = [r for r in self.rules_engine.rules if r.check_id in config_checks]
+        if not rules_to_run:
+            print("[SKIP] No cluster configuration checks found")
+            return True
+        nodes = self.access_config.nodes if self.access_config else {}
+        with Spinner(f"Running {len(rules_to_run)} cluster configuration checks"):
+            results = self._run_rules_parallel(rules_to_run, nodes)
+        self.check_results.extend(results)
+        print(f"  Completed {len(rules_to_run)} cluster configuration checks")
+        # Extract topology for subsequent steps
+        self._post_config_phase1(results)
+        failed = [r for r in self.check_results if r.status == CheckStatus.FAILED
+                  and r.check_id in config_checks]
+        return len([f for f in failed if f.severity == Severity.CRITICAL]) == 0
+
+    def _step_pacemaker_hardcoded(self) -> bool:
+        """Hardcoded fallback for pacemaker step."""
         print("\n" + "=" * 63)
         print(" STEP 3: Pacemaker/Corosync Check")
         print("=" * 63)
-
-        self._debug_print("Starting Pacemaker/Corosync checks...")
         self._load_rules_engine()
-
         all_pacemaker_checks = ['CHK_STONITH_CONFIG', 'CHK_RESOURCE_STATUS', 'CHK_RESOURCE_FAILURES',
                                 'CHK_ALERT_FENCING', 'CHK_MASTER_SLAVE_ROLES', 'CHK_MAJORITY_MAKER']
-
         nodes = self.access_config.nodes if self.access_config else {}
-        self._debug_print(f"Target nodes: {list(nodes.keys())}")
-
-        # Phase 1: Run resource-independent checks first
         independent_checks = ['CHK_STONITH_CONFIG', 'CHK_RESOURCE_STATUS', 'CHK_RESOURCE_FAILURES',
                               'CHK_ALERT_FENCING', 'CHK_MAJORITY_MAKER']
         independent_rules = [r for r in self.rules_engine.rules if r.check_id in independent_checks]
-
-        self._debug_print(f"Phase 1 checks: {[r.check_id for r in independent_rules]}")
-
         if not independent_rules:
             print("[SKIP] No Pacemaker checks found")
             return True
-
         with Spinner(f"Running {len(independent_rules)} Pacemaker/Corosync checks"):
             results = self._run_rules_parallel(independent_rules, nodes)
         self.check_results.extend(results)
-
-        # Extract HANA resource state from CHK_RESOURCE_STATUS
-        self._hana_resource_state = self._extract_hana_resource_state(results)
-        self._debug_print(f"HANA resource state: {self._hana_resource_state}")
-        if self.rules_engine:
-            self.rules_engine.set_hana_resource_state(self._hana_resource_state)
-
-        # Phase 2: Resource-dependent checks
-        resource_dependent_checks = ['CHK_MASTER_SLAVE_ROLES']
-
+        self._post_pacemaker_phase1(results)
         if self._hana_resource_state == 'running':
             dependent_rules = [r for r in self.rules_engine.rules
-                               if r.check_id in resource_dependent_checks]
+                               if r.check_id == 'CHK_MASTER_SLAVE_ROLES']
             if dependent_rules:
-                self._debug_print(f"Phase 2 checks: {[r.check_id for r in dependent_rules]}")
                 with Spinner("Running resource-dependent checks"):
                     dep_results = self._run_rules_parallel(dependent_rules, nodes)
                 self.check_results.extend(dep_results)
-                results.extend(dep_results)
         else:
-            # Skip resource-dependent checks with WARNING
-            for check_id in resource_dependent_checks:
+            for check_id in ['CHK_MASTER_SLAVE_ROLES']:
                 rule = next((r for r in self.rules_engine.rules if r.check_id == check_id), None)
                 if rule:
-                    skip_msg = f"Skipped: HANA resource is {self._hana_resource_state} (not managed by Pacemaker)"
                     self.check_results.append(CheckResult(
-                        check_id=check_id,
-                        description=rule.description,
-                        status=CheckStatus.SKIPPED,
-                        severity=Severity.WARNING,
-                        message=skip_msg,
+                        check_id=check_id, description=rule.description,
+                        status=CheckStatus.SKIPPED, severity=Severity.WARNING,
+                        message=f"Skipped: HANA resource is {self._hana_resource_state} (not managed by Pacemaker)",
                         node="all"
                     ))
             print(f"  [WARN] HANA resource is {self._hana_resource_state}"
                   " - skipping master/slave role check")
-
         print(f"  Completed Pacemaker/Corosync checks")
-
         failed = [r for r in self.check_results if r.status == CheckStatus.FAILED
                   and r.check_id in all_pacemaker_checks]
         return len([f for f in failed if f.severity == Severity.CRITICAL]) == 0
 
-    def step_sap_check(self) -> bool:
-        """
-        Step 4: SAP-specific checks.
-        First checks if HANA is installed, then runs other SAP checks.
-        """
+    def _step_sap_hardcoded(self) -> bool:
+        """Hardcoded fallback for SAP step."""
         print("\n" + "=" * 63)
         print(" STEP 4: SAP-Specific Checks")
         print("=" * 63)
-
-        self._debug_print("Starting SAP-specific checks...")
         self._load_rules_engine()
-
         nodes = self.access_config.nodes if self.access_config else {}
-        self._debug_print(f"Target nodes: {list(nodes.keys())}")
-
-        # First check if HANA is installed
         hana_installed_rule = next(
-            (r for r in self.rules_engine.rules if r.check_id == 'CHK_HANA_INSTALLED'),
-            None
-        )
-
-        hana_installed = False
-        nodes_with_hana = []
+            (r for r in self.rules_engine.rules if r.check_id == 'CHK_HANA_INSTALLED'), None)
         if hana_installed_rule:
             print("Checking if SAP HANA is installed...")
             install_results = self._run_rules_parallel([hana_installed_rule], nodes)
             self.check_results.extend(install_results)
-
-            # Track which nodes have HANA (Scale-Out clusters may have majority makers without HANA)
             nodes_with_hana = [r.node for r in install_results if r.status == CheckStatus.PASSED]
-            nodes_without_hana = [r.node for r in install_results if r.status != CheckStatus.PASSED]
-
-            # HANA is installed if at least one node has it
-            hana_installed = len(nodes_with_hana) > 0
-
-            self._debug_print(f"HANA install check results: {[(r.node, str(r.status)) for r in install_results]}")
-            self._debug_print(f"Nodes with HANA: {nodes_with_hana}, Nodes without: {nodes_without_hana}")
-            self._debug_print(f"HANA installed: {hana_installed}")
-
-            # Check which nodes are excluded from HANA by constraints
-            # These nodes don't run HANA (app servers in Scale-Up, majority makers in Scale-Out)
-            hana_excluded_nodes = set()
-            if self.rules_engine:
-                resource_config = self.rules_engine.get_cluster_resources_config()
-                if resource_config.get('available'):
-                    excluded = resource_config.get('hana_excluded_node')
-                    if excluded:
-                        hana_excluded_nodes.add(excluded)
-
-            # Update CHK_HANA_INSTALLED results for constraint-excluded nodes
-            if nodes_without_hana and hana_excluded_nodes:
-                excluded_without_hana = [n for n in nodes_without_hana if n in hana_excluded_nodes]
-                other_without_hana = [n for n in nodes_without_hana if n not in hana_excluded_nodes]
-
-                for node_name in excluded_without_hana:
-                    # Mark CHK_HANA_INSTALLED as SKIPPED (not ERROR) for excluded nodes
-                    for result in self.check_results:
-                        if result.check_id == 'CHK_HANA_INSTALLED' and result.node == node_name:
-                            result.status = CheckStatus.SKIPPED
-                            result.message = "Node excluded from HANA resources by constraints"
-                            break
-
-                if excluded_without_hana:
-                    print(f"[OK] Nodes excluded from HANA by constraints: {', '.join(excluded_without_hana)}")
-                if other_without_hana:
-                    print(f"[INFO] Nodes without HANA: {', '.join(other_without_hana)}")
-            elif nodes_without_hana:
-                print(f"[INFO] Nodes without HANA: {', '.join(nodes_without_hana)}")
-
-            # After majority maker check, if no HANA installed, skip SAP checks
-            if not hana_installed:
+            self._hana_installed = len(nodes_with_hana) > 0
+            self._post_sap_phase1(install_results, nodes)
+            if not self._hana_installed:
                 print("[SKIP] SAP HANA not installed - skipping HANA-specific checks")
-                # Add skipped results for other SAP checks
-                sap_checks_skip = ['CHK_HANA_SR_STATUS', 'CHK_REPLICATION_MODE', 'CHK_HADR_HOOKS',
-                                   'CHK_HANA_AUTOSTART', 'CHK_SYSTEMD_SAP', 'CHK_SITE_ROLES']
-                for check_id in sap_checks_skip:
+                for check_id in ['CHK_HANA_SR_STATUS', 'CHK_REPLICATION_MODE', 'CHK_HADR_HOOKS',
+                                 'CHK_HANA_AUTOSTART', 'CHK_SYSTEMD_SAP', 'CHK_SITE_ROLES']:
                     rule = next((r for r in self.rules_engine.rules if r.check_id == check_id), None)
                     if rule:
                         self.check_results.append(CheckResult(
-                            check_id=check_id,
-                            description=rule.description if rule else check_id,
-                            status=CheckStatus.SKIPPED,
-                            severity=Severity.INFO,
-                            message="SAP HANA not installed",
-                            node="all"
+                            check_id=check_id, description=rule.description,
+                            status=CheckStatus.SKIPPED, severity=Severity.INFO,
+                            message="SAP HANA not installed", node="all"
                         ))
                 return True
-
-        # HANA is installed on some nodes, run SAP checks only on those nodes
-        # Filter nodes to only those with HANA installed
-        hana_nodes = {k: v for k, v in nodes.items() if k in nodes_with_hana} if nodes_with_hana else nodes
-
-        hana_resource_active = self._hana_resource_state == 'running'
-
-        # Split SAP checks based on resource state
-        # Resource-dependent: require HANA resource active in Pacemaker
-        resource_dependent_sap = ['CHK_HANA_SR_STATUS', 'CHK_SITE_ROLES']
-        # Resource-independent: can run even if HANA resource is stopped/disabled
-        resource_independent_sap = ['CHK_REPLICATION_MODE', 'CHK_HADR_HOOKS',
-                                    'CHK_HANA_AUTOSTART', 'CHK_SYSTEMD_SAP']
-
-        if hana_resource_active:
-            # Normal path: run all SAP checks
-            sap_checks = resource_dependent_sap + resource_independent_sap
-            rules_to_run = [r for r in self.rules_engine.rules if r.check_id in sap_checks]
+        hana_nodes = self._hana_nodes or nodes
+        if self._hana_resource_state == 'running':
+            sap_checks = ['CHK_HANA_SR_STATUS', 'CHK_SITE_ROLES', 'CHK_REPLICATION_MODE',
+                          'CHK_HADR_HOOKS', 'CHK_HANA_AUTOSTART', 'CHK_SYSTEMD_SAP']
         else:
-            # Resource stopped/disabled: skip dependent checks, run independent ones
             print(f"  [WARN] HANA resource is {self._hana_resource_state}"
                   " - skipping Pacemaker-dependent SAP checks")
-
-            # Skip resource-dependent checks with WARNING
-            for check_id in resource_dependent_sap:
+            for check_id in ['CHK_HANA_SR_STATUS', 'CHK_SITE_ROLES']:
                 rule = next((r for r in self.rules_engine.rules if r.check_id == check_id), None)
                 if rule:
                     self.check_results.append(CheckResult(
-                        check_id=check_id,
-                        description=rule.description,
-                        status=CheckStatus.SKIPPED,
-                        severity=Severity.WARNING,
+                        check_id=check_id, description=rule.description,
+                        status=CheckStatus.SKIPPED, severity=Severity.WARNING,
                         message=f"Skipped: HANA resource is {self._hana_resource_state} in Pacemaker",
                         node="all"
                     ))
-
-            sap_checks = resource_independent_sap
-            rules_to_run = [r for r in self.rules_engine.rules if r.check_id in sap_checks]
-
-        # Always gather HANA database status and replication info
-        self._gather_hana_db_status(install_results, hana_nodes)
-
-        self._debug_print(f"Checks to run: {[r.check_id for r in rules_to_run]}")
-
+            sap_checks = ['CHK_REPLICATION_MODE', 'CHK_HADR_HOOKS',
+                          'CHK_HANA_AUTOSTART', 'CHK_SYSTEMD_SAP']
+        rules_to_run = [r for r in self.rules_engine.rules if r.check_id in sap_checks]
         if not rules_to_run:
             print("[SKIP] No SAP checks to run")
             return True
-
-        # Run rules in parallel only on nodes with HANA
         with Spinner(f"Running {len(rules_to_run)} SAP-specific checks on {len(hana_nodes)} node(s)"):
             results = self._run_rules_parallel(rules_to_run, hana_nodes)
         self.check_results.extend(results)
         print(f"  Completed {len(rules_to_run)} SAP-specific checks")
-
-        all_sap_checks = resource_dependent_sap + resource_independent_sap
+        all_sap_checks = ['CHK_HANA_SR_STATUS', 'CHK_SITE_ROLES', 'CHK_REPLICATION_MODE',
+                          'CHK_HADR_HOOKS', 'CHK_HANA_AUTOSTART', 'CHK_SYSTEMD_SAP']
         failed = [r for r in self.check_results if r.status == CheckStatus.FAILED
                   and r.check_id in all_sap_checks]
         return len([f for f in failed if f.severity == Severity.CRITICAL]) == 0
+
+    # ------------------------------------------------------------------
+    # Public step methods (thin wrappers around _run_step)
+    # ------------------------------------------------------------------
+
+    def step_cluster_config_check(self) -> bool:
+        """Step 2: Check cluster configuration."""
+        return self._run_step('config')
+
+    def step_pacemaker_check(self) -> bool:
+        """Step 3: Check Pacemaker/Corosync status."""
+        return self._run_step('pacemaker')
+
+    def step_sap_check(self) -> bool:
+        """Step 4: SAP-specific checks."""
+        return self._run_step('sap')
 
     def _gather_hana_db_status(self, install_results: list, hana_nodes: dict):
         """
@@ -2458,16 +2650,21 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
             'report': 'Report Generation'
         }
 
-        # Map check IDs to steps for counting
-        step_checks = {
-            'config': ['CHK_NODE_STATUS', 'CHK_CLUSTER_QUORUM', 'CHK_QUORUM_CONFIG',
-                      'CHK_CLONE_CONFIG', 'CHK_SETUP_VALIDATION', 'CHK_CIB_TIME_SYNC',
-                      'CHK_PACKAGE_CONSISTENCY', 'CHK_CLUSTER_TYPE'],
-            'pacemaker': ['CHK_STONITH_CONFIG', 'CHK_RESOURCE_STATUS', 'CHK_RESOURCE_FAILURES',
-                         'CHK_ALERT_FENCING', 'CHK_MASTER_SLAVE_ROLES', 'CHK_MAJORITY_MAKER'],
-            'sap': ['CHK_HANA_INSTALLED', 'CHK_HANA_SR_STATUS', 'CHK_REPLICATION_MODE', 'CHK_HADR_HOOKS',
-                   'CHK_HANA_AUTOSTART', 'CHK_SYSTEMD_SAP', 'CHK_SITE_ROLES']
-        }
+        # Map check IDs to steps for counting (dispatch-driven or hardcoded fallback)
+        if self._dispatch_available:
+            step_checks = {}
+            for sn in ['config', 'pacemaker', 'sap']:
+                step_checks[sn] = self.dispatch.get_all_check_ids(sn)
+        else:
+            step_checks = {
+                'config': ['CHK_NODE_STATUS', 'CHK_CLUSTER_QUORUM', 'CHK_QUORUM_CONFIG',
+                          'CHK_CLUSTER_READY', 'CHK_CLONE_CONFIG', 'CHK_SETUP_VALIDATION',
+                          'CHK_CIB_TIME_SYNC', 'CHK_PACKAGE_CONSISTENCY', 'CHK_CLUSTER_TYPE'],
+                'pacemaker': ['CHK_STONITH_CONFIG', 'CHK_RESOURCE_STATUS', 'CHK_RESOURCE_FAILURES',
+                             'CHK_ALERT_FENCING', 'CHK_MASTER_SLAVE_ROLES', 'CHK_MAJORITY_MAKER'],
+                'sap': ['CHK_HANA_INSTALLED', 'CHK_HANA_SR_STATUS', 'CHK_REPLICATION_MODE', 'CHK_HADR_HOOKS',
+                       'CHK_HANA_AUTOSTART', 'CHK_SYSTEMD_SAP', 'CHK_SITE_ROLES']
+            }
 
         for step, success in results.items():
             name = step_names.get(step, step)

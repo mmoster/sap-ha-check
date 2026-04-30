@@ -1,0 +1,85 @@
+# Check Dispatch Manifest
+#
+# Central configuration for which health checks run in which step,
+# their execution order (phases), topology filters, and gates.
+#
+# Structure:
+#   steps:           Top-level steps executed in order
+#     phases:        Sequential phases within a step
+#       checks:      Checks within a phase run in parallel
+#
+# Fields:
+#   topology:  Filter by cluster topology ([Scale-Up], [Scale-Out], or omit for all)
+#   gate:      Python gate function name that must return True for check/phase to run
+#              Gates at phase level skip the entire phase; at check level skip that check.
+#   parallel:  Whether checks in this phase run in parallel (default: true)
+#
+# Adding a new check:
+#   1. Create CHK_NEW.yaml in rules/health_checks/
+#   2. Add an entry here under the appropriate step/phase
+#   3. Optionally set topology and/or gate
+#
+version: "1.0"
+
+topologies:
+  - Scale-Up
+  - Scale-Out
+
+steps:
+  config:
+    name: "Cluster Configuration Check"
+    step_number: 2
+    phases:
+      - phase: 1
+        parallel: true
+        checks:
+          - check_id: CHK_CLUSTER_TYPE
+          - check_id: CHK_NODE_STATUS
+          - check_id: CHK_CLUSTER_QUORUM
+          - check_id: CHK_CLUSTER_READY
+          - check_id: CHK_CIB_TIME_SYNC
+          - check_id: CHK_PACKAGE_CONSISTENCY
+          - check_id: CHK_SETUP_VALIDATION
+          - check_id: CHK_CLONE_CONFIG
+          - check_id: CHK_QUORUM_CONFIG
+            topology: [Scale-Up]
+
+  pacemaker:
+    name: "Pacemaker/Corosync Check"
+    step_number: 3
+    phases:
+      - phase: 1
+        parallel: true
+        checks:
+          - check_id: CHK_STONITH_CONFIG
+          - check_id: CHK_RESOURCE_STATUS
+          - check_id: CHK_RESOURCE_FAILURES
+          - check_id: CHK_ALERT_FENCING
+          - check_id: CHK_MAJORITY_MAKER
+            topology: [Scale-Out]
+      - phase: 2
+        parallel: true
+        gate: hana_resource_running
+        checks:
+          - check_id: CHK_MASTER_SLAVE_ROLES
+
+  sap:
+    name: "SAP-Specific Checks"
+    step_number: 4
+    phases:
+      - phase: 1
+        parallel: true
+        checks:
+          - check_id: CHK_HANA_INSTALLED
+      - phase: 2
+        parallel: true
+        gate: hana_installed
+        checks:
+          - check_id: CHK_HANA_SR_STATUS
+            gate: hana_resource_running
+          - check_id: CHK_REPLICATION_MODE
+          - check_id: CHK_HADR_HOOKS
+          - check_id: CHK_HANA_AUTOSTART
+          - check_id: CHK_SYSTEMD_SAP
+          - check_id: CHK_SITE_ROLES
+            gate: hana_resource_running

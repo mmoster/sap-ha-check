@@ -98,13 +98,194 @@ class RuleDefinition:
     source_definitions: Dict[str, Any] = None
     parser: Dict[str, Any] = None
     validation_logic: Dict[str, Any] = None
-    topology_filter: Optional[str] = None
+    topology_filter: Any = None  # str, list of str, or None (all topologies)
     requires: Optional[str] = None  # Check ID that must pass before this one runs
     raw_yaml: Dict[str, Any] = None
 
     def __post_init__(self):
         if self.raw_yaml is None:
             self.raw_yaml = {}
+
+
+# ------------------------------------------------------------------
+# Dispatch manifest dataclasses and loader
+# ------------------------------------------------------------------
+
+@dataclass
+class DispatchCheckEntry:
+    """A single check entry in a dispatch phase."""
+    check_id: str = None
+    topology: Any = 'all'       # 'all', str, or list of str
+    gate: Optional[str] = None
+
+    def __post_init__(self):
+        # Normalize topology to a list or 'all'
+        if self.topology is None or self.topology == 'all':
+            self.topology = 'all'
+        elif isinstance(self.topology, str):
+            self.topology = [self.topology]
+
+
+@dataclass
+class DispatchPhase:
+    """A sequential phase within a dispatch step."""
+    phase: int = 1
+    parallel: bool = True
+    gate: Optional[str] = None
+    checks: List[DispatchCheckEntry] = None
+
+    def __post_init__(self):
+        if self.checks is None:
+            self.checks = []
+
+
+@dataclass
+class DispatchStep:
+    """A top-level dispatch step (config, pacemaker, sap)."""
+    name: str = None
+    step_number: int = 0
+    phases: List[DispatchPhase] = None
+
+    def __post_init__(self):
+        if self.phases is None:
+            self.phases = []
+
+
+class CheckDispatch:
+    """Loader and query interface for the check dispatch manifest.
+
+    The dispatch manifest (rules/check_dispatch.yaml) declares which checks
+    run in which step/phase, with optional topology filters and gates.
+    """
+
+    DEFAULT_MANIFEST = str(Path(__file__).parent / "check_dispatch.yaml")
+
+    def __init__(self, manifest_path: str = None):
+        self._manifest_path = manifest_path or self.DEFAULT_MANIFEST
+        self._steps: Dict[str, DispatchStep] = {}
+        self._topologies: List[str] = []
+        self._loaded = False
+
+    @property
+    def loaded(self) -> bool:
+        return self._loaded
+
+    def load(self) -> bool:
+        """Load the YAML manifest. Returns False if file not found."""
+        path = Path(self._manifest_path)
+        if not path.exists():
+            return False
+
+        try:
+            with open(path, 'r') as f:
+                data = yaml.safe_load(f)
+        except Exception:
+            return False
+
+        if not data or not isinstance(data, dict):
+            return False
+
+        self._topologies = data.get('topologies', [])
+
+        for step_name, step_data in data.get('steps', {}).items():
+            phases = []
+            for phase_data in step_data.get('phases', []):
+                checks = []
+                for chk in phase_data.get('checks', []):
+                    checks.append(DispatchCheckEntry(
+                        check_id=chk.get('check_id'),
+                        topology=chk.get('topology', 'all'),
+                        gate=chk.get('gate'),
+                    ))
+                phases.append(DispatchPhase(
+                    phase=phase_data.get('phase', 1),
+                    parallel=phase_data.get('parallel', True),
+                    gate=phase_data.get('gate'),
+                    checks=checks,
+                ))
+            self._steps[step_name] = DispatchStep(
+                name=step_data.get('name', step_name),
+                step_number=step_data.get('step_number', 0),
+                phases=phases,
+            )
+
+        self._loaded = True
+        return True
+
+    def get_step(self, step_name: str) -> Optional[DispatchStep]:
+        """Return the DispatchStep for a given step name, or None."""
+        return self._steps.get(step_name)
+
+    def get_phases(self, step_name: str, detected_topology: str = None) -> List[DispatchPhase]:
+        """Return phases for a step, with checks filtered by topology.
+
+        If detected_topology is provided, checks whose topology list does
+        not include the detected topology are removed.  If detected_topology
+        is None (not yet known), no filtering is applied.
+        """
+        step = self._steps.get(step_name)
+        if not step:
+            return []
+
+        if detected_topology is None:
+            return list(step.phases)
+
+        filtered_phases = []
+        for phase in step.phases:
+            filtered_checks = []
+            for chk in phase.checks:
+                if chk.topology == 'all' or detected_topology in chk.topology:
+                    filtered_checks.append(chk)
+            # Keep the phase even if empty (gate may still matter)
+            filtered_phases.append(DispatchPhase(
+                phase=phase.phase,
+                parallel=phase.parallel,
+                gate=phase.gate,
+                checks=filtered_checks,
+            ))
+        return filtered_phases
+
+    def get_all_check_ids(self, step_name: str) -> List[str]:
+        """All check IDs in a step (unfiltered), for summary display."""
+        step = self._steps.get(step_name)
+        if not step:
+            return []
+        ids = []
+        for phase in step.phases:
+            for chk in phase.checks:
+                if chk.check_id not in ids:
+                    ids.append(chk.check_id)
+        return ids
+
+    def get_step_name(self, step_name: str) -> str:
+        """Return the display name for a step."""
+        step = self._steps.get(step_name)
+        return step.name if step else step_name
+
+    def get_step_number(self, step_name: str) -> int:
+        """Return the step number for a step."""
+        step = self._steps.get(step_name)
+        return step.step_number if step else 0
+
+    def validate_against_rules(self, loaded_rules: List[RuleDefinition]) -> List[str]:
+        """Cross-reference manifest vs loaded YAML rules. Return warnings."""
+        warnings = []
+        loaded_ids = {r.check_id for r in loaded_rules}
+
+        # Checks in manifest but not in loaded rules
+        manifest_ids = set()
+        for step in self._steps.values():
+            for phase in step.phases:
+                for chk in phase.checks:
+                    manifest_ids.add(chk.check_id)
+
+        for cid in sorted(manifest_ids - loaded_ids):
+            warnings.append(f"Dispatch manifest references '{cid}' but no matching YAML rule file was loaded")
+
+        for cid in sorted(loaded_ids - manifest_ids):
+            warnings.append(f"Rule file '{cid}' exists but is not referenced in the dispatch manifest")
+
+        return warnings
 
 
 class RulesEngine:
@@ -130,6 +311,8 @@ class RulesEngine:
         self._used_cib_xml: bool = False  # True if sos_cmd with cib.xml was used
         # Track HANA resource state (running/stopped/disabled/unmanaged/absent/unknown)
         self._hana_resource_state: str = 'unknown'
+        # Detected cluster topology (Scale-Up / Scale-Out)
+        self._detected_topology: Optional[str] = None
 
     def set_hana_resource_state(self, state: str):
         """Set the HANA resource state detected by CHK_RESOURCE_STATUS."""
@@ -138,6 +321,14 @@ class RulesEngine:
     def get_hana_resource_state(self) -> str:
         """Get the detected HANA resource state."""
         return self._hana_resource_state
+
+    def set_detected_topology(self, topology: str):
+        """Set the detected cluster topology (e.g. 'Scale-Up', 'Scale-Out')."""
+        self._detected_topology = topology
+
+    def get_detected_topology(self) -> Optional[str]:
+        """Get the detected cluster topology, or None if not yet determined."""
+        return self._detected_topology
 
     def get_data_source_info(self) -> Dict[str, Any]:
         """Get summary of data sources used for checks.
@@ -1294,6 +1485,22 @@ class RulesEngine:
                     status=CheckStatus.SKIPPED,
                     severity=Severity.WARNING,
                     message=f"Skipped: required check {rule.requires} did not pass",
+                    node=None
+                )]
+
+        # Check topology_filter - skip if rule specifies a topology that
+        # doesn't match the detected topology (engine-level safety net)
+        if rule.topology_filter and self._detected_topology:
+            allowed = rule.topology_filter
+            if isinstance(allowed, str):
+                allowed = [allowed]
+            if self._detected_topology not in allowed:
+                return [CheckResult(
+                    check_id=rule.check_id,
+                    description=rule.description,
+                    status=CheckStatus.SKIPPED,
+                    severity=Severity.INFO,
+                    message=f"Not applicable for {self._detected_topology} topology",
                     node=None
                 )]
 

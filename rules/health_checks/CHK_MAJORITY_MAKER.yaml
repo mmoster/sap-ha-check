@@ -4,6 +4,7 @@ version: "2.0"
 severity: CRITICAL
 description: Validate majority maker configuration for Scale-Out clusters
 enabled: true
+topology_filter: [Scale-Out]  # Only Scale-Out clusters have majority makers
 
 # Scale-Out configuration:
 # - 2+ HANA nodes per site (4+ total HANA nodes)
