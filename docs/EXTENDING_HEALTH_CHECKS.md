@@ -1,37 +1,38 @@
-# SAP Cluster Health Check - Architecture Analysis
+# Extending Health Checks
 
-## Health Check YAML Files Location
+## Health Check YAML Files
 
 All health checks are defined in:
 ```
 rules/health_checks/CHK_*.yaml
 ```
 
-Currently **18 checks** are defined:
+Currently **22 checks** are defined:
 
 | Check ID | Severity | Description |
 |----------|----------|-------------|
-| `CHK_NODE_STATUS` | CRITICAL | Verify all cluster nodes are online |
-| `CHK_PACKAGE_CONSISTENCY` | CRITICAL | Verify package versions across nodes |
-| `CHK_CLUSTER_QUORUM` | CRITICAL | Check cluster quorum status |
-| `CHK_RESOURCE_STATUS` | CRITICAL | Verify resource status |
-| `CHK_QUORUM_CONFIG` | CRITICAL | Quorum configuration |
+| `CHK_ALERT_FENCING` | WARNING | Validate SAPHanaSR alert and fencing configuration |
 | `CHK_CIB_TIME_SYNC` | WARNING | CIB time synchronization |
-| `CHK_HANA_AUTOSTART` | WARNING | HANA autostart settings |
-| `CHK_SYSTEMD_SAP` | WARNING | Systemd SAP service status |
-| `CHK_CLUSTER_TYPE` | INFO | Detect Scale-Up vs Scale-Out |
-| `CHK_RESOURCE_FAILURES` | CRITICAL | Resource failure count |
-| `CHK_MAJORITY_MAKER` | WARNING | Majority maker configuration |
-| `CHK_CLONE_CONFIG` | WARNING | Clone resource configuration |
-| `CHK_SETUP_VALIDATION` | CRITICAL | SAP HANA HA best practices |
-| `CHK_ALERT_FENCING` | WARNING | Alert agent for fencing |
-| `CHK_HADR_HOOKS` | WARNING | HADR provider hooks |
-| `CHK_MASTER_SLAVE_ROLES` | CRITICAL | Master/slave roles |
-| `CHK_SITE_ROLES` | CRITICAL | Site roles |
-| `CHK_HANA_SR_STATUS` | CRITICAL | HANA System Replication status |
-| `CHK_HANA_INSTALLED` | CRITICAL | HANA installation detection |
-| `CHK_STONITH_CONFIG` | CRITICAL | STONITH/fencing configuration |
-| `CHK_REPLICATION_MODE` | WARNING | Replication mode (sync/syncmem) |
+| `CHK_CLONE_CONFIG` | CRITICAL | Validate clone/promotable resource configuration |
+| `CHK_CLUSTER_QUORUM` | CRITICAL | Verify cluster has quorum |
+| `CHK_CLUSTER_READY` | WARNING | Check if cluster is fully started (not in transition) |
+| `CHK_CLUSTER_TYPE` | INFO | Detect Scale-Up vs Scale-Out configuration |
+| `CHK_HADR_HOOKS` | CRITICAL | Validate HA/DR provider hooks |
+| `CHK_HANA_AUTOSTART` | WARNING | Validate HANA autostart is disabled |
+| `CHK_HANA_INSTALLED` | INFO | Detect HANA installation and running status |
+| `CHK_HANA_SR_STATUS` | CRITICAL | Verify HANA System Replication status |
+| `CHK_MAJORITY_MAKER` | CRITICAL | Validate majority maker configuration (Scale-Out) |
+| `CHK_MASTER_SLAVE_ROLES` | CRITICAL | Verify master/slave role consistency |
+| `CHK_NODE_STATUS` | CRITICAL | Verify all cluster nodes are online |
+| `CHK_PACKAGE_CONSISTENCY` | WARNING | Verify package versions across nodes |
+| `CHK_QUORUM_CONFIG` | CRITICAL | Validate quorum configuration (Scale-Up) |
+| `CHK_REPLICATION_MODE` | WARNING | Verify replication mode is sync or syncmem |
+| `CHK_RESOURCE_FAILURES` | WARNING | Detect failed resource operations |
+| `CHK_RESOURCE_STATUS` | CRITICAL | Verify SAP HANA resources are running |
+| `CHK_SETUP_VALIDATION` | CRITICAL | Validate against SAP HANA HA best practices |
+| `CHK_SITE_ROLES` | CRITICAL | Verify site roles consistency |
+| `CHK_STONITH_CONFIG` | CRITICAL | Verify STONITH/fencing is enabled |
+| `CHK_SYSTEMD_SAP` | WARNING | Validate SAP Host Agent and systemd integration |
 
 ---
 
@@ -45,13 +46,28 @@ This is a rule-based validation engine that separates:
 
 This separation allows checks to work both on **live systems** (via SSH/local commands) and **SOSreports** (offline analysis) with the same validation logic.
 
+### Dispatch Manifest
+
+The central dispatch manifest (`rules/check_dispatch.yaml`) controls:
+- **Which checks run in which step** (config, pacemaker, sap)
+- **Phase ordering** within each step (sequential phases, parallel checks within a phase)
+- **Topology filtering** (Scale-Up vs Scale-Out)
+- **Gates** (runtime conditions like "HANA resource running" or "HANA installed")
+
+```
+check_dispatch.yaml          CHK_*.yaml files
+    (what runs when)     +    (what to check)
+         ↓                        ↓
+    _run_step()          →   engine.run_check()
+```
+
 ---
 
-## How to Extend Existing Tests
+## How to Add a New Health Check
 
-### 1. Create a New Health Check YAML
+### Step 1: Create the YAML Rule File
 
-Create a file `rules/health_checks/CHK_YOUR_CHECK.yaml`:
+Create `rules/health_checks/CHK_YOUR_CHECK.yaml`:
 
 ```yaml
 # CHK_YOUR_CHECK - Description of what this checks
@@ -61,6 +77,9 @@ severity: CRITICAL  # CRITICAL | WARNING | INFO
 description: Your check description
 enabled: true
 optional: false  # If true, failures become warnings in non-strict mode
+
+# Optional: restrict to specific topologies
+# topology_filter: [Scale-Up]   # or [Scale-Out], or omit for all
 
 source_definitions:
   # Command to run on live systems
@@ -88,7 +107,94 @@ validation_logic:
       message: "Error message when check fails"
 ```
 
-### 2. Available Scope Options
+### Step 2: Add to the Dispatch Manifest
+
+Add an entry in `rules/check_dispatch.yaml` under the appropriate step and phase:
+
+```yaml
+steps:
+  pacemaker:                      # Step to add to
+    phases:
+      - phase: 1                  # Phase within the step
+        checks:
+          - check_id: CHK_YOUR_CHECK
+            # Optional: topology filter
+            # topology: [Scale-Up]
+            # Optional: gate (check only runs if gate passes)
+            # gate: hana_resource_running
+```
+
+**That's it.** No Python code needed.
+
+### Step 3: Verify
+
+Run the tool and check that your new check appears. The dispatch manifest is validated at startup against loaded YAML rule files — you'll see a warning if:
+- A check is in the manifest but has no YAML rule file
+- A YAML rule file exists but is not in the manifest
+
+---
+
+## Dispatch Manifest Reference
+
+### Steps and Phases
+
+Checks are organized into steps, each with one or more phases:
+
+```yaml
+steps:
+  config:       # Step 2: Cluster configuration
+  pacemaker:    # Step 3: Pacemaker/Corosync
+  sap:          # Step 4: SAP-specific
+```
+
+Phases within a step run **sequentially** (phase 1 completes before phase 2 starts). Checks within a phase run **in parallel**.
+
+### Topology Filtering
+
+Restrict a check to specific cluster types:
+
+```yaml
+- check_id: CHK_MAJORITY_MAKER
+  topology: [Scale-Out]       # Only runs on Scale-Out clusters
+```
+
+Topology is detected in the config step by `CHK_CLUSTER_TYPE`. If omitted, the check runs for all topologies.
+
+You can also set `topology_filter` in the YAML rule file itself as a safety net:
+
+```yaml
+# In CHK_MAJORITY_MAKER.yaml
+topology_filter: [Scale-Out]
+```
+
+### Gates
+
+Gates are runtime conditions that control whether a phase or individual check runs:
+
+```yaml
+# Phase-level gate: skip entire phase if HANA not installed
+- phase: 2
+  gate: hana_installed
+  checks:
+    - check_id: CHK_HANA_SR_STATUS
+      gate: hana_resource_running   # Check-level gate
+    - check_id: CHK_REPLICATION_MODE  # No gate, always runs in this phase
+```
+
+Available gates:
+
+| Gate | Condition |
+|------|-----------|
+| `hana_installed` | At least one node has HANA installed |
+| `hana_resource_running` | HANA resource is active in Pacemaker |
+
+When a gate is closed, affected checks are recorded as SKIPPED.
+
+---
+
+## YAML Rule Reference
+
+### Scope Options
 
 | Scope | Behavior |
 |-------|----------|
@@ -97,7 +203,7 @@ validation_logic:
 | `any_node` | Pass if **at least one node** passes |
 | `all_nodes_equal` | All nodes must have **identical values** |
 
-### 3. Available Operators
+### Operators
 
 | Operator | Description | Example |
 |----------|-------------|---------|
@@ -110,7 +216,7 @@ validation_logic:
 | `gt` / `lt` | Greater/less than | `value: 10` |
 | `info_if_exists` | Always passes, shows info | Informational only |
 
-### 4. Advanced Features
+### Advanced Features
 
 #### Override Severity Per-Expectation
 
@@ -156,11 +262,34 @@ validation_logic:
     - corosync_version
 ```
 
+#### Topology Filter (Rule-Level)
+
+```yaml
+# Only run this check on Scale-Out clusters
+topology_filter: [Scale-Out]
+```
+
+#### HANA Nodes Only
+
+```yaml
+# Skip nodes excluded from HANA resources (majority makers, app servers)
+hana_nodes_only: true
+```
+
+#### Dependency Gating
+
+```yaml
+# Only run if CHK_CLUSTER_TYPE passed
+requires: CHK_CLUSTER_TYPE
+```
+
 ---
 
 ## Example: Adding a New Check
 
 **Check if cluster has no failed actions:**
+
+### 1. Create the rule file
 
 ```yaml
 # rules/health_checks/CHK_FAILED_ACTIONS.yaml
@@ -193,20 +322,37 @@ validation_logic:
       message: "Cluster has failed actions - review with 'pcs status'"
 ```
 
+### 2. Add to dispatch manifest
+
+In `rules/check_dispatch.yaml`, add to the pacemaker step:
+
+```yaml
+  pacemaker:
+    phases:
+      - phase: 1
+        checks:
+          # ... existing checks ...
+          - check_id: CHK_FAILED_ACTIONS
+```
+
 ---
 
 ## Processing Flow
 
 ```
-CHK_*.yaml → engine.load_rules() → engine.run_all_checks()
-                                           ↓
-                    ┌──────────────────────┴──────────────────────┐
-                    │ For each rule:                              │
-                    │  1. Execute live_cmd OR read sos_path       │
-                    │  2. Parse output with regex patterns        │
-                    │  3. Evaluate expectations                   │
-                    │  4. Return CheckResult (PASSED/FAILED/...)  │
-                    └─────────────────────────────────────────────┘
+check_dispatch.yaml  →  _run_step()  →  For each phase:
+                                           1. Evaluate phase gate
+                                           2. Filter by topology
+                                           3. Evaluate per-check gates
+                                           4. Run checks in parallel
+                                           5. Post-phase hooks
+                                                  ↓
+CHK_*.yaml  →  engine.run_check()  →  1. Check topology_filter
+                                       2. Check requires dependency
+                                       3. Execute live_cmd OR read sos_path
+                                       4. Parse output with regex
+                                       5. Evaluate expectations
+                                       6. Return CheckResult
 ```
 
 ---
@@ -215,21 +361,19 @@ CHK_*.yaml → engine.load_rules() → engine.run_all_checks()
 
 | File | Purpose |
 |------|---------|
-| `rules/engine.py` | Rules engine that processes YAML checks |
-| `rules/health_checks/CHK_*.yaml` | Health check definitions |
-| `cluster_health_check.py` | Main CLI entry point |
+| `rules/check_dispatch.yaml` | Dispatch manifest: step/phase/gate/topology assignment |
+| `rules/health_checks/CHK_*.yaml` | Health check definitions (data + validation) |
+| `rules/engine.py` | Rules engine, CheckDispatch loader |
+| `cluster_health_check.py` | Main CLI, GateRegistry, step orchestration |
 | `report_generator.py` | PDF/YAML report generation |
 
 ---
 
 ## Design Philosophy
 
-The engine uses a **declarative approach** where you describe *what* to check, not *how* to check it. The `rules/engine.py` handles:
+The engine uses a **declarative approach** where you describe *what* to check, not *how* to check it. Adding new checks requires **only YAML edits**:
 
-- Command execution (local/SSH/Ansible)
-- SOSreport file reading
-- Regex parsing
-- Expectation evaluation
-- Result aggregation
+1. **Rule file** (`CHK_*.yaml`) — defines data collection, parsing, and validation
+2. **Dispatch manifest** (`check_dispatch.yaml`) — defines when and where the check runs
 
-This means adding new checks requires **zero Python code** - just YAML configuration.
+The `rules/engine.py` handles command execution, SOSreport reading, regex parsing, expectation evaluation, and result aggregation. The `cluster_health_check.py` orchestrator handles step sequencing, gate evaluation, topology filtering, and post-phase state extraction.
