@@ -10,6 +10,24 @@ This is exactly where the open-source tool [sap-ha-check](https://github.com/mmo
 
 The tool automates the inspection and analysis of SAP HA clusters. It scans the cluster configuration, node status, SAP-specific resources, and system parameters — uncovering potential issues, misconfigurations, or deviations from best practices. Instead of manually parsing hundreds of lines of `crm_mon` or `corosync.conf` output, the tool delivers structured results and even generates PDF reports.
 
+The current version focuses on **SAP HANA Scale-Up** and **Scale-Out** configurations — the most common HA setups in the SAP landscape. Support for **ASCS/ERS** (SAP Central Services) environments is planned for a future release.
+
+---
+
+## Smart Cluster Auto-Discovery
+
+One of the tool's standout features is its intelligent cluster discovery. You don't need to know or specify every node in the cluster — just provide a single seed node, and the tool automatically discovers all remaining cluster members from the Pacemaker configuration. Whether you specify one node or all of them, it contacts every node in the cluster to ensure a complete analysis:
+
+```bash
+# Just provide one node - the tool discovers the rest
+./cluster_health_check.py hana01
+
+# The tool automatically finds hana02 (and any other members)
+# and runs checks across the entire cluster
+```
+
+This works across all access methods: SSH, local execution, and even SOSreport analysis, where it reads the `corosync.conf` inside the SOSreport to identify all cluster members and resolves hostname aliases automatically.
+
 ---
 
 ## How Is It Used? (Maximum Flexibility)
