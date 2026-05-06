@@ -270,7 +270,7 @@ class AccessDiscovery:
 
         # Determine the expected directory name (remove .tar.xz, .tar.gz, etc.)
         dir_name = archive_name
-        for ext in ['.tar.xz', '.tar.gz', '.tar.bz2', '.tgz', '.txz']:
+        for ext in ['.tar.xz', '.tar.gz', '.tar.bz2', '.tgz', '.txz', '.tar']:
             if dir_name.endswith(ext):
                 dir_name = dir_name[:-len(ext)]
                 break
@@ -288,6 +288,8 @@ class AccessDiscovery:
             cmd = ['tar', 'xzf', archive_path, '-C', base_dir]
         elif archive_path.endswith('.tar.bz2'):
             cmd = ['tar', 'xjf', archive_path, '-C', base_dir]
+        elif archive_path.endswith('.tar'):
+            cmd = ['tar', 'xf', archive_path, '-C', base_dir]
         else:
             return (False, f"Unknown archive format: {archive_name}")
 
@@ -328,7 +330,7 @@ class AccessDiscovery:
 
         # First, find and extract any compressed SOSreports (multithreaded)
         archives = []
-        archive_extensions = ('.tar.xz', '.tar.gz', '.tar.bz2', '.tgz', '.txz')
+        archive_extensions = ('.tar.xz', '.tar.gz', '.tar.bz2', '.tgz', '.txz', '.tar')
         for item in os.listdir(self.sosreport_dir):
             if item.startswith('sosreport-') and item.endswith(archive_extensions):
                 archive_path = os.path.join(self.sosreport_dir, item)
@@ -577,6 +579,101 @@ class AccessDiscovery:
                 pass
 
         return nodes
+
+    def _get_sosreport_hostname_aliases(self, sosreport_path: str) -> set:
+        """
+        Get all hostname aliases for a sosreport node by parsing /etc/hosts
+        and matching against the node's own IP addresses.
+
+        Returns a set of all hostnames (short names) that resolve to this node,
+        including the etc/hostname value itself.
+        """
+        sos_path = Path(sosreport_path)
+        aliases = set()
+
+        # Get the primary hostname
+        hostname_file = sos_path / "etc/hostname"
+        if hostname_file.exists():
+            try:
+                primary = hostname_file.read_text().strip().split('.')[0]
+                if primary:
+                    aliases.add(primary)
+            except Exception:
+                pass
+
+        # Collect this node's IP addresses from network interface data
+        node_ips = set()
+        ip_addr_files = [
+            sos_path / "sos_commands/networking/ip_-o_addr",
+            sos_path / "sos_commands/networking/ip_addr",
+        ]
+        for ip_file in ip_addr_files:
+            if ip_file.exists():
+                try:
+                    content = ip_file.read_text()
+                    # Match inet <ip>/prefix patterns
+                    for match in re.findall(r'inet\s+(\d+\.\d+\.\d+\.\d+)/', content):
+                        if not match.startswith('127.'):
+                            node_ips.add(match)
+                    break  # Use first available file
+                except Exception:
+                    pass
+
+        if not node_ips:
+            return aliases
+
+        # Parse /etc/hosts and find all hostnames mapping to this node's IPs
+        hosts_file = sos_path / "etc/hosts"
+        if hosts_file.exists():
+            try:
+                for line in hosts_file.read_text().splitlines():
+                    line = line.strip()
+                    if not line or line.startswith('#'):
+                        continue
+                    parts = line.split()
+                    if len(parts) >= 2 and parts[0] in node_ips:
+                        # Add all hostnames for this IP (short names only)
+                        for name in parts[1:]:
+                            short = name.split('.')[0]
+                            if short:
+                                aliases.add(short)
+            except Exception:
+                pass
+
+        return aliases
+
+    def _resolve_sosreport_aliases(self, sosreports: Dict[str, str],
+                                   missing_nodes: set) -> Dict[str, str]:
+        """
+        Resolve missing corosync node names to existing sosreports by hostname alias.
+
+        When /etc/hostname differs from corosync nodelist names (e.g., AWS instance
+        name vs application hostname), this method matches them via /etc/hosts.
+
+        Returns dict: {corosync_name: sosreport_path} for resolved nodes.
+        """
+        if not missing_nodes:
+            return {}
+
+        resolved = {}
+
+        # Build alias map: for each sosreport, get all hostname aliases
+        sos_alias_map = {}  # alias -> (primary_hostname, sosreport_path)
+        for hostname, sos_path in sosreports.items():
+            aliases = self._get_sosreport_hostname_aliases(sos_path)
+            for alias in aliases:
+                sos_alias_map[alias] = (hostname, sos_path)
+
+        # Try to resolve each missing node
+        for node_name in list(missing_nodes):
+            short_name = node_name.split('.')[0]
+            if short_name in sos_alias_map:
+                primary_hostname, sos_path = sos_alias_map[short_name]
+                resolved[node_name] = sos_path
+                if self.debug:
+                    print(f"    [DEBUG] Resolved {node_name} -> {primary_hostname} (same host)")
+
+        return resolved
 
     def extract_cluster_config_from_cib(self, sosreport_path: str = None) -> dict:
         """
@@ -1907,6 +2004,28 @@ class AccessDiscovery:
                     # Find nodes we don't have SOSreports for
                     missing_sosreports = expected_nodes - set(sosreports.keys())
 
+                    # Resolve hostname aliases: corosync names may differ from /etc/hostname
+                    # (e.g., corosync uses "syz2bns2dbn01" but /etc/hostname is "ANL0117800957")
+                    # When resolved, register under the corosync name (what pacemaker uses)
+                    # and drop the /etc/hostname duplicate to avoid running checks twice
+                    resolved_aliases = {}
+                    if missing_sosreports:
+                        resolved_aliases = self._resolve_sosreport_aliases(sosreports, missing_sosreports)
+                        if resolved_aliases:
+                            for corosync_name, sos_path in resolved_aliases.items():
+                                primary = [h for h, p in sosreports.items() if p == sos_path]
+                                primary_name = primary[0] if primary else "?"
+                                print(f"\n[INFO] Hostname alias resolved: {corosync_name} = {primary_name} (same host)")
+                                # Re-register sosreport under corosync name, remove /etc/hostname entry
+                                sosreports[corosync_name] = sos_path
+                                if primary_name in sosreports and primary_name != corosync_name:
+                                    del sosreports[primary_name]
+                            # Remove resolved nodes from missing set
+                            missing_sosreports -= set(resolved_aliases.keys())
+                            # Update cluster nodes list to use corosync names
+                            if cluster_name and cluster_name in self.config.clusters:
+                                self.config.clusters[cluster_name]['nodes'] = list(sosreports.keys())
+
                     if missing_sosreports:
                         print(f"\n[INFO] Cluster has {len(expected_nodes)} nodes, but only {len(sosreports)} SOSreport(s)")
                         print(f"       Missing SOSreports for: {', '.join(sorted(missing_sosreports))}")
@@ -1915,36 +2034,54 @@ class AccessDiscovery:
                     # Clear old nodes
                     self.config.nodes = {}
 
-                    # Add nodes with SOSreports
+                    # Get local hostname to detect if we're running on a cluster node
+                    local_hostname = self.local_hostname or self.get_local_hostname()
+
+                    # SOSreport-only mode: nodes with SOSreports use them directly (no SSH probing)
+                    # Only nodes WITHOUT SOSreports (missing from cluster) attempt SSH
+                    total_nodes = len(sosreports) + len(missing_sosreports)
+                    print(f"\n=== Checking access to {total_nodes} cluster node(s) ===")
+                    print(f"  [INFO] SOSreport-only mode: skipping SSH for nodes with SOSreports")
+
+                    # Process nodes WITH SOSreports - use sosreport directly
                     for hostname, path in sosreports.items():
-                        all_hosts[hostname] = {'ansible_info': None, 'sosreport_path': path}
+                        node = NodeAccess(hostname=hostname)
+                        node.last_checked = datetime.now().isoformat()
+                        node.sosreport_path = path
+                        node.machine_id = self.get_machine_id_sosreport(path)
 
-                    # Add nodes without SOSreports (will try SSH)
-                    for hostname in missing_sosreports:
-                        all_hosts[hostname] = {'ansible_info': None, 'sosreport_path': None}
+                        # Check if this node is the local machine
+                        if hostname == local_hostname:
+                            node.preferred_method = 'local'
+                            print(f"  {hostname}: SOSreport + Local (this node) -> local")
+                        else:
+                            node.preferred_method = 'sosreport'
+                            print(f"  {hostname}: SOSreport -> sosreport")
 
-                    # Check access to all nodes (parallel)
-                    print(f"\n=== Checking access to {len(all_hosts)} cluster node(s) ===")
-                    with ThreadPoolExecutor(max_workers=min(len(all_hosts), self.MAX_WORKERS)) as executor:
-                        futures = {
-                            executor.submit(self.check_node_access, hostname, None, info.get('sosreport_path')): hostname
-                            for hostname, info in all_hosts.items()
-                        }
-                        for future in as_completed(futures):
-                            hostname = futures[future]
-                            try:
-                                node = future.result()
-                                self.config.nodes[hostname] = asdict(node)
-                                if node.sosreport_path and node.ssh_reachable:
-                                    print(f"  {hostname}: SOSreport + SSH({node.ssh_user}) -> ssh (live)")
-                                elif node.sosreport_path:
-                                    print(f"  {hostname}: SOSreport -> sosreport")
-                                elif node.ssh_reachable:
-                                    print(f"  {hostname}: SSH({node.ssh_user}) -> ssh (live)")
-                                else:
-                                    print(f"  {hostname}: NO ACCESS")
-                            except Exception as e:
-                                print(f"  {hostname}: Error - {e}")
+                        self.config.nodes[hostname] = asdict(node)
+
+                    # Process nodes WITHOUT SOSreports - try SSH/local
+                    if missing_sosreports:
+                        with ThreadPoolExecutor(max_workers=min(len(missing_sosreports), self.MAX_WORKERS)) as executor:
+                            futures = {
+                                executor.submit(self.check_node_access, hostname, None, None): hostname
+                                for hostname in missing_sosreports
+                            }
+                            for future in as_completed(futures):
+                                hostname = futures[future]
+                                try:
+                                    node = future.result()
+                                    # Check if this missing node is the local machine
+                                    if hostname == local_hostname and not node.ssh_reachable:
+                                        node.preferred_method = 'local'
+                                        print(f"  {hostname}: Local (this node, no SOSreport) -> local")
+                                    elif node.ssh_reachable:
+                                        print(f"  {hostname}: SSH({node.ssh_user}) -> ssh (live, no SOSreport)")
+                                    else:
+                                        print(f"  {hostname}: NO ACCESS (missing SOSreport)")
+                                    self.config.nodes[hostname] = asdict(node)
+                                except Exception as e:
+                                    print(f"  {hostname}: Error - {e}")
 
                     self.config.sosreport_directory = self.sosreport_dir
                     self.config.discovery_complete = True
