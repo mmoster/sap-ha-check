@@ -153,6 +153,60 @@ When issues are detected, the report clearly highlights them with severity level
 
 ---
 
+## Built-In Intelligence
+
+Under the hood, sap-ha-check does more than just run checks — it adapts to your environment automatically:
+
+- **RHEL & Pacemaker version detection**: Reads `/etc/redhat-release` and the installed Pacemaker RPM to tailor checks to your specific platform version (RHEL 8, 9, and 10 are supported).
+- **Cluster type detection**: Automatically distinguishes Scale-Up from Scale-Out configurations based on the `clone-max` value in the CIB, and adjusts which checks are executed accordingly.
+- **Architecture detection**: Identifies whether you're running the modern ANGI resource agent (`sap-hana-ha`) or the legacy agents (`resource-agents-sap-hana`), skipping checks that don't apply.
+- **HANA SID & instance discovery**: Detects the `sidadm` user, extracts the SID and instance number, and checks whether the database is actually running.
+- **Cluster status awareness**: If Pacemaker or Corosync isn't running, the tool warns you and falls back to static analysis from `corosync.conf` instead of failing outright.
+- **Hostname alias resolution**: When analyzing SOSreports, the tool resolves mismatches between corosync node names and system hostnames by cross-referencing IPs in `/etc/hosts` — a common situation in cloud environments where instance names differ from cluster node names.
+- **TCP port pre-check**: Before attempting SSH login, the tool checks if port 22 is reachable (2-second timeout). Unreachable nodes are skipped immediately, avoiding long SSH timeouts.
+
+---
+
+## Automation & Cronjob Support
+
+sap-ha-check is designed to run unattended — in cron jobs, CI/CD pipelines, or monitoring scripts:
+
+- **Auto-timeout prompts**: All interactive prompts (e.g., the version update check) automatically skip after 20 seconds if no response is given.
+- **Non-TTY detection**: When the tool detects that stdin is not a terminal (piped input, cron), all interactive prompts are skipped automatically.
+- **Spinner suppression**: Progress animations are disabled when output is redirected to a file or pipe.
+- **Machine-readable output**: Results are saved as YAML (`last_run_status.yaml`) for easy parsing by monitoring tools.
+- **Skip PDF overhead**: Use `--no-pdf` to skip PDF generation in automated runs.
+
+Example cronjob for weekly health checks:
+
+```bash
+# Run every Monday at 6:00 AM, log results
+0 6 * * 1 /opt/sap-ha-check/cluster_health_check.py --local \
+    --no-update-check --no-pdf >> /var/log/sap_healthcheck.log 2>&1
+```
+
+---
+
+## SOSreport Workflows
+
+For support engineers and consultants, the SOSreport capabilities go beyond simple analysis:
+
+- **Supported formats**: `.tar.xz`, `.tar.gz`, `.tar.bz2`, and plain `.tar` archives are all supported and auto-extracted in parallel.
+- **SOSreport-only mode**: When using `-s`, the tool works purely offline — no SSH connections are attempted, only SOSreport data is analyzed.
+- **Complete collection workflow**: A single command discovers the cluster, configures SAP SOSreport extensions, creates SOSreports on all nodes in parallel, and fetches them via SCP:
+
+```bash
+# One command to collect everything
+./cluster_health_check.py -R hana01
+
+# Auto-configure SAP extensions without prompting
+./cluster_health_check.py -R hana01 --configure-extensions
+```
+
+The SAP extensions add critical data to SOSreports: `SAPHanaSR-showAttr` output, cluster state snapshots, and resource constraint configurations — data that is often missing in default SOSreports.
+
+---
+
 ## How Can You Extend the Tool?
 
 Since sap-ha-check is written in Python, it can be adapted to your own or customer-specific requirements. New checks can be added as YAML-based rule files — see [EXTENDING_HEALTH_CHECKS.md](EXTENDING_HEALTH_CHECKS.md) for the full guide.

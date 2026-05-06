@@ -111,6 +111,97 @@ OPTIONS REFERENCE
     -w, --workers     Parallel workers (default: 10)
     -r, --rules-path  Custom rules directory
 
+AUTOMATION & CRONJOB SUPPORT
+----------------------------
+  The tool is designed to run unattended (cron, pipelines, scripts):
+
+  - Auto-timeout prompts: All interactive prompts auto-skip after 20s
+    (e.g., version update prompt auto-declines if no response)
+  - Non-TTY detection: When stdin is not a terminal (piped/cron), all
+    interactive prompts are skipped automatically
+  - Spinner suppression: Progress animations are disabled when stdout
+    is not a terminal (redirected to file/pipe)
+  - Exit codes: Returns non-zero on critical failures for scripting
+  - YAML output: Machine-readable results in last_run_status.yaml
+  - PDF can be skipped: --no-pdf avoids PDF generation overhead
+
+  Example cronjob:
+    0 6 * * 1 /opt/sap-ha-check/cluster_health_check.py --local \
+        --no-update-check --no-pdf >> /var/log/sap_healthcheck.log 2>&1
+
+AUTO-DETECTION & INTELLIGENCE
+-----------------------------
+  The tool automatically detects and adapts to your environment:
+
+  - RHEL version: Reads /etc/redhat-release (supports RHEL 8, 9, 10)
+  - Pacemaker version: Detects from installed RPM
+  - Cluster type: Scale-Up vs Scale-Out (based on clone-max value)
+  - Architecture type: ANGI (sap-hana-ha) vs legacy (resource-agents-sap-hana)
+  - HANA SID & instance: Discovers sidadm user, SID, instance number
+  - HANA running status: Detects if database is running or stopped
+  - Cluster status: Warns if Pacemaker/Corosync not running, falls back
+    to static corosync.conf analysis
+  - Hostname aliases: Resolves mismatches between corosync node names
+    and system hostnames via /etc/hosts IP matching (SOSreport mode)
+  - Majority maker: Identifies majority maker nodes in Scale-Out clusters
+
+SOSREPORT SPECIAL FEATURES
+--------------------------
+  SOSreport analysis works entirely offline (no SSH to cluster nodes):
+
+  Supported formats:
+    .tar.xz, .tar.gz, .tar.bz2, .tar (plain uncompressed)
+
+  Features:
+  - Auto-extraction: Archives extracted automatically in parallel
+  - SOSreport-only mode: With -s flag, skips all SSH access attempts
+    and works purely from SOSreport data
+  - Hostname alias resolution: Matches corosync node names to SOSreport
+    hostnames via /etc/hosts IP cross-referencing
+  - Cluster name detection: Extracts cluster name from corosync.conf
+    inside the SOSreport
+  - Complete SOSreport workflow (-R): Discover cluster from seed node,
+    configure SAP extensions, create and fetch SOSreports in one step
+
+  SOSreport collection examples:
+    ./cluster_health_check.py -R hana01                  # Full workflow
+    ./cluster_health_check.py -R hana01 --configure-extensions  # Auto-config
+    ./cluster_health_check.py -F mycluster               # Fetch existing
+    ./cluster_health_check.py -F mycluster --create-sosreports  # Create & fetch
+
+PERFORMANCE FEATURES
+--------------------
+  - TCP port pre-check: Before SSH login, checks if port 22 is open
+    (2s timeout). Unreachable nodes are skipped immediately instead of
+    waiting for SSH timeout (~14s per node)
+  - Parallel execution: Health checks run in parallel within phases
+    (configurable: -w/--workers, default 10)
+  - Parallel extraction: SOSreport archives extracted in parallel
+  - Config caching: Cluster topology saved in cluster_access_config.yaml,
+    subsequent runs reuse discovery results (use -f to force re-discovery)
+
+VERSION & UPDATE CHECK
+----------------------
+  - Automatic check: On startup, compares local git HEAD with remote
+  - Shows: "[INFO] A newer version is available (N commit(s) behind)"
+  - Auto-timeout: Prompt auto-skips after 20 seconds
+  - Disable: --no-update-check skips the check entirely
+  - Auto-restart: If updated, restarts the script with same arguments
+
+LESS-KNOWN FLAGS
+----------------
+  -a, --access-only      Only discover cluster access, skip health checks
+  -E, --export-ansible   Export cluster config as Ansible group_vars YAML
+  --strict               Strict mode - all checks required, no soft-skip
+  --skip STEPS           Skip steps: access, config, pacemaker, sap, report
+  --suggest STEP         Show troubleshooting suggestions for a step
+  --suggest auto         Auto-detect failing step and show suggestions
+  -w N, --workers N      Parallel workers for rule execution (default: 10)
+  -r PATH                Custom rules directory (CHK_*.yaml files)
+  -c DIR, --config-dir   Custom config directory
+  --create-sosreports    Auto-create missing SOSreports (with -F)
+  --configure-extensions Auto-configure SAP extensions (with -R)
+
 TROUBLESHOOTING
 ---------------
   No SSH access:
