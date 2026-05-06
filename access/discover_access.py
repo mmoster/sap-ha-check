@@ -13,6 +13,7 @@ Results are stored in a YAML config file for incremental investigation.
 import os
 import sys
 import select
+import socket
 import subprocess
 import yaml
 import argparse
@@ -1336,7 +1337,6 @@ class AccessDiscovery:
             pass
 
         # Fallback to socket
-        import socket
         return socket.gethostname().split('.')[0]
 
     def check_cluster_services_running(self, host: str = None, user: str = None) -> tuple:
@@ -1741,8 +1741,23 @@ class AccessDiscovery:
 
         return cluster_name, cluster_nodes
 
+    def _is_port_open(self, hostname: str, port: int = 22, timeout: float = 2) -> bool:
+        """Fast TCP port check. Returns True if port is open, False otherwise."""
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.settimeout(timeout)
+                return sock.connect_ex((hostname, port)) == 0
+        except (socket.gaierror, OSError):
+            return False
+
     def check_ssh_access(self, hostname: str, user: str = None) -> tuple:
         """Check SSH access to a host. Returns (reachable, user)."""
+        # Fast pre-check: verify SSH port is open before attempting login
+        if not self._is_port_open(hostname):
+            if self.debug:
+                print(f"    [DEBUG] {hostname}: port 22 not open, skipping SSH login attempts")
+            return False, None
+
         users_to_try = [user] if user else ['root', os.environ.get('USER', 'root')]
 
         for try_user in users_to_try:
