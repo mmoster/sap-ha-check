@@ -1,6 +1,6 @@
 # SAP HANA Pacemaker Cluster Health Check
 
-A comprehensive health check tool for SAP HANA Pacemaker clusters on Red Hat Enterprise Linux (RHEL 8/9/10).
+A comprehensive health check tool for SAP HANA HA configurations on Pacemaker/Corosync clusters running Red Hat Enterprise Linux (RHEL 8/9/10). The current version focuses on **SAP HANA Scale-Up** and **Scale-Out** cluster topologies. Support for ASCS/ERS environments is planned for a future release.
 
 ## Quick Start
 
@@ -40,7 +40,7 @@ cd sap-ha-check
 ```
 
 This scans the current directory for:
-- SOSreport archives (`.tar.xz`, `.tar.gz`)
+- SOSreport archives (`.tar.xz`, `.tar.gz`, `.tar`)
 - Hosts files (`hosts.txt`, `inventory`)
 - Previous health check results (`.yaml`)
 
@@ -61,10 +61,10 @@ This is useful when you don't remember where your SOSreports are stored or want 
 
 ## Features
 
-- **Multiple Access Methods**: SSH, Ansible inventory, or SOSreport analysis
+- **Multiple Access Methods**: Local execution, SSH, Ansible inventory, or SOSreport analysis
 - **Multithreaded Execution**: Parallel node connectivity checks and rule execution
 - **22 Built-in Health Checks**: Cluster configuration, Pacemaker/Corosync, and SAP-specific validations
-- **Automatic Cluster Discovery**: Discovers all nodes from Pacemaker configuration
+- **Smart Auto-Discovery**: Provide a single seed node — the tool discovers all cluster members automatically from Pacemaker configuration
 - **Cluster Status Detection**: Warns if cluster services are not running, falls back to static config
 - **Multi-Cluster Support**: Prompts for selection when multiple clusters are discovered
 - **Version Detection**: Automatically detects RHEL and Pacemaker versions
@@ -98,7 +98,7 @@ cd sap-ha-check-main
 
 ### Requirements
 
-- Python 3.6+ (included in RHEL 8/9)
+- Python 3.6+ (included in RHEL 8/9/10)
 - PyYAML (`pip install pyyaml` or `dnf install python3-pyyaml`)
 - fpdf2 (optional, for PDF reports): `pip install fpdf2`
 
@@ -133,7 +133,7 @@ SOSreport Collection:
 
 | Step | Description |
 |------|-------------|
-| 1. Access Discovery | Discovers SSH/Ansible/SOSreport access to cluster nodes |
+| 1. Access Discovery | Discovers local, SSH, Ansible, or SOSreport access to cluster nodes |
 | 2. Cluster Configuration | Node status, quorum, clone config, package consistency |
 | 3. Pacemaker/Corosync | STONITH, resources, fencing, master/slave roles |
 | 4. SAP-Specific | HANA SR status, replication mode, HA/DR hooks, systemd |

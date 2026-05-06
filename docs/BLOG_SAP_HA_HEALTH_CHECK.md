@@ -8,7 +8,7 @@ This is exactly where the open-source tool [sap-ha-check](https://github.com/mmo
 
 ## What Does sap-ha-check Do?
 
-The tool automates the inspection and analysis of SAP HA clusters. It scans the cluster configuration, node status, SAP-specific resources, and system parameters — uncovering potential issues, misconfigurations, or deviations from best practices. Instead of manually parsing hundreds of lines of `crm_mon` or `corosync.conf` output, the tool delivers structured results and even generates PDF reports.
+The tool automates the inspection and analysis of SAP HANA HA clusters running on **Pacemaker/Corosync** on **Red Hat Enterprise Linux (RHEL 8, 9, and 10)**. It runs 22 automated checks covering cluster configuration, node status, SAP-specific resources, and system parameters — uncovering potential issues, misconfigurations, or deviations from best practices. Instead of manually parsing hundreds of lines of `crm_mon` or `corosync.conf` output, the tool delivers structured results and auto-generated PDF reports.
 
 The current version focuses on **SAP HANA Scale-Up** and **Scale-Out** configurations — the most common HA setups in the SAP landscape. Support for **ASCS/ERS** (SAP Central Services) environments is planned for a future release.
 
