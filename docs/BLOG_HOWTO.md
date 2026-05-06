@@ -191,6 +191,71 @@ A problem is shown as:
     Severity: CRITICAL
 ```
 
+### PDF Report Example
+
+The tool auto-generates a PDF report. Here's what the first page looks like for a healthy cluster:
+
+```
+╔═══════════════════════════════════════════════════════════════╗
+║         SAP Pacemaker Cluster Health Check Report             ║
+╚═══════════════════════════════════════════════════════════════╝
+
+  Cluster:          production_hana
+  Date:             2026-05-06 14:30:22
+  Data Source:      Live cluster analysis
+  Nodes:            hana01, hana02
+  Cluster Type:     Scale-Up
+
+  RHEL Version:     RHEL 9.4
+  Pacemaker:        2.1.7
+  SAP HANA SID:     PRD (Instance: 00)
+
+  ╔═══════════════════════════════════════════════════════════╗
+  ║                                                           ║
+  ║             ✓  CLUSTER IS HEALTHY  ✓                      ║
+  ║                                                           ║
+  ║      All health checks passed successfully.               ║
+  ║      Your SAP HANA cluster is properly configured.        ║
+  ║                                                           ║
+  ╚═══════════════════════════════════════════════════════════╝
+
+  Summary:
+    PASSED:   22    FAILED:   0    SKIPPED:   0    ERROR:   0
+```
+
+The following pages contain a detailed results table:
+
+```
+  Health Check Results
+  ─────────────────────────────────────────────────────────────
+
+  #   Check                    Node     Status   Severity
+  ──  ───────────────────────  ───────  ──────   ────────
+   1  CHK_NODE_STATUS          cluster  PASSED   CRITICAL
+      Verify all cluster nodes are online
+
+   2  CHK_CLUSTER_QUORUM       cluster  PASSED   CRITICAL
+      Verify cluster has quorum
+
+   3  CHK_STONITH_CONFIG       cluster  PASSED   CRITICAL
+      Verify STONITH/fencing is enabled and configured
+
+   4  CHK_RESOURCE_STATUS      cluster  PASSED   CRITICAL
+      Verify SAP HANA cluster resources are running
+
+   5  CHK_HANA_SR_STATUS       cluster  PASSED   CRITICAL
+      Verify HANA System Replication status is healthy
+
+   6  CHK_PACKAGE_CONSISTENCY  hana01   PASSED   WARNING
+      pacemaker-2.1.7 | corosync-3.1.8 | sap-hana-ha-1.2.12
+
+   7  CHK_PACKAGE_CONSISTENCY  hana02   PASSED   WARNING
+      pacemaker-2.1.7 | corosync-3.1.8 | sap-hana-ha-1.2.12
+      ...
+```
+
+Use `-v` for verbose reports that include all checks with full details — ideal for audits and compliance documentation.
+
 ---
 
 ## Useful Options
