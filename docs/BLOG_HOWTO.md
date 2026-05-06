@@ -13,7 +13,7 @@ This tool runs 22 automated health checks against your SAP HANA HA cluster, cove
 - Package consistency across nodes
 
 **Key features:**
-- Works with **live clusters** (via SSH) or **offline analysis** (via SOSreports)
+- Works with **live clusters** (via SSH), **local execution**, or **offline analysis** (via SOSreports)
 - **Detects cluster status** - warns if Pacemaker/Corosync not running
 - **Multi-cluster support** - prompts for selection if multiple clusters found
 - **Version detection** - automatically detects RHEL and Pacemaker versions
