@@ -63,15 +63,20 @@ source_definitions:
     fi
     if [ -n "$SIDADM" ] && id "$SIDADM" >/dev/null 2>&1; then
       echo "sidadm_user=$SIDADM";
-      # Run hdbnsutil -sr_state as sidadm to get HANA topology
-      # Count hosts per site from Host Mappings section
-      SR_OUTPUT=$(su - "$SIDADM" -c "hdbnsutil -sr_state" 2>/dev/null);
-      if [ -n "$SR_OUTPUT" ]; then
-        echo "$SR_OUTPUT";
-        # Count unique hosts per site from "hostname -> [SITE] target" lines
-        # Scale-Out: multiple hosts map to same site; Scale-Up: one host per site
-        echo "=== HOSTS_PER_SITE ===";
-        echo "$SR_OUTPUT" | grep -E '^\S+\s+->\s+\[' | sed 's/.*\[\([^]]*\)\].*/\1/' | sort | uniq -c | awk '{print "site_" $2 "_hosts=" $1}';
+      # Verify hdbnsutil binary exists (rules out majority makers with NFS-mounted /usr/sap)
+      if su - "$SIDADM" -c "which hdbnsutil" >/dev/null 2>&1; then
+        # Run hdbnsutil -sr_state as sidadm to get HANA topology
+        # Count hosts per site from Host Mappings section
+        SR_OUTPUT=$(su - "$SIDADM" -c "hdbnsutil -sr_state" 2>/dev/null);
+        if [ -n "$SR_OUTPUT" ]; then
+          echo "$SR_OUTPUT";
+          # Count unique hosts per site from "hostname -> [SITE] target" lines
+          # Scale-Out: multiple hosts map to same site; Scale-Up: one host per site
+          echo "=== HOSTS_PER_SITE ===";
+          echo "$SR_OUTPUT" | grep -E '^\S+\s+->\s+\[' | sed 's/.*\[\([^]]*\)\].*/\1/' | sort | uniq -c | awk '{print "site_" $2 "_hosts=" $1}';
+        else
+          echo "hdbnsutil_failed";
+        fi
       else
         echo "hdbnsutil_failed";
       fi
@@ -149,6 +154,7 @@ parser:
 
 validation_logic:
   scope: cluster  # Cluster-wide detection, only needs one node
+  cluster_retry_if: hdbnsutil_failed  # Try next node if hdbnsutil unavailable (majority maker)
   type: detection  # This is a detection check, not pass/fail
   expectations: []
   # No expectations - this is informational

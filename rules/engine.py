@@ -1530,7 +1530,11 @@ class RulesEngine:
         compare_keys = rule.validation_logic.get('compare_keys', [])
 
         # For 'cluster' scope, only run on first accessible node
+        # If cluster_retry_if is set and the parsed field has a value, try the next node
+        # (e.g., hdbnsutil_failed on majority maker → retry on a real HANA node)
         if scope == 'cluster':
+            retry_key = rule.validation_logic.get('cluster_retry_if')
+            fallback_result = None
             for node_name, node_info in nodes.items():
                 method = node_info.get('preferred_method')
                 if method:
@@ -1539,7 +1543,15 @@ class RulesEngine:
                     sos_base = node_info.get('sosreport_path') or self.access_config.get('sosreport_directory')
                     result = self._run_check_on_node(rule, node_name, method, user, sos_base)
                     result.node = f"{node_name} (cluster)"
+                    # Check if result is incomplete and we should try next node
+                    if retry_key and fallback_result is None:
+                        parsed = result.details.get('parsed', {}) if result.details else {}
+                        if parsed.get(retry_key):
+                            fallback_result = result
+                            continue  # Try next node
                     return [result]
+            if fallback_result:
+                return [fallback_result]
             # No accessible node
             return [CheckResult(
                 check_id=rule.check_id,
