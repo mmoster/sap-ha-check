@@ -1237,12 +1237,16 @@ def generate_health_check_report(
         skip_reasons = set()
         for c in skipped_checks:
             msg = c.get('message', '')
-            if 'not installed' in msg.lower() or 'not applicable' in msg.lower():
+            if 'not installed' in msg.lower():
                 skip_reasons.add('SAP HANA not installed')
+            elif 'legacy scale-up' in msg.lower():
+                skip_reasons.add('not applicable (legacy scale-up)')
             elif 'majority maker' in msg.lower():
                 skip_reasons.add('not applicable (Majority Maker)')
             elif 'scale-out' in msg.lower() or 'scale-up' in msg.lower():
                 skip_reasons.add('not applicable (cluster type)')
+            elif 'not applicable' in msg.lower():
+                skip_reasons.add('not applicable')
             else:
                 skip_reasons.add('not applicable')
         reason_text = ', '.join(sorted(skip_reasons)) if skip_reasons else 'not applicable'
