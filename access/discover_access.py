@@ -1752,11 +1752,14 @@ class AccessDiscovery:
 
     def check_ssh_access(self, hostname: str, user: str = None) -> tuple:
         """Check SSH access to a host. Returns (reachable, user)."""
-        # Fast pre-check: verify SSH port is open before attempting login
-        if not self._is_port_open(hostname):
+        # Fast pre-check: verify SSH port is open before attempting login.
+        # If port check fails, still try SSH — the host may be reachable via
+        # ~/.ssh/config (ProxyJump, tunnel, HostName alias) which raw sockets
+        # don't see.
+        port_open = self._is_port_open(hostname)
+        if not port_open:
             if self.debug:
-                print(f"    [DEBUG] {hostname}: port 22 not open, skipping SSH login attempts")
-            return False, None
+                print(f"    [DEBUG] {hostname}: port 22 not directly open, trying SSH (may use ssh_config proxy)")
 
         users_to_try = [user] if user else ['root', os.environ.get('USER', 'root')]
 

@@ -22,14 +22,19 @@ source_definitions:
     OUTPUT=$(crm_mon -1 -r 2>/dev/null || pcs status resources 2>/dev/null)
     echo "$OUTPUT"
     # Emit resource state summary for downstream checks
-    if echo "$OUTPUT" | grep -qiE 'SAPHana|SAPHanaTopology|rsc_SAPHana'; then
-      if echo "$OUTPUT" | grep -qi 'unmanaged'; then
+    # IMPORTANT: Only check HANA resource lines, not the full output.
+    # Other resources (ERS, AAS groups) may be disabled without affecting HANA.
+    # Extract HANA resource lines AND their child status lines (Masters/Slaves/Started/Stopped)
+    # Use grep -A2 to capture the 2 lines after each SAPHana match (clone children)
+    HANA_LINES=$(echo "$OUTPUT" | grep -iE -A2 'SAPHana|SAPHanaController|rsc_SAPHana')
+    if [ -n "$HANA_LINES" ]; then
+      if echo "$HANA_LINES" | grep -qi 'unmanaged'; then
         echo "HANA_RESOURCE_STATE=unmanaged"
-      elif echo "$OUTPUT" | grep -qiE 'target-role.*Stopped|Stopped.*disabled|disabled'; then
+      elif echo "$HANA_LINES" | grep -qiE 'target-role.*Stopped|Stopped.*disabled|\(disabled\)'; then
         echo "HANA_RESOURCE_STATE=disabled"
-      elif echo "$OUTPUT" | grep -qiE 'Stopped|FAILED' && ! echo "$OUTPUT" | grep -qiE 'Started|Master|Slave|Promoted'; then
+      elif echo "$HANA_LINES" | grep -qiE 'Stopped|FAILED' && ! echo "$HANA_LINES" | grep -qiE 'Started|Master|Slave|Promoted|Unpromoted'; then
         echo "HANA_RESOURCE_STATE=stopped"
-      elif echo "$OUTPUT" | grep -qiE 'Started|Master|Slave|Promoted|running'; then
+      elif echo "$HANA_LINES" | grep -qiE 'Started|Master|Slave|Promoted|Unpromoted'; then
         echo "HANA_RESOURCE_STATE=running"
       else
         echo "HANA_RESOURCE_STATE=unknown"

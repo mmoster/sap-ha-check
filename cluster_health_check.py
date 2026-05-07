@@ -1734,8 +1734,17 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
         install_results = [r for r in results if r.check_id == 'CHK_HANA_INSTALLED']
         self._install_results = install_results
 
-        nodes_with_hana = [r.node for r in install_results if r.status == CheckStatus.PASSED]
-        nodes_without_hana = [r.node for r in install_results if r.status != CheckStatus.PASSED]
+        # Distinguish actual HANA nodes from non-HANA nodes (app servers, majority makers)
+        # Check parsed 'hana_installed' value: only "HANA_INSTALLED" means HANA is present
+        # "NOT_HANA_NODE" passes the check but is NOT a HANA node
+        nodes_with_hana = []
+        nodes_without_hana = []
+        for r in install_results:
+            parsed = r.details.get('parsed', {}) if r.details else {}
+            if parsed.get('hana_installed') == 'HANA_INSTALLED':
+                nodes_with_hana.append(r.node)
+            else:
+                nodes_without_hana.append(r.node)
 
         self._hana_installed = len(nodes_with_hana) > 0
 

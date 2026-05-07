@@ -40,13 +40,25 @@ source_definitions:
       echo "none";
     fi
     echo "=== HDBNSUTIL_SR_STATE ===";
-    # Get HANA sidadm user - must have home in /usr/sap/<SID>/home (actual DB admin)
-    SIDADM=$(grep -E '^[a-z0-9]{3}adm:.*:/usr/sap/[A-Z0-9]{3}/home:' /etc/passwd 2>/dev/null | head -1 | cut -d: -f1);
+    # Get HANA sidadm user - derive from /usr/sap/*/HDB* directory (most reliable)
+    # This correctly handles multi-SID setups where DB SID differs from app SID
+    SIDADM="";
+    SID=$(ls -d /usr/sap/*/HDB[0-9][0-9] 2>/dev/null | head -1 | cut -d/ -f4);
+    if [ -n "$SID" ]; then
+      SIDADM=$(echo "$SID" | tr '[:upper:]' '[:lower:]')adm;
+    fi
     if [ -z "$SIDADM" ]; then
-      # Fallback: derive from /usr/sap/*/HDB* directory structure
-      SID=$(ls -d /usr/sap/*/HDB[0-9][0-9] 2>/dev/null | head -1 | cut -d/ -f4);
-      if [ -n "$SID" ]; then
-        SIDADM=$(echo "$SID" | tr '[:upper:]' '[:lower:]')adm;
+      # Fallback: find sidadm user from /etc/passwd whose SID has an HDB directory
+      for CANDIDATE in $(grep -E '^[a-z0-9]{3}adm:.*:/usr/sap/[A-Z0-9]{3}/home:' /etc/passwd 2>/dev/null | cut -d: -f1); do
+        CAND_SID=$(echo "$CANDIDATE" | sed 's/adm$//' | tr '[:lower:]' '[:upper:]');
+        if ls -d "/usr/sap/$CAND_SID/HDB"[0-9][0-9] >/dev/null 2>&1; then
+          SIDADM="$CANDIDATE";
+          break;
+        fi;
+      done;
+      # Last resort: take the first sidadm user
+      if [ -z "$SIDADM" ]; then
+        SIDADM=$(grep -E '^[a-z0-9]{3}adm:.*:/usr/sap/[A-Z0-9]{3}/home:' /etc/passwd 2>/dev/null | head -1 | cut -d: -f1);
       fi
     fi
     if [ -n "$SIDADM" ] && id "$SIDADM" >/dev/null 2>&1; then

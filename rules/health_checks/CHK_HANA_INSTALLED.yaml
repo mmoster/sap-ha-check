@@ -62,9 +62,20 @@ source_definitions:
       echo 'HANA_INSTALLED'
       echo 'HANA_RUNNING=yes'
       echo 'HANA_STATUS=HANA processes running (could not determine SID)'
-    # Fallback: Check for sidadm users in /etc/passwd
-    elif grep -E '^[a-z]{3}adm:.*HDB' /etc/passwd 2>/dev/null | head -1 | grep -q .; then
-      SIDADM=$(grep -E '^[a-z]{3}adm:.*HDB' /etc/passwd 2>/dev/null | head -1 | cut -d: -f1)
+    # Fallback: Check for sidadm users in /etc/passwd (SIDs can contain digits, e.g. S4D -> s4dadm)
+    elif grep -E '^[a-z0-9]{3}adm:.*:/usr/sap/[A-Z0-9]{3}/home:' /etc/passwd 2>/dev/null | head -1 | grep -q .; then
+      # When multiple sidadm users exist (app + DB), prefer the one whose SID has an HDB directory
+      for CANDIDATE in $(grep -E '^[a-z0-9]{3}adm:.*:/usr/sap/[A-Z0-9]{3}/home:' /etc/passwd 2>/dev/null | cut -d: -f1); do
+        CAND_SID=$(echo "$CANDIDATE" | sed 's/adm$//' | tr '[:lower:]' '[:upper:]')
+        if ls -d "/usr/sap/$CAND_SID/HDB"[0-9][0-9] >/dev/null 2>&1; then
+          SIDADM="$CANDIDATE"
+          break
+        fi
+      done
+      # If no HDB directory found, take the first match
+      if [ -z "$SIDADM" ]; then
+        SIDADM=$(grep -E '^[a-z0-9]{3}adm:.*:/usr/sap/[A-Z0-9]{3}/home:' /etc/passwd 2>/dev/null | head -1 | cut -d: -f1)
+      fi
       echo 'HANA_INSTALLED'
       echo "SIDADM=$SIDADM"
       echo "HANA_STATUS=HANA user found ($SIDADM)"
