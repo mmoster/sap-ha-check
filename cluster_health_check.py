@@ -1841,12 +1841,9 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
             else:
                 nodes_without_hana.append(r.node)
 
-        self._hana_installed = len(nodes_with_hana) > 0
+        self._debug_print(f"HANA install check (raw): nodes_with={nodes_with_hana}, nodes_without={nodes_without_hana}")
 
-        self._debug_print(f"HANA install check: nodes_with={nodes_with_hana}, nodes_without={nodes_without_hana}")
-        self._debug_print(f"HANA installed: {self._hana_installed}")
-
-        # Check which nodes are excluded from HANA by constraints
+        # Check which nodes are excluded from HANA by constraints (majority maker / app server)
         hana_excluded_nodes = set()
         if self.rules_engine:
             resource_config = self.rules_engine.get_cluster_resources_config()
@@ -1854,25 +1851,53 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                 excluded = resource_config.get('hana_excluded_node')
                 if excluded:
                     hana_excluded_nodes.add(excluded)
+                mm_node = resource_config.get('majority_maker')
+                if mm_node:
+                    hana_excluded_nodes.add(mm_node)
 
-        # Update CHK_HANA_INSTALLED results for constraint-excluded nodes
-        if nodes_without_hana and hana_excluded_nodes:
-            excluded_without_hana = [n for n in nodes_without_hana if n in hana_excluded_nodes]
-            other_without_hana = [n for n in nodes_without_hana if n not in hana_excluded_nodes]
+        # Fallback: use CHK_MAJORITY_MAKER results from pacemaker step
+        # (CIB parser only works locally/SOSreport — not remote SSH mode)
+        if not hana_excluded_nodes:
+            for r in self.check_results:
+                if r.check_id == 'CHK_MAJORITY_MAKER' and r.details:
+                    parsed = r.details.get('parsed', {})
+                    mm_node = parsed.get('majority_maker_node')
+                    if mm_node:
+                        hana_excluded_nodes.add(mm_node)
+                        self._debug_print(f"Majority maker from CHK_MAJORITY_MAKER: {mm_node}")
+                    break
 
-            for node_name in excluded_without_hana:
+        # Move false-positive HANA detections for excluded nodes
+        # (Scale-Out majority makers mount /usr/sap via NFS, triggering false HANA_INSTALLED)
+        if hana_excluded_nodes:
+            false_positives = [n for n in nodes_with_hana if n in hana_excluded_nodes]
+            for node_name in false_positives:
+                nodes_with_hana.remove(node_name)
+                nodes_without_hana.append(node_name)
+                self._debug_print(f"Overriding HANA detection for {node_name} (excluded by constraints)")
+
+        self._hana_installed = len(nodes_with_hana) > 0
+
+        self._debug_print(f"HANA install check: nodes_with={nodes_with_hana}, nodes_without={nodes_without_hana}")
+        self._debug_print(f"HANA installed: {self._hana_installed}")
+
+        # Update CHK_HANA_INSTALLED results for excluded nodes
+        excluded_nodes_updated = []
+        for node_name in nodes_without_hana:
+            if node_name in hana_excluded_nodes:
                 for result in self.check_results:
                     if result.check_id == 'CHK_HANA_INSTALLED' and result.node == node_name:
                         result.status = CheckStatus.SKIPPED
-                        result.message = "Node excluded from HANA resources by constraints"
+                        result.message = "Node excluded from HANA resources by constraints (majority maker)"
                         break
+                excluded_nodes_updated.append(node_name)
 
-            if excluded_without_hana:
-                print(f"[OK] Nodes excluded from HANA by constraints: {', '.join(excluded_without_hana)}")
-            if other_without_hana:
-                print(f"[INFO] Nodes without HANA: {', '.join(other_without_hana)}")
-        elif nodes_without_hana:
-            print(f"[INFO] Nodes without HANA: {', '.join(nodes_without_hana)}")
+        other_without_hana = [n for n in nodes_without_hana if n not in hana_excluded_nodes]
+
+        if excluded_nodes_updated:
+            print(f"[OK] Nodes excluded from HANA by constraints: {', '.join(excluded_nodes_updated)}")
+        if other_without_hana:
+            print(f"[INFO] Nodes without HANA: {', '.join(other_without_hana)}")
 
         # Filter nodes to only those with HANA installed (for subsequent phases)
         if nodes_with_hana:
