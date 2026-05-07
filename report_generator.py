@@ -505,6 +505,7 @@ def generate_health_check_report(
         "Cluster Name": cluster_name,
         "Nodes": ", ".join(nodes) if nodes else "N/A",
         "RHEL Version": cluster_info.get('rhel_version', 'N/A'),
+        "Resource Agent": cluster_info.get('resource_agent', 'N/A'),
         "Data Source": data_source,
         "Report Date": datetime.now().strftime("%d %B %Y, %H:%M"),
         "Total Checks": str(total),

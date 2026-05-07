@@ -484,6 +484,7 @@ class ClusterHealthCheck:
             # OS/Software versions (from install_status or extracted config)
             rhel_version=(install_status.get('rhel_version') if install_status else None) or cluster_config.get('rhel_version'),
             pacemaker_version=(install_status.get('pacemaker_version') if install_status else None) or cluster_config.get('pacemaker_version'),
+            resource_agent=self._get_resource_agent_label(),
 
             # SAP HANA config
             sid=cluster_config.get('sid'),
@@ -1650,6 +1651,30 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                   and r.check_id in all_check_ids]
         return len([f for f in failed if f.severity == Severity.CRITICAL]) == 0
 
+    def _get_resource_agent_label(self) -> str:
+        """Return a human-readable label for the installed resource agent package."""
+        ra_package = None
+        for r in self.check_results:
+            if r.check_id == 'CHK_PACKAGE_CONSISTENCY' and r.details:
+                parsed = r.details.get('parsed', {})
+                if parsed.get('sap_hana_ha_version'):
+                    ra_package = parsed['sap_hana_ha_version']
+                    break
+                elif parsed.get('resource_agents_sap_hana_scaleout'):
+                    ra_package = parsed['resource_agents_sap_hana_scaleout']
+                    break
+                elif parsed.get('resource_agents_sap_hana'):
+                    ra_package = parsed['resource_agents_sap_hana']
+                    break
+        arch_suffix = {'angi': 'sap-hana-ha (ANGI)', 'legacy': 'legacy'}.get(
+            self._detected_arch_type, '')
+        if ra_package:
+            return f"{ra_package} ({arch_suffix})" if arch_suffix else ra_package
+        return {'angi': 'sap-hana-ha (ANGI)',
+                'legacy': 'resource-agents-sap-hana (legacy)',
+                }.get(self._detected_arch_type,
+                      self._detected_arch_type or 'unknown')
+
     def _gate_skip_message(self, gate_name: str) -> str:
         """Return a human-readable skip message for a gate."""
         if gate_name == 'hana_resource_running':
@@ -2213,32 +2238,9 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
 
         # Cluster info summary
         if self._detected_topology or self._detected_arch_type:
-            # Determine the actual installed resource agent package from check results
-            ra_package = None
-            for r in self.check_results:
-                if r.check_id == 'CHK_PACKAGE_CONSISTENCY' and r.details:
-                    parsed = r.details.get('parsed', {})
-                    if parsed.get('sap_hana_ha_version'):
-                        ra_package = parsed['sap_hana_ha_version']
-                        break
-                    elif parsed.get('resource_agents_sap_hana_scaleout'):
-                        ra_package = parsed['resource_agents_sap_hana_scaleout']
-                        break
-                    elif parsed.get('resource_agents_sap_hana'):
-                        ra_package = parsed['resource_agents_sap_hana']
-                        break
-            arch_suffix = {'angi': 'sap-hana-ha (ANGI)', 'legacy': 'legacy'}.get(
-                self._detected_arch_type, '')
-            if ra_package:
-                arch_label = f"{ra_package} ({arch_suffix})" if arch_suffix else ra_package
-            else:
-                arch_label = {'angi': 'sap-hana-ha (ANGI)',
-                              'legacy': 'resource-agents-sap-hana (legacy)',
-                              }.get(self._detected_arch_type,
-                                    self._detected_arch_type or 'unknown')
             topo = self._detected_topology or 'unknown'
             print(f"\n  Cluster Type:        {topo}")
-            print(f"  Resource Agent:      {arch_label}")
+            print(f"  Resource Agent:      {self._get_resource_agent_label()}")
 
         print(f"\n  Total Checks Run:    {total}")
         print(f"  Passed:              {passed}")

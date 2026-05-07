@@ -120,6 +120,7 @@ class ClusterReportData:
     # OS/Software versions
     rhel_version: str = None
     pacemaker_version: str = None
+    resource_agent: str = None  # e.g. 'resource-agents-sap-hana-0.162.1 (legacy)'
 
     # =========================================================================
     # SAP HANA CONFIGURATION
@@ -250,6 +251,7 @@ class ClusterReportData:
             # OS/Software versions
             'rhel_version': self.rhel_version,
             'pacemaker_version': self.pacemaker_version,
+            'resource_agent': self.resource_agent,
 
             # SAP HANA config
             'sid': self.sid,
