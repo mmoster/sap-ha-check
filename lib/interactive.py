@@ -17,6 +17,7 @@ except ImportError:
     yaml = None
 
 from .utils import scan_for_resources, extract_sosreports_parallel
+from .installation import print_guide
 
 
 def interactive_startup(config_path: Path) -> tuple:
@@ -223,12 +224,44 @@ USAGE EXAMPLES
             print("  [d]         Delete reports and start fresh")
             print("  [q]         Quit")
     else:
-        print("NO EXISTING CONFIGURATION")
-        print()
-        print("Options:")
-        print("  [Enter]     Run in local mode (on this cluster node)  [default]")
-        print("  [nodes]     Enter node names to check (space-separated)")
-        print("  [q]         Quit")
+        # No existing configuration — first run, offer usage guide
+        while True:
+            print("NO EXISTING CONFIGURATION")
+            print()
+            print("Options:")
+            print("  [Enter]     Run in local mode (on this cluster node)  [default]")
+            print("  [nodes]     Enter node names to check (space-separated)")
+            print("  [g]         Show usage guide (-G)")
+            print("  [q]         Quit")
+            print("-" * 63)
+
+            try:
+                response = input("\nYour choice: ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                print("\n")
+                return None, False
+
+            if response == 'g':
+                print_guide()
+                print()
+                print("-" * 63)
+                continue
+
+            if response == 'q':
+                print("Exiting.")
+                return None, False
+
+            if response == '':
+                return ['local'], True
+
+            # User entered node names
+            nodes = response.split()
+            if nodes:
+                return nodes, True
+
+            return None, False
+
+    # Shared handling for single-cluster case (existing config, single cluster)
     print("-" * 63)
 
     try:
@@ -252,12 +285,10 @@ USAGE EXAMPLES
         return ['local'], True
 
     if response == '':
-        # Continue with existing nodes, or default to local mode if none
+        # Continue with existing nodes
         if existing_nodes:
             return existing_nodes, True
-        else:
-            # No existing config - default to local mode
-            return ['local'], True
+        return ['local'], True
 
     # User entered node names
     nodes = response.split()
