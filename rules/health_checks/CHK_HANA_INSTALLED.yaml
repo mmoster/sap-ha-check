@@ -87,6 +87,10 @@ source_definitions:
   # SOSreport: check ps output for HANA processes (hdbnameserver, hdbdaemon, etc.)
   # The 'ps' file in sosreport contains full process list
   sos_path: "ps"
+  # Fallback: sos_commands/saphana/ directory has per-SID status and process data
+  sos_path_alternates:
+    - "sos_commands/saphana/*_HDB_info"
+    - "sos_commands/saphana/*_status"
 
 parser:
   type: regex
@@ -111,6 +115,22 @@ parser:
     # Extract sidadm user
     - name: sidadm
       regex: "SIDADM=([a-z0-9]+adm)"
+      group: 1
+    # SOSreport alternate: detect HANA processes from saphana status/HDB_info
+    - name: hdb_process
+      regex: "(hdbnameserver|hdbdaemon)"
+      group: 0
+    # Extract SID from /usr/sap/<SID>/HDB paths in saphana data
+    - name: profile_sid
+      regex: "/usr/sap/([A-Z0-9]{3})/HDB"
+      group: 1
+    # Extract instance from HDB<NN> paths
+    - name: profile_instance
+      regex: "/HDB([0-9]{2})"
+      group: 1
+    # Extract sidadm user from process list (first column)
+    - name: profile_sidadm
+      regex: "^([a-z0-9]{3,4}adm)\\s"
       group: 1
     # Check if HANA is running
     - name: hana_running

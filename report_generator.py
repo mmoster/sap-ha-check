@@ -526,7 +526,8 @@ def generate_health_check_report(
 
     if access_method == 'sosreport':
         # Info box for sosreport analysis
-        if used_cib_xml:
+        # Only show "cluster was stopped" when cib.xml was used AND cluster was not running
+        if used_cib_xml and not cluster_running:
             # Yellow warning - cluster was stopped when sosreport was taken
             pdf.set_fill_color(255, 243, 205)  # Light yellow background
             pdf.set_draw_color(255, 193, 7)    # Yellow border

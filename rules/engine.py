@@ -1335,7 +1335,12 @@ class RulesEngine:
                     cmd_success, cmd_output = self._run_sos_cmd(sos_cmd, sos_cmd_file, node, sos_base)
                     if cmd_success and cmd_output.strip():
                         success, output = cmd_success, cmd_output
-                        self._used_cib_xml = True
+                        # Only mark as used_cib_xml if a sos_path was defined but
+                        # failed (true fallback = cluster was likely stopped).
+                        # If no sos_path exists, sos_cmd is the primary source
+                        # by design (e.g. CHK_CLUSTER_TYPE) - not a fallback.
+                        if sos_path:
+                            self._used_cib_xml = True
                         self._access_methods_used[node] = 'sosreport'
 
             # Try file alternates as last resort

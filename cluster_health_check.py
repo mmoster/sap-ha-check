@@ -599,6 +599,25 @@ class ClusterHealthCheck:
             except Exception:
                 pass
 
+        # Fallback: extract RHEL version and Pacemaker version from crm_report/sysinfo.txt
+        # This file contains os-release data and package list when installed-rpms is absent
+        if not status['rhel_version'] or not status['pacemaker_version']:
+            sysinfo_candidates = list((sos_path / "sos_commands/pacemaker/crm_report").glob("sysinfo.txt")) if (sos_path / "sos_commands/pacemaker/crm_report").exists() else []
+            for sysinfo in sysinfo_candidates:
+                try:
+                    content = sysinfo.read_text()
+                    if not status['rhel_version']:
+                        match = re.search(r'VERSION_ID="(\d+\.?\d*)"', content)
+                        if match:
+                            status['rhel_version'] = f"RHEL {match.group(1)}"
+                    if not status['pacemaker_version']:
+                        match = re.search(r'Pacemaker\s+(\d+\.\d+\.\d+)', content)
+                        if match:
+                            status['pacemaker_version'] = match.group(1)
+                    break
+                except Exception:
+                    pass
+
         # Check if corosync.conf exists
         corosync_conf = sos_path / "etc/corosync/corosync.conf"
         status['corosync_conf_exists'] = corosync_conf.exists()
@@ -617,20 +636,35 @@ class ClusterHealthCheck:
             except Exception:
                 pass
 
-        # Check packages from installed-rpms
+        # Check packages from installed-rpms or sysinfo.txt fallback
+        pkg_content = None
         installed_rpms = sos_path / "installed-rpms"
         if installed_rpms.exists():
             try:
-                content = installed_rpms.read_text()
+                pkg_content = installed_rpms.read_text()
+            except Exception:
+                pass
+
+        # Fallback: sysinfo.txt has full package list when installed-rpms is absent
+        if not pkg_content:
+            sysinfo_path = sos_path / "sos_commands/pacemaker/crm_report/sysinfo.txt"
+            if sysinfo_path.exists():
+                try:
+                    pkg_content = sysinfo_path.read_text()
+                except Exception:
+                    pass
+
+        if pkg_content:
+            try:
                 required_packages = ['pacemaker', 'corosync', 'pcs']
                 sap_packages = ['sap-hana-ha', 'resource-agents-sap-hana', 'resource-agents-sap-hana-scaleout']
 
                 missing = []
                 for pkg in required_packages:
-                    if pkg not in content:
+                    if pkg not in pkg_content:
                         missing.append(pkg)
 
-                sap_found = any(pkg in content for pkg in sap_packages)
+                sap_found = any(pkg in pkg_content for pkg in sap_packages)
                 if not sap_found:
                     missing.append('sap-hana-ha')
 
@@ -682,11 +716,23 @@ class ClusterHealthCheck:
         if systemctl_output.exists():
             try:
                 content = systemctl_output.read_text()
-                status['corosync_running'] = 'corosync.service' in content and 'running' in content.lower()
-                status['pacemaker_running'] = 'pacemaker.service' in content and 'running' in content.lower()
-                status['pcsd_running'] = 'pcsd.service' in content and 'running' in content.lower()
+                # Match pacemaker.service line specifically for 'running'
+                for line in content.splitlines():
+                    line_lower = line.lower()
+                    if 'corosync.service' in line and 'running' in line_lower:
+                        status['corosync_running'] = True
+                    if 'pacemaker.service' in line and 'running' in line_lower:
+                        status['pacemaker_running'] = True
+                    if 'pcsd.service' in line and 'running' in line_lower:
+                        status['pcsd_running'] = True
             except Exception:
                 pass
+
+        # Fallback: if systemd check didn't determine pacemaker_running,
+        # infer from cluster_online (if nodes are online, pacemaker is running)
+        if status.get('pacemaker_running') is None and status.get('cluster_online'):
+            status['pacemaker_running'] = True
+            status['corosync_running'] = True
 
         # Check for HANA installation
         hana_check = sos_path / "usr/sap"
@@ -1762,12 +1808,31 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
         # Distinguish actual HANA nodes from non-HANA nodes (app servers, majority makers)
         # Check parsed 'hana_installed' value: only "HANA_INSTALLED" means HANA is present
         # "NOT_HANA_NODE" passes the check but is NOT a HANA node
+        # For SOSreport alternates (saphana/ dir): hdb_process match also confirms HANA
         nodes_with_hana = []
         nodes_without_hana = []
         for r in install_results:
             parsed = r.details.get('parsed', {}) if r.details else {}
             if parsed.get('hana_installed') == 'HANA_INSTALLED':
                 nodes_with_hana.append(r.node)
+            elif parsed.get('hdb_process'):
+                # SOSreport alternate: HANA detected from saphana process data
+                nodes_with_hana.append(r.node)
+                # Promote SID/instance from alternate fields if primary not set
+                if not parsed.get('sid') and parsed.get('profile_sid'):
+                    parsed['sid'] = parsed['profile_sid']
+                if not parsed.get('instance') and parsed.get('profile_instance'):
+                    parsed['instance'] = parsed['profile_instance']
+                if not parsed.get('sidadm') and parsed.get('profile_sidadm'):
+                    parsed['sidadm'] = parsed['profile_sidadm']
+                # Mark as HANA_INSTALLED for downstream consistency
+                parsed['hana_installed'] = 'HANA_INSTALLED'
+                if r.details:
+                    r.details['parsed'] = parsed
+                # Fix check status (was ERROR because primary sos_path failed)
+                if r.status == CheckStatus.ERROR:
+                    r.status = CheckStatus.PASSED
+                    r.message = f"HANA detected from SOSreport (SID: {parsed.get('sid', '?')}, Instance: {parsed.get('instance', '?')})"
             else:
                 nodes_without_hana.append(r.node)
 
@@ -1834,15 +1899,19 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
             return state
 
         # Fallback: infer from individual regex matches (SOSreport data)
+        # NOTE: These regexes match the ENTIRE crm_mon output (not just HANA
+        # lines), so order matters.  If resource_started is present (Master/
+        # Slave/Promoted), the HANA resource is running - even if non-HANA
+        # resources happen to be disabled (e.g. S4H_ERS29_group (disabled)).
         has_resource = parsed.get('sap_hana_resource') is not None
         if not has_resource:
             return 'absent'
         if parsed.get('resource_unmanaged') is not None:
             return 'unmanaged'
-        if parsed.get('resource_disabled') is not None:
-            return 'disabled'
         if parsed.get('resource_started') is not None:
             return 'running'
+        if parsed.get('resource_disabled') is not None:
+            return 'disabled'
         if parsed.get('resource_stopped') is not None:
             return 'stopped'
         return 'unknown'

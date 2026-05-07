@@ -18,28 +18,36 @@ hana_nodes_only: true  # Only compare HANA nodes; nodes excluded by constraints 
 source_definitions:
   live_cmd: "rpm -q pacemaker corosync resource-agents-sap-hana resource-agents-sap-hana-scaleout sap-hana-ha SAPHanaSR 2>/dev/null | grep -v 'not installed' | sort; true"
   sos_path: "sos_commands/rpm/package-data"
+  # Fallback: installed-rpms at sosreport root, or sysinfo.txt from crm_report
+  # (sysinfo.txt uses "name version" format with space separator instead of dash)
+  sos_path_alternates:
+    - "installed-rpms"
+    - "sos_commands/pacemaker/crm_report/sysinfo.txt"
 
 parser:
   type: regex
   multiline: true
   search_patterns:
+    # Match both "pacemaker-2.0.5-9.el8_4.7" (rpm -q / installed-rpms) and
+    # "pacemaker 2.0.5-9.el8_4.7" (sysinfo.txt, space-separated).
+    # Use [\w._-]+ to capture full version strings with letters (e.g. el8_4).
     - name: pacemaker_version
-      regex: "pacemaker-[\\d\\.-]+"
+      regex: "pacemaker[- ](\\d[\\w._-]+)"
       group: 0
     - name: corosync_version
-      regex: "corosync-[\\d\\.-]+"
+      regex: "corosync[- ](\\d[\\w._-]+)"
       group: 0
     # Modern ANGI package (RHEL 9+, unified Scale-Up/Scale-Out)
     - name: sap_hana_ha_version
-      regex: "sap-hana-ha-[\\d\\.-]+"
+      regex: "sap-hana-ha[- ](\\d[\\w._-]+)"
       group: 0
-    # Classic Scale-Up package
+    # Classic Scale-Up package (must not match -scaleout variant)
     - name: resource_agents_sap_hana
-      regex: "resource-agents-sap-hana-[\\d][\\d\\.-]+"
+      regex: "resource-agents-sap-hana[- ](\\d[\\w._-]+)"
       group: 0
     # Classic Scale-Out package
     - name: resource_agents_sap_hana_scaleout
-      regex: "resource-agents-sap-hana-scaleout-[\\d\\.-]+"
+      regex: "resource-agents-sap-hana-scaleout[- ](\\d[\\w._-]+)"
       group: 0
     # SAPHanaSR package (legacy detection)
     - name: saphanasr_version
