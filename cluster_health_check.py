@@ -2227,7 +2227,7 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                     elif parsed.get('resource_agents_sap_hana'):
                         ra_package = parsed['resource_agents_sap_hana']
                         break
-            arch_suffix = {'angi': 'ANGI', 'legacy': 'legacy'}.get(
+            arch_suffix = {'angi': 'sap-hana-ha (ANGI)', 'legacy': 'legacy'}.get(
                 self._detected_arch_type, '')
             if ra_package:
                 arch_label = f"{ra_package} ({arch_suffix})" if arch_suffix else ra_package
