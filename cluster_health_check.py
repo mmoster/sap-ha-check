@@ -1799,11 +1799,24 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                                     f"(topology {chk_entry.topology} vs {self._detected_topology})")
 
     def _post_pacemaker_phase1(self, results: list):
-        """After pacemaker phase 1: extract HANA resource state."""
+        """After pacemaker phase 1: extract HANA resource state and majority maker."""
         self._hana_resource_state = self._extract_hana_resource_state(results)
         self._debug_print(f"HANA resource state: {self._hana_resource_state}")
         if self.rules_engine:
             self.rules_engine.set_hana_resource_state(self._hana_resource_state)
+
+        # Extract majority maker from CHK_MAJORITY_MAKER results
+        # This works in all modes (SSH, local, SOSreport) and provides a unified
+        # source for majority maker detection — the CIB parser in
+        # _build_cluster_report_data() serves as an additional source.
+        for r in results:
+            if r.check_id == 'CHK_MAJORITY_MAKER' and r.details:
+                parsed = r.details.get('parsed', {})
+                mm_node = parsed.get('majority_maker_node')
+                if mm_node and mm_node not in self.majority_makers:
+                    self.majority_makers.append(mm_node)
+                    self._debug_print(f"Majority maker detected: {mm_node}")
+                break
 
     def _post_sap_phase1(self, results: list, nodes: dict):
         """After SAP phase 1: determine HANA install status, handle majority maker nodes."""
@@ -1843,29 +1856,15 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
 
         self._debug_print(f"HANA install check (raw): nodes_with={nodes_with_hana}, nodes_without={nodes_without_hana}")
 
-        # Check which nodes are excluded from HANA by constraints (majority maker / app server)
-        hana_excluded_nodes = set()
+        # Nodes excluded from HANA: majority makers (from _post_pacemaker_phase1)
+        # and any additional CIB constraint-based exclusions
+        hana_excluded_nodes = set(self.majority_makers)
         if self.rules_engine:
             resource_config = self.rules_engine.get_cluster_resources_config()
             if resource_config.get('available'):
                 excluded = resource_config.get('hana_excluded_node')
                 if excluded:
                     hana_excluded_nodes.add(excluded)
-                mm_node = resource_config.get('majority_maker')
-                if mm_node:
-                    hana_excluded_nodes.add(mm_node)
-
-        # Fallback: use CHK_MAJORITY_MAKER results from pacemaker step
-        # (CIB parser only works locally/SOSreport — not remote SSH mode)
-        if not hana_excluded_nodes:
-            for r in self.check_results:
-                if r.check_id == 'CHK_MAJORITY_MAKER' and r.details:
-                    parsed = r.details.get('parsed', {})
-                    mm_node = parsed.get('majority_maker_node')
-                    if mm_node:
-                        hana_excluded_nodes.add(mm_node)
-                        self._debug_print(f"Majority maker from CHK_MAJORITY_MAKER: {mm_node}")
-                    break
 
         # Move false-positive HANA detections for excluded nodes
         # (Scale-Out majority makers mount /usr/sap via NFS, triggering false HANA_INSTALLED)
