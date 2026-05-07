@@ -27,7 +27,7 @@ topologies:
 
 steps:
   config:
-    name: "Cluster Configuration Check"
+    name: "Cluster Configuration"
     step_number: 2
     phases:
       - phase: 1
@@ -45,7 +45,7 @@ steps:
             topology: [Scale-Up]
 
   pacemaker:
-    name: "Pacemaker/Corosync Check"
+    name: "Pacemaker/Corosync"
     step_number: 3
     phases:
       - phase: 1
@@ -64,7 +64,7 @@ steps:
           - check_id: CHK_MASTER_SLAVE_ROLES
 
   sap:
-    name: "SAP-Specific Checks"
+    name: "SAP-Specific"
     step_number: 4
     phases:
       - phase: 1
