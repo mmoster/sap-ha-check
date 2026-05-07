@@ -2224,13 +2224,13 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
             for r in critical_failures:
                 node_str = f" ({r.node})" if r.node else ""
                 print(f"    [CRIT] {r.check_id}{node_str}")
-                print(f"           {r.message[:70]}")
+                print(f"           {r.message}")
 
         if warnings:
             print("\n  WARNINGS:")
             for r in warnings[:10]:
                 node_str = f" ({r.node})" if r.node else ""
-                print(f"    [WARN] {r.check_id}{node_str}: {r.message[:50]}")
+                print(f"    [WARN] {r.check_id}{node_str}: {r.message}")
             if len(warnings) > 10:
                 print(f"    ... and {len(warnings) - 10} more warnings")
 
@@ -2462,7 +2462,7 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                 print(" Failed Checks (CRITICAL issues):")
                 for r in failed_checks:
                     if hasattr(r, 'severity') and str(r.severity) == 'Severity.CRITICAL':
-                        print(f"  - {r.check_id}: {r.message[:50]}...")
+                        print(f"  - {r.check_id}: {r.message}")
                 print("-" * 63)
 
             else:
