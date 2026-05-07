@@ -2211,6 +2211,35 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
         warnings = [r for r in self.check_results
                    if r.status == CheckStatus.FAILED and r.severity == Severity.WARNING]
 
+        # Cluster info summary
+        if self._detected_topology or self._detected_arch_type:
+            # Determine the actual installed resource agent package from check results
+            ra_package = None
+            for r in self.check_results:
+                if r.check_id == 'CHK_PACKAGE_CONSISTENCY' and r.details:
+                    parsed = r.details.get('parsed', {})
+                    if parsed.get('sap_hana_ha_version'):
+                        ra_package = parsed['sap_hana_ha_version']
+                        break
+                    elif parsed.get('resource_agents_sap_hana_scaleout'):
+                        ra_package = parsed['resource_agents_sap_hana_scaleout']
+                        break
+                    elif parsed.get('resource_agents_sap_hana'):
+                        ra_package = parsed['resource_agents_sap_hana']
+                        break
+            arch_suffix = {'angi': 'ANGI', 'legacy': 'legacy'}.get(
+                self._detected_arch_type, '')
+            if ra_package:
+                arch_label = f"{ra_package} ({arch_suffix})" if arch_suffix else ra_package
+            else:
+                arch_label = {'angi': 'sap-hana-ha (ANGI)',
+                              'legacy': 'resource-agents-sap-hana (legacy)',
+                              }.get(self._detected_arch_type,
+                                    self._detected_arch_type or 'unknown')
+            topo = self._detected_topology or 'unknown'
+            print(f"\n  Cluster Type:        {topo}")
+            print(f"  Resource Agent:      {arch_label}")
+
         print(f"\n  Total Checks Run:    {total}")
         print(f"  Passed:              {passed}")
         print(f"  Failed:              {failed}")
