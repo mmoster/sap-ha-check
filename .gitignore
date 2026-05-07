@@ -35,6 +35,12 @@ last_run_status.yaml
 # SOSreport data (fetched/extracted for analysis)
 sosreports/
 
+# Presentation and blog (maintained separately)
+docs/SAP_Cluster_Health_Check_Training.pptx
+docs/SAP_Cluster_Health_Check_Training.pdf
+docs/BLOG_SAP_HA_HEALTH_CHECK.md
+docs/BLOG_HOWTO.md
+
 # OS
 .DS_Store
 Thumbs.db
