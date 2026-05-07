@@ -274,6 +274,16 @@ nodes:
 
 Delete with `-D` to restart the investigation from scratch.
 
+### Audit & Compliance Mode
+
+Use `-v` (verbose) to generate a complete PDF report documenting **all** health checks — not just failures. This is ideal for audits, compliance reviews, or handover documentation:
+
+```bash
+./cluster_health_check.py --local -v
+```
+
+The verbose report includes every check with its full result, the discovered cluster configuration, and system details — providing a complete snapshot of your cluster's health status.
+
 ## Extending Health Checks
 
 See [docs/EXTENDING_HEALTH_CHECKS.md](docs/EXTENDING_HEALTH_CHECKS.md) for details on creating custom health check rules.
