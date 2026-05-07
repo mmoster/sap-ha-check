@@ -198,12 +198,12 @@ class HealthCheckPDF(FPDF):
             self.set_x(30)
             self.set_font('Helvetica', 'I', 8)
             self.set_text_color(*RedHatColors.GRAY)
-            info = []
-            if node:
-                info.append(f"Node: {node}")
+            prefix = f"Node: {node} | " if node else ""
             if message:
-                info.append(message[:70])
-            self.cell(0, 5, " | ".join(info), new_x="LMARGIN", new_y="NEXT")
+                # Show full message with word-wrap (multi_cell handles line breaks)
+                self.multi_cell(170, 4, prefix + message)
+            else:
+                self.cell(0, 5, prefix.rstrip(' | '), new_x="LMARGIN", new_y="NEXT")
 
         self.ln(2)
 
