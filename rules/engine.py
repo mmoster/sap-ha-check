@@ -1252,8 +1252,8 @@ class RulesEngine:
             # Remove leading whitespace
             cmd_part = cmd_part.strip()
 
-            # Skip empty parts and comments
-            if not cmd_part or cmd_part.startswith('#'):
+            # Skip empty parts
+            if not cmd_part:
                 return ''
 
             # For multi-line commands, find first non-comment, non-empty line
@@ -1266,6 +1266,17 @@ class RulesEngine:
                     # Get the command name (first word)
                     cmd_name = first_part.split()[0] if first_part else ''
                     if cmd_name and not cmd_name.startswith('#'):
+                        # Handle variable assignments: VAR=$(cmd ...) or VAR=val cmd
+                        if '=' in cmd_name:
+                            # VAR=$(cmd ...) - extract command from subshell
+                            after_eq = cmd_name.split('=', 1)[1]
+                            if after_eq.startswith('$('):
+                                cmd_name = after_eq[2:].rstrip(')')
+                            elif after_eq.startswith('`'):
+                                cmd_name = after_eq[1:].rstrip('`')
+                            else:
+                                # VAR=value (no command), skip to next line
+                                continue
                         return cmd_name
             return ''
 
