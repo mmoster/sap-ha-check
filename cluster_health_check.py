@@ -1618,6 +1618,11 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
         all_step_results = []
 
         for phase in phases:
+            # Re-evaluate effective nodes each phase (SAP phase 1 sets _hana_nodes
+            # which must be picked up by phase 2+ to exclude non-HANA nodes)
+            if step_name == 'sap' and self._hana_nodes:
+                effective_nodes = self._hana_nodes
+
             # Evaluate phase-level gate
             if phase.gate and not self._gate_registry.evaluate(phase.gate):
                 self._debug_print(f"Phase {phase.phase} skipped: gate '{phase.gate}' is closed")
@@ -1874,6 +1879,10 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
             self._hana_nodes = {k: v for k, v in nodes.items() if k in nodes_with_hana}
         else:
             self._hana_nodes = nodes
+
+        # Tell the engine which nodes don't have HANA (fallback for hana_nodes_only)
+        if nodes_without_hana and self.rules_engine:
+            self.rules_engine.set_non_hana_nodes(set(nodes_without_hana))
 
         # Gather HANA database status and replication info
         if self._hana_installed:

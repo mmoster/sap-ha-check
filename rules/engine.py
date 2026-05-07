@@ -313,6 +313,8 @@ class RulesEngine:
         self._hana_resource_state: str = 'unknown'
         # Detected cluster topology (Scale-Up / Scale-Out)
         self._detected_topology: Optional[str] = None
+        # Nodes confirmed to not have HANA (from CHK_HANA_INSTALLED)
+        self._non_hana_nodes: set = set()
 
     def set_hana_resource_state(self, state: str):
         """Set the HANA resource state detected by CHK_RESOURCE_STATUS."""
@@ -329,6 +331,10 @@ class RulesEngine:
     def get_detected_topology(self) -> Optional[str]:
         """Get the detected cluster topology, or None if not yet determined."""
         return self._detected_topology
+
+    def set_non_hana_nodes(self, nodes: set):
+        """Set nodes confirmed to not have HANA (from CHK_HANA_INSTALLED)."""
+        self._non_hana_nodes = nodes
 
     def get_data_source_info(self) -> Dict[str, Any]:
         """Get summary of data sources used for checks.
@@ -1557,6 +1563,9 @@ class RulesEngine:
                 mm_node = resource_config.get('majority_maker')
                 if mm_node:
                     hana_excluded_nodes.add(mm_node)
+            # Fallback: nodes confirmed to not have HANA (from CHK_HANA_INSTALLED)
+            if self._non_hana_nodes:
+                hana_excluded_nodes |= self._non_hana_nodes
 
         # Run on all nodes (multithreaded)
         with ThreadPoolExecutor(max_workers=self.MAX_WORKERS) as executor:
