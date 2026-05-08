@@ -17,6 +17,7 @@ from .utils import (
 )
 
 from .installation import (
+    get_redhat_doc_urls,
     print_guide,
     print_steps,
     print_suggestions,
@@ -42,6 +43,7 @@ __all__ = [
     'check_for_updates',
     'SCRIPT_DIR',
     # installation
+    'get_redhat_doc_urls',
     'print_guide',
     'print_steps',
     'print_suggestions',

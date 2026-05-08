@@ -8,8 +8,47 @@ This module contains functions for displaying:
 """
 
 
-def print_guide():
-    """Print detailed usage guide."""
+def get_redhat_doc_urls(rhel_major: int = 9) -> dict:
+    """Return Red Hat documentation URLs for the given RHEL major version.
+
+    Args:
+        rhel_major: RHEL major version (8, 9, 10, ...). Defaults to 9.
+
+    Returns:
+        Dict with keys: ha_clusters, ha_quorum, ha_fencing, sap_solutions,
+        sap_scale_up, sap_scale_out
+    """
+    v = rhel_major
+    base = "https://docs.redhat.com/en/documentation"
+    ha = f"{base}/red_hat_enterprise_linux/{v}/html/configuring_and_managing_high_availability_clusters"
+    sap_base = f"{base}/red_hat_enterprise_linux_for_sap_solutions/{v}"
+    # SAP-specific guides: RHEL 8 uses "Automating...", RHEL 9+ uses "Deploying..."
+    # RHEL 10+ SAP deployment guides not yet published — use RHEL 9 URLs as fallback
+    sap_ver = v if v <= 9 else 9
+    sap_guide_base = f"{base}/red_hat_enterprise_linux_for_sap_solutions/{sap_ver}"
+    if v <= 8:
+        scale_up = f"{sap_guide_base}/html/automating_sap_hana_scale-up_system_replication_using_the_rhel_ha_add-on/"
+        scale_out = f"{sap_guide_base}/html/automating_sap_hana_scale-out_system_replication_using_the_rhel_ha_add-on/"
+    else:
+        scale_up = f"{sap_guide_base}/html/deploying_sap_hana_scale-up_system_replication_high_availability/"
+        scale_out = f"{sap_guide_base}/html/deploying_sap_hana_scale-out_system_replication_high_availability/"
+    return {
+        'ha_clusters': f"{ha}/",
+        'ha_quorum': f"{ha}/assembly_configuring-cluster-quorum-configuring-and-managing-high-availability-clusters",
+        'ha_fencing': f"{ha}/assembly_configuring-fencing-configuring-and-managing-high-availability-clusters",
+        'sap_solutions': f"{sap_base}/",
+        'sap_scale_up': scale_up,
+        'sap_scale_out': scale_out,
+    }
+
+
+def print_guide(rhel_major: int = 9):
+    """Print detailed usage guide.
+
+    Args:
+        rhel_major: RHEL major version for documentation URLs. Defaults to 9.
+    """
+    urls = get_redhat_doc_urls(rhel_major)
     print("""
 ===============================================================================
                     SAP Pacemaker Cluster Health Check - Guide
@@ -217,8 +256,8 @@ TROUBLESHOOTING
     - Use hosts file: ./cluster_health_check.py -H my_hosts.txt
 
 DOCUMENTATION
--------------
-  SAP HANA Platform:
+-------------""")
+    print(f"""  SAP HANA Platform:
     https://help.sap.com/docs/SAP_HANA_PLATFORM
 
   SAP HANA System Replication:
@@ -228,10 +267,10 @@ DOCUMENTATION
     https://help.sap.com/docs/SAP_HANA_PLATFORM/6b94445c94ae495c83a19646e7c3fd56/330e5550b09d4f0f8b6cceb14a1f956d.html
 
   Red Hat HA Clusters:
-    https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/8/html/configuring_and_managing_high_availability_clusters/
+    {urls['ha_clusters']}
 
   Red Hat SAP HANA HA:
-    https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux_for_sap_solutions/8/
+    {urls['sap_solutions']}
 
   Pacemaker Documentation:
     https://clusterlabs.org/pacemaker/doc/
@@ -304,8 +343,14 @@ USAGE EXAMPLES
 """)
 
 
-def print_suggestions(step: str):
-    """Print detailed suggestions for a specific step."""
+def print_suggestions(step: str, rhel_major: int = 9):
+    """Print detailed suggestions for a specific step.
+
+    Args:
+        step: Step name (access, config, pacemaker, sap, install, all).
+        rhel_major: RHEL major version for documentation URLs. Defaults to 9.
+    """
+    urls = get_redhat_doc_urls(rhel_major)
     suggestions = {
         'access': """
 ===============================================================================
@@ -404,7 +449,7 @@ COMMANDS TO CHECK
 DOCUMENTATION
 -------------
   Red Hat HA Quorum:
-    https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/8/html/configuring_and_managing_high_availability_clusters/assembly_configuring-cluster-quorum-configuring-and-managing-high-availability-clusters
+    """ + urls['ha_quorum'] + """
 
   Corosync Configuration:
     https://clusterlabs.org/pacemaker/doc/2.1/Pacemaker_Explained/html/cluster-options.html
@@ -468,7 +513,7 @@ COMMANDS TO CHECK
 DOCUMENTATION
 -------------
   Red Hat Fencing:
-    https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/8/html/configuring_and_managing_high_availability_clusters/assembly_configuring-fencing-configuring-and-managing-high-availability-clusters
+    """ + urls['ha_fencing'] + """
 
   Pacemaker Resources:
     https://clusterlabs.org/pacemaker/doc/2.1/Pacemaker_Explained/html/resources.html
@@ -538,7 +583,7 @@ DOCUMENTATION
     https://help.sap.com/docs/SAP_HANA_PLATFORM/6b94445c94ae495c83a19646e7c3fd56/1367c8fdefaa4808a7485b09f7a62949.html
 
   Red Hat SAP HANA HA:
-    https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux_for_sap_solutions/8/
+    """ + urls['sap_solutions'] + """
 """,
         'install': """
 ===============================================================================
@@ -846,11 +891,11 @@ STEP 13: VERIFY CLUSTER (one node only)
 DOCUMENTATION
 ===============================================================================
 
-  Red Hat SAP HANA Scale-Up HA (RHEL 9):
-    https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux_for_sap_solutions/9/html/deploying_sap_hana_scale-up_system_replication_high_availability
+  Red Hat SAP HANA Scale-Up HA (RHEL """ + str(rhel_major) + """):
+    """ + urls['sap_scale_up'] + """
 
   Red Hat SAP HANA Scale-Out HA:
-    https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux_for_sap_solutions/9/html/deploying_sap_hana_scale-out_system_replication_high_availability
+    """ + urls['sap_scale_out'] + """
 
   SAP HANA System Replication:
     https://help.sap.com/docs/SAP_HANA_PLATFORM/6b94445c94ae495c83a19646e7c3fd56

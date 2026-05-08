@@ -8,6 +8,8 @@ import re
 from datetime import datetime
 from typing import Dict, List
 
+from lib.installation import get_redhat_doc_urls
+
 # fpdf2 is optional - PDF generation will be skipped if not available
 FPDF_AVAILABLE = False
 try:
@@ -1334,10 +1336,19 @@ def generate_health_check_report(
     pdf.ln(10)
     pdf.chapter_title("Documentation References")
 
+    # Extract RHEL major version for version-specific documentation URLs
+    rhel_ver_str = cluster_info.get('rhel_version', '')
+    rhel_major = 9  # default
+    match = re.search(r'(\d+)', str(rhel_ver_str))
+    if match:
+        rhel_major = int(match.group(1))
+    doc_urls = get_redhat_doc_urls(rhel_major)
+
     references = [
         ("SAP HANA Administration Guide", "https://help.sap.com/docs/SAP_HANA_PLATFORM"),
         ("SAP HANA System Replication", "https://help.sap.com/docs/SAP_HANA_PLATFORM/6b94445c94ae495c83a19646e7c3fd56"),
-        ("Red Hat HA Clusters", "https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/9/html/configuring_and_managing_high_availability_clusters/"),
+        ("Red Hat HA Clusters", doc_urls['ha_clusters']),
+        ("Red Hat SAP Solutions", doc_urls['sap_solutions']),
         ("Pacemaker Documentation", "https://clusterlabs.org/pacemaker/doc/"),
     ]
 

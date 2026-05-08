@@ -41,6 +41,7 @@ from engine import RulesEngine, CheckResult, CheckStatus, Severity, CheckDispatc
 
 # Import lib modules
 from lib import (  # noqa: E402
+    get_redhat_doc_urls,
     print_guide,
     print_steps,
     print_suggestions,
@@ -196,6 +197,16 @@ class ClusterHealthCheck:
         if self.debug:
             timestamp = datetime.now().strftime('%H:%M:%S.%f')[:-3]
             print(f"  [DEBUG {timestamp}] {message}")
+
+    def _get_rhel_major(self) -> int:
+        """Get RHEL major version from discovered cluster config, default 9."""
+        if self.access_config and hasattr(self.access_config, 'clusters'):
+            for cinfo in self.access_config.clusters.values():
+                rv = cinfo.get('rhel_version', '')
+                m = re.search(r'(\d+)', str(rv))
+                if m:
+                    return int(m.group(1))
+        return 9
 
     def _extract_cluster_config(self, cluster_name: str = None) -> dict:
         """
@@ -1099,7 +1110,7 @@ class ClusterHealthCheck:
 
         if not node:
             print("\n[WARNING] No accessible nodes found. Showing full guide.")
-            print_suggestions('install')
+            print_suggestions('install', self._get_rhel_major())
             return
 
         if method == 'local':
@@ -3029,10 +3040,11 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
     ./cluster_health_check.py --guide             # Show detailed usage guide
 """)
 
+        doc_urls = get_redhat_doc_urls(self._get_rhel_major())
         print("  Documentation:")
         print("    SAP HANA Admin:  https://help.sap.com/docs/SAP_HANA_PLATFORM")
         print("    SAP HANA SR:     https://help.sap.com/docs/SAP_HANA_PLATFORM/6b94445c94ae495c83a19646e7c3fd56")
-        print("    Red Hat HA:      https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/9/html/configuring_and_managing_high_availability_clusters/")
+        print(f"    Red Hat HA:      {doc_urls['ha_clusters']}")
         print("    Pacemaker:       https://clusterlabs.org/pacemaker/doc/")
 
         print("\n" + "-" * 63)
@@ -3052,6 +3064,23 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
 
 
 # [Content removed - see lib/ modules]
+
+
+def _rhel_major_from_config(config_dir: Path) -> int:
+    """Extract RHEL major version from saved access config, default 9."""
+    config_path = config_dir / AccessDiscovery.CONFIG_FILE
+    if config_path.exists():
+        try:
+            with open(config_path, 'r') as f:
+                data = yaml.safe_load(f) or {}
+            for cinfo in data.get('clusters', {}).values():
+                rv = cinfo.get('rhel_version', '')
+                m = re.search(r'(\d+)', str(rv))
+                if m:
+                    return int(m.group(1))
+        except Exception:
+            pass
+    return 9
 
 
 def main():
@@ -3418,7 +3447,8 @@ Examples:
 
     # Handle guide action
     if args.guide:
-        print_guide()
+        _cfg_dir = Path(args.config_dir) if args.config_dir else SCRIPT_DIR
+        print_guide(_rhel_major_from_config(_cfg_dir))
         sys.exit(0)
 
     # Handle install guide shortcut (-i / --install)
@@ -3439,7 +3469,7 @@ Examples:
             except Exception:
                 pass
         # Fall back to static guide
-        print_suggestions('install')
+        print_suggestions('install', _rhel_major_from_config(config_dir))
         sys.exit(0)
 
     # Handle suggest action
@@ -3522,7 +3552,7 @@ Examples:
                 except Exception:
                     pass
 
-        print_suggestions(step)
+        print_suggestions(step, _rhel_major_from_config(config_dir))
         sys.exit(0)
 
     # Handle list-steps action
@@ -3942,13 +3972,14 @@ Examples:
                     try:
                         topic = input("\n  Select topic: ").strip().lower()
                         topic_map = {'1': 'install', '2': 'access', '3': 'config', '4': 'pacemaker', '5': 'sap'}
+                        _rhel = health_check._get_rhel_major()
                         if topic in topic_map:
-                            print_suggestions(topic_map[topic])
+                            print_suggestions(topic_map[topic], _rhel)
                         elif topic in ['install', 'access', 'config', 'pacemaker', 'sap']:
-                            print_suggestions(topic)
+                            print_suggestions(topic, _rhel)
                         elif topic == 'a' or topic == 'all':
                             for t in ['install', 'access', 'config', 'pacemaker', 'sap']:
-                                print_suggestions(t)
+                                print_suggestions(t, _rhel)
                         elif topic == 'q' or topic == 'back' or topic == '':
                             pass  # Return to main menu
                         else:
