@@ -768,8 +768,18 @@ STEP 9: CONFIGURE HANA SYSTEM REPLICATION (both nodes)
   hdbnsutil -sr_enable --name=<SITE1_NAME>
   # Example: hdbnsutil -sr_enable --name=DC1
 
-  # On SECONDARY node (as <sid>adm):
-  # Register as secondary (--online will stop and restart HANA automatically)
+  # On SECONDARY node:
+  # 1. Copy SSFS keys from primary (required after HANA reinstall)
+  #    The secondary must have the same PKI SSFS keys as the primary,
+  #    otherwise sr_register will fail to establish a trusted connection.
+  #    Run as root or <sid>adm from the PRIMARY node:
+  scp /usr/sap/<SID>/SYS/global/security/rsecssfs/data/SSFS_<SID>.DAT \\
+      <SECONDARY_HOST>:/usr/sap/<SID>/SYS/global/security/rsecssfs/data/
+  scp /usr/sap/<SID>/SYS/global/security/rsecssfs/key/SSFS_<SID>.KEY \\
+      <SECONDARY_HOST>:/usr/sap/<SID>/SYS/global/security/rsecssfs/key/
+  # Ensure correct ownership: chown <sid>adm:sapsys on both files
+
+  # 2. Register as secondary (--online will stop and restart HANA automatically)
   hdbnsutil -sr_register --remoteHost=<PRIMARY_HOST> \\
       --remoteInstance=<INST_NO> --replicationMode=sync \\
       --operationMode=logreplay --name=<SITE2_NAME> --online
