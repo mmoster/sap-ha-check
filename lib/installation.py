@@ -757,30 +757,29 @@ STEP 9: CONFIGURE HANA SYSTEM REPLICATION (both nodes)
 
   # On PRIMARY node (as <sid>adm):
   # 1. Create backup (required before enabling SR)
-  hdbsql -u SYSTEM -d SYSTEMDB "BACKUP DATA USING FILE ('initial_backup')"
+  #    Backup SYSTEMDB and all tenant databases - SR needs a backup for each
+  hdbsql -i <INST_NO> -u SYSTEM -d SYSTEMDB "BACKUP DATA USING FILE ('/hana/shared/backup/')"
+  hdbsql -i <INST_NO> -u SYSTEM -d <TENANT_SID> "BACKUP DATA USING FILE ('/hana/shared/backup/')"
+  # Example:
+  #   hdbsql -i 10 -u system -d systemdb "Backup data using File ('/hana/shared/backup/')"
+  #   hdbsql -i 10 -u system -d RH1 "Backup data using File ('/hana/shared/backup/')"
 
   # 2. Enable System Replication
   hdbnsutil -sr_enable --name=<SITE1_NAME>
   # Example: hdbnsutil -sr_enable --name=DC1
 
   # On SECONDARY node (as <sid>adm):
-  # 1. Stop HANA
-  HDB stop
-
-  # 2. Register as secondary
+  # Register as secondary (--online will stop and restart HANA automatically)
   hdbnsutil -sr_register --remoteHost=<PRIMARY_HOST> \\
       --remoteInstance=<INST_NO> --replicationMode=sync \\
-      --operationMode=logreplay --name=<SITE2_NAME>
+      --operationMode=logreplay --name=<SITE2_NAME> --online
 
   # Example:
   hdbnsutil -sr_register --remoteHost=hana01 \\
       --remoteInstance=00 --replicationMode=sync \\
-      --operationMode=logreplay --name=DC2
+      --operationMode=logreplay --name=DC2 --online
 
-  # 3. Start HANA
-  HDB start
-
-  # 4. Verify replication (on primary)
+  # Verify replication (on primary)
   hdbnsutil -sr_state
   # Should show: "mode: sync", "status: active"
 
