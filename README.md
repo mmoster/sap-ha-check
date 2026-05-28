@@ -1,6 +1,16 @@
 # SAP HANA Pacemaker Cluster Health Check
 
-A comprehensive health check tool for SAP HANA HA configurations on Pacemaker/Corosync clusters running Red Hat Enterprise Linux (RHEL 8/9/10). The current version focuses on **SAP HANA Scale-Up** and **Scale-Out** cluster topologies. Support for ASCS/ERS environments is planned for a future release.
+## Why This Tool?
+
+Setting up and maintaining SAP HANA HA clusters on Pacemaker/Corosync is complex — there are dozens of configuration parameters, HA/DR provider hooks, fencing settings, and replication options that must all be correct for a reliable failover. Misconfigurations often go unnoticed until an actual failure occurs, when it's too late. This tool automates the validation of your cluster setup against SAP and Red Hat best practices, catching issues before they become outages.
+
+It supports **RHEL 8, 9, and 10** with both classic (`resource-agents-sap-hana`) and modern ANGI (`sap-hana-ha`) resource agent packages, covering **Scale-Up** and **Scale-Out** topologies. Support for ASCS/ERS environments is planned for a future release.
+
+## Who Can Use It?
+
+This tool is designed for **SAP Basis administrators, Linux system administrators, and consultants** responsible for SAP HANA HA clusters. It can be run directly on a cluster node, remotely via SSH, or offline against SOSreport archives — no agent installation required. Whether you're doing an initial setup validation, a periodic health check, or troubleshooting a replication issue, this tool gives you a clear pass/fail report with actionable findings.
+
+**Contributors**: Amir and Janine are available to review, test, and commit changes to this project.
 
 ## Quick Start
 
