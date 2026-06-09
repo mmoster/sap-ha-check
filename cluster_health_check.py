@@ -17,7 +17,8 @@ import os
 import sys
 import re
 import argparse
-import yaml
+import itertools
+import threading
 from pathlib import Path
 from datetime import datetime
 
@@ -27,19 +28,29 @@ except ImportError:
     # Python < 3.7 fallback
     def asdict(obj):
         """Simple fallback for dataclasses.asdict"""
-        if hasattr(obj, '__dict__'):
-            return {k: v for k, v in obj.__dict__.items() if not k.startswith('_')}
+        if hasattr(obj, "__dict__"):
+            return {k: v for k, v in obj.__dict__.items() if not k.startswith("_")}
         return obj
+
+
+import yaml
 
 # Add modules to path
 SCRIPT_DIR = Path(__file__).parent.resolve()
 sys.path.insert(0, str(SCRIPT_DIR / "access"))
 sys.path.insert(0, str(SCRIPT_DIR / "rules"))
 
-from discover_access import AccessDiscovery, show_config, delete_config, export_ansible_vars, fetch_sosreports, create_and_fetch_sosreports  # noqa: E402
+# pylint: disable=wrong-import-position
+from discover_access import (  # noqa: E402
+    AccessDiscovery,
+    show_config,
+    delete_config,
+    export_ansible_vars,
+    fetch_sosreports,
+    create_and_fetch_sosreports,
+)
 from engine import RulesEngine, CheckResult, CheckStatus, Severity, CheckDispatch  # noqa: E402
 
-# Import lib modules
 from lib import (  # noqa: E402
     get_redhat_doc_urls,
     print_guide,
@@ -52,8 +63,7 @@ from lib import (  # noqa: E402
 )
 from lib.config_extractor import ConfigExtractor  # noqa: E402
 
-import threading  # noqa: E402
-import itertools  # noqa: E402
+# pylint: enable=wrong-import-position
 
 
 class Spinner:
@@ -63,8 +73,9 @@ class Spinner:
         with Spinner("Checking nodes"):
             do_long_operation()
     """
-    FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
-    FALLBACK_FRAMES = ['|', '/', '-', '\\']  # For terminals without Unicode
+
+    FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+    FALLBACK_FRAMES = ["|", "/", "-", "\\"]  # For terminals without Unicode
 
     def __init__(self, message: str = "Working", delay: float = 0.1):
         self.message = message
@@ -73,8 +84,8 @@ class Spinner:
         self._thread = None
         # Test if Unicode works
         try:
-            sys.stdout.write('\r⠋')
-            sys.stdout.write('\r \r')
+            sys.stdout.write("\r⠋")
+            sys.stdout.write("\r \r")
             sys.stdout.flush()
             self.frames = self.FRAMES
         except (UnicodeEncodeError, UnicodeError):
@@ -85,11 +96,11 @@ class Spinner:
         spinner = itertools.cycle(self.frames)
         while not self._stop_event.is_set():
             frame = next(spinner)
-            sys.stdout.write(f'\r  {frame} {self.message}...')
+            sys.stdout.write(f"\r  {frame} {self.message}...")
             sys.stdout.flush()
             self._stop_event.wait(self.delay)
         # Clear the spinner line
-        sys.stdout.write('\r' + ' ' * (len(self.message) + 10) + '\r')
+        sys.stdout.write("\r" + " " * (len(self.message) + 10) + "\r")
         sys.stdout.flush()
 
     def __enter__(self):
@@ -143,11 +154,22 @@ class ClusterHealthCheck:
     # Default rules path relative to script directory
     DEFAULT_RULES_PATH = str(SCRIPT_DIR / "rules" / "health_checks")
 
-    def __init__(self, config_dir: str = None, sosreport_dir: str = None,
-                 hosts_file: str = None, workers: int = 10, rules_path: str = None,
-                 debug: bool = False, ansible_group: str = None, skip_ansible: bool = False,
-                 cluster_name: str = None, local_mode: bool = False, strict_mode: bool = False,
-                 generate_pdf: bool = False, verbose_pdf: bool = False):
+    def __init__(
+        self,
+        config_dir: str = None,
+        sosreport_dir: str = None,
+        hosts_file: str = None,
+        workers: int = 10,
+        rules_path: str = None,
+        debug: bool = False,
+        ansible_group: str = None,
+        skip_ansible: bool = False,
+        cluster_name: str = None,
+        local_mode: bool = False,
+        strict_mode: bool = False,
+        generate_pdf: bool = False,
+        verbose_pdf: bool = False,
+    ):
         self.config_dir = Path(config_dir) if config_dir else SCRIPT_DIR
         self.sosreport_dir = sosreport_dir
         self.hosts_file = hosts_file
@@ -166,7 +188,7 @@ class ClusterHealthCheck:
         self.verbose_pdf = verbose_pdf  # Show all checks in detail in PDF
         self.majority_makers = []  # Nodes that are majority makers (Scale-Out)
         self.last_pdf_file = None  # Track last generated PDF for auto-open
-        self._hana_resource_state = 'unknown'  # running/stopped/disabled/unmanaged/absent
+        self._hana_resource_state = "unknown"  # running/stopped/disabled/unmanaged/absent
         self._hana_installed = False  # Whether HANA is installed on any node
         self._hana_db_status = {}  # HANA DB status and replication info
         self._detected_topology = None  # 'Scale-Up' or 'Scale-Out'
@@ -177,33 +199,38 @@ class ClusterHealthCheck:
         # Load dispatch manifest
         self.dispatch = CheckDispatch()
         if not self.dispatch.load():
-            print("[ERROR] rules/check_dispatch.yaml not found. Re-clone from repository to restore.")
+            print(
+                "[ERROR] rules/check_dispatch.yaml not found. Re-clone from repository to restore."
+            )
             sys.exit(1)
 
         # Gate registry for dispatch-driven execution.
         # Lambdas capture `self` and read fields at evaluation time (late binding),
         # so gate results reflect current state when _run_step evaluates them.
         self._gate_registry = GateRegistry()
-        self._gate_registry.register('hana_resource_running',
-                                     lambda: self._hana_resource_state == 'running')
-        self._gate_registry.register('hana_installed',
-                                     lambda: self._hana_installed)
-        self._gate_registry.register('not_legacy_scaleup',
-                                     lambda: not (self._detected_arch_type == 'legacy'
-                                                  and self._detected_topology == 'Scale-Up'))
+        self._gate_registry.register(
+            "hana_resource_running", lambda: self._hana_resource_state == "running"
+        )
+        self._gate_registry.register("hana_installed", lambda: self._hana_installed)
+        self._gate_registry.register(
+            "not_legacy_scaleup",
+            lambda: not (
+                self._detected_arch_type == "legacy" and self._detected_topology == "Scale-Up"
+            ),
+        )
 
     def _debug_print(self, message: str):
         """Print debug message if debug mode is enabled."""
         if self.debug:
-            timestamp = datetime.now().strftime('%H:%M:%S.%f')[:-3]
+            timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
             print(f"  [DEBUG {timestamp}] {message}")
 
     def _get_rhel_major(self) -> int:
         """Get RHEL major version from discovered cluster config, default 9."""
-        if self.access_config and hasattr(self.access_config, 'clusters'):
+        if self.access_config and hasattr(self.access_config, "clusters"):
             for cinfo in self.access_config.clusters.values():
-                rv = cinfo.get('rhel_version', '')
-                m = re.search(r'(\d+)', str(rv))
+                rv = cinfo.get("rhel_version", "")
+                m = re.search(r"(\d+)", str(rv))
                 if m:
                     return int(m.group(1))
         return 9
@@ -231,7 +258,7 @@ class ClusterHealthCheck:
             nodes = self.access_config.nodes or {}
             for node_name, node_info in nodes.items():
                 # Try SOSreport first
-                sos_path = node_info.get('sosreport_path')
+                sos_path = node_info.get("sosreport_path")
                 if sos_path:
                     self._debug_print(f"Extracting config from SOSreport: {sos_path}")
                     extractor = ConfigExtractor.from_sosreport(sos_path)
@@ -247,26 +274,32 @@ class ClusterHealthCheck:
                         break
 
                 # Try SSH method if no SOSreport
-                method = node_info.get('preferred_method')
-                if method == 'ssh':
-                    user = node_info.get('ssh_user', 'root')
+                method = node_info.get("preferred_method")
+                if method == "ssh":
+                    user = node_info.get("ssh_user", "root")
                     # Check if cluster is running (from access config or default to trying running first)
                     cluster_running = True
-                    if self.access_config and hasattr(self.access_config, 'clusters'):
+                    if self.access_config and hasattr(self.access_config, "clusters"):
                         for cinfo in self.access_config.clusters.values():
-                            if node_name in cinfo.get('nodes', []):
-                                cluster_running = cinfo.get('cluster_running', True)
+                            if node_name in cinfo.get("nodes", []):
+                                cluster_running = cinfo.get("cluster_running", True)
                                 break
 
                     if cluster_running:
-                        self._debug_print(f"Extracting config from running cluster via SSH: {node_name}")
+                        self._debug_print(
+                            f"Extracting config from running cluster via SSH: {node_name}"
+                        )
                         extractor = ConfigExtractor.from_running_cluster(node_name, user)
                         # If running cluster extraction fails, try offline
                         if not extractor:
-                            self._debug_print(f"Running cluster extraction failed, trying offline: {node_name}")
+                            self._debug_print(
+                                f"Running cluster extraction failed, trying offline: {node_name}"
+                            )
                             extractor = ConfigExtractor.from_ssh_offline(node_name, user)
                     else:
-                        self._debug_print(f"Extracting config from offline cluster via SSH: {node_name}")
+                        self._debug_print(
+                            f"Extracting config from offline cluster via SSH: {node_name}"
+                        )
                         extractor = ConfigExtractor.from_ssh_offline(node_name, user)
 
                     if extractor:
@@ -282,51 +315,52 @@ class ClusterHealthCheck:
         # Return sap_hana section merged with other relevant fields
         result = {}
         if extracted:
-            hana = extracted.get('sap_hana', {})
-            stonith = extracted.get('stonith', {})
-            constraints = extracted.get('constraints', {})
-            cluster = extracted.get('cluster', {})
+            hana = extracted.get("sap_hana", {})
+            stonith = extracted.get("stonith", {})
+            constraints = extracted.get("constraints", {})
+            cluster = extracted.get("cluster", {})
 
             # Cluster/system info
-            result['rhel_version'] = cluster.get('rhel_version')
-            result['pacemaker_version'] = cluster.get('pacemaker_version')
+            result["rhel_version"] = cluster.get("rhel_version")
+            result["pacemaker_version"] = cluster.get("pacemaker_version")
 
             # SAP HANA config
-            result['sid'] = hana.get('sid')
-            result['instance_number'] = hana.get('instance_number')
-            result['virtual_ip'] = hana.get('virtual_ip')
-            result['secondary_vip'] = hana.get('secondary_vip')
-            result['vip_resource'] = hana.get('vip_resource')
-            result['secondary_vip_resource'] = hana.get('secondary_vip_resource')
+            result["sid"] = hana.get("sid")
+            result["instance_number"] = hana.get("instance_number")
+            result["virtual_ip"] = hana.get("virtual_ip")
+            result["secondary_vip"] = hana.get("secondary_vip")
+            result["vip_resource"] = hana.get("vip_resource")
+            result["secondary_vip_resource"] = hana.get("secondary_vip_resource")
 
             # HA parameters
-            result['prefer_site_takeover'] = hana.get('prefer_site_takeover')
-            result['automated_register'] = hana.get('automated_register')
-            result['duplicate_primary_timeout'] = hana.get('duplicate_primary_timeout')
-            result['clone_max'] = hana.get('clone_max')
+            result["prefer_site_takeover"] = hana.get("prefer_site_takeover")
+            result["automated_register"] = hana.get("automated_register")
+            result["duplicate_primary_timeout"] = hana.get("duplicate_primary_timeout")
+            result["clone_max"] = hana.get("clone_max")
 
             # Resource info
-            result['resource_type'] = hana.get('resource_type')
-            result['resource_name'] = hana.get('resource_name')
-            if hana.get('topology'):
-                result['topology_resource'] = hana['topology'].get('resource_name')
+            result["resource_type"] = hana.get("resource_type")
+            result["resource_name"] = hana.get("resource_name")
+            if hana.get("topology"):
+                result["topology_resource"] = hana["topology"].get("resource_name")
 
             # STONITH
-            result['stonith_device'] = stonith.get('device')
-            result['stonith_params'] = {
-                'pcmk_host_map': stonith.get('pcmk_host_map', ''),
-                'ssl': stonith.get('ssl', ''),
-                'ssl_insecure': stonith.get('ssl_insecure', ''),
+            result["stonith_device"] = stonith.get("device")
+            result["stonith_params"] = {
+                "pcmk_host_map": stonith.get("pcmk_host_map", ""),
+                "ssl": stonith.get("ssl", ""),
+                "ssl_insecure": stonith.get("ssl_insecure", ""),
             }
 
             # Majority maker
-            if constraints.get('majority_maker'):
-                result['majority_maker'] = constraints['majority_maker']
+            if constraints.get("majority_maker"):
+                result["majority_maker"] = constraints["majority_maker"]
 
         return result
 
-    def _build_cluster_report_data(self, cluster_name: str = None,
-                                    summary: dict = None) -> ClusterReportData:
+    def _build_cluster_report_data(
+        self, cluster_name: str = None, summary: dict = None
+    ) -> ClusterReportData:
         """
         Build unified ClusterReportData from current state.
 
@@ -346,26 +380,26 @@ class ClusterHealthCheck:
         """
         # Auto-detect cluster name if not provided
         if cluster_name is None:
-            cluster_name = 'unknown'
-            if self.access_config and hasattr(self.access_config, 'clusters'):
+            cluster_name = "unknown"
+            if self.access_config and hasattr(self.access_config, "clusters"):
                 # Find cluster name from nodes
                 for cname, cinfo in self.access_config.clusters.items():
-                    nodes = cinfo.get('nodes', [])
+                    nodes = cinfo.get("nodes", [])
                     if any(n in (self.access_config.nodes or {}) for n in nodes):
                         cluster_name = cname
                         break
                 # Fallback: use most recently discovered cluster
-                if cluster_name == 'unknown':
+                if cluster_name == "unknown":
                     latest = None
                     for cname, cinfo in self.access_config.clusters.items():
-                        discovered_at = cinfo.get('discovered_at', '')
+                        discovered_at = cinfo.get("discovered_at", "")
                         if latest is None or discovered_at > latest:
                             latest = discovered_at
                             cluster_name = cname
 
         # Get cluster configuration from access_config
         cluster_config = {}
-        if self.access_config and hasattr(self.access_config, 'clusters'):
+        if self.access_config and hasattr(self.access_config, "clusters"):
             cluster_config = self.access_config.clusters.get(cluster_name, {})
 
         # Extract detailed config from pcs config output
@@ -374,29 +408,30 @@ class ClusterHealthCheck:
         if extracted_config:
             # Merge extracted config - extracted values take precedence for None/empty values
             for key, value in extracted_config.items():
-                if value is not None and (cluster_config.get(key) is None or cluster_config.get(key) == ''):
+                if value is not None and (
+                    cluster_config.get(key) is None or cluster_config.get(key) == ""
+                ):
                     cluster_config[key] = value
 
         # Get node list
         node_list = list(self.access_config.nodes.keys()) if self.access_config else []
 
         # Determine cluster type from CHK_CLUSTER_TYPE result (uses clone-max)
-        cluster_type = 'Scale-Up'  # Default
+        cluster_type = "Scale-Up"  # Default
         cluster_type_result = next(
-            (r for r in self.check_results if r.check_id == 'CHK_CLUSTER_TYPE'),
-            None
+            (r for r in self.check_results if r.check_id == "CHK_CLUSTER_TYPE"), None
         )
         if cluster_type_result and cluster_type_result.details:
-            cluster_type = cluster_type_result.details.get('cluster_type', 'Scale-Up')
+            cluster_type = cluster_type_result.details.get("cluster_type", "Scale-Up")
         else:
             # Fallback if no check result - use clone-max from resource config
-            clone_max = cluster_config.get('clone_max', 2)
+            clone_max = cluster_config.get("clone_max", 2)
             try:
                 clone_max = int(clone_max) if clone_max else 2
             except (ValueError, TypeError):
                 clone_max = 2
             if clone_max > 2:
-                cluster_type = 'Scale-Out'
+                cluster_type = "Scale-Out"
 
         # Get data source info from rules engine
         data_source_info = {}
@@ -410,25 +445,27 @@ class ClusterHealthCheck:
             resource_config = self.rules_engine.get_cluster_resources_config()
             # Majority maker only exists in Scale-Out (clone-max >= 4)
             # Nodes with HANA exclusion constraints in Scale-Up are app servers, not majority makers
-            if resource_config.get('available') and resource_config.get('majority_maker'):
-                mm_node = resource_config['majority_maker']
-                if cluster_type == 'Scale-Out':
+            if resource_config.get("available") and resource_config.get("majority_maker"):
+                mm_node = resource_config["majority_maker"]
+                if cluster_type == "Scale-Out":
                     if mm_node not in majority_makers:
                         majority_makers.append(mm_node)
                     self._debug_print(f"Scale-Out majority maker: {mm_node}")
                 else:
-                    self._debug_print(f"Node {mm_node} has HANA exclusion constraints but cluster is {cluster_type} (app server, not majority maker)")
+                    self._debug_print(
+                        f"Node {mm_node} has HANA exclusion constraints but cluster is {cluster_type} (app server, not majority maker)"
+                    )
 
         # Build results list from check_results
         results_dict = [
             {
-                'check_id': r.check_id,
-                'node': r.node,
-                'status': r.status.value,
-                'severity': r.severity.value,
-                'message': r.message,
-                'description': r.description,
-                'details': r.details if r.details else {}
+                "check_id": r.check_id,
+                "node": r.node,
+                "status": r.status.value,
+                "severity": r.severity.value,
+                "message": r.message,
+                "description": r.description,
+                "details": r.details if r.details else {},
             }
             for r in self.check_results
         ]
@@ -440,18 +477,24 @@ class ClusterHealthCheck:
             failed = sum(1 for r in self.check_results if r.status == CheckStatus.FAILED)
             skipped = sum(1 for r in self.check_results if r.status == CheckStatus.SKIPPED)
             errors = sum(1 for r in self.check_results if r.status == CheckStatus.ERROR)
-            critical_failures = [r for r in self.check_results
-                                 if r.status == CheckStatus.FAILED and r.severity == Severity.CRITICAL]
-            warnings = [r for r in self.check_results
-                        if r.status == CheckStatus.FAILED and r.severity == Severity.WARNING]
+            critical_failures = [
+                r
+                for r in self.check_results
+                if r.status == CheckStatus.FAILED and r.severity == Severity.CRITICAL
+            ]
+            warnings = [
+                r
+                for r in self.check_results
+                if r.status == CheckStatus.FAILED and r.severity == Severity.WARNING
+            ]
             summary = {
-                'total': total,
-                'passed': passed,
-                'failed': failed,
-                'skipped': skipped,
-                'errors': errors,
-                'critical_count': len(critical_failures),
-                'warning_count': len(warnings)
+                "total": total,
+                "passed": passed,
+                "failed": failed,
+                "skipped": skipped,
+                "errors": errors,
+                "critical_count": len(critical_failures),
+                "warning_count": len(warnings),
             }
 
         # Get installation status
@@ -463,12 +506,14 @@ class ClusterHealthCheck:
 
         # Determine if cluster is running
         # First check discovery-time status (from access discovery)
-        cluster_running = cluster_config.get('cluster_running', True)
+        cluster_running = cluster_config.get("cluster_running", True)
 
         # Also check install status (runtime check)
         if install_status:
-            has_config = install_status.get('corosync_conf_exists') or install_status.get('cib_exists')
-            pacemaker_running = install_status.get('pacemaker_running')
+            has_config = install_status.get("corosync_conf_exists") or install_status.get(
+                "cib_exists"
+            )
+            pacemaker_running = install_status.get("pacemaker_running")
             if has_config and not pacemaker_running:
                 cluster_running = False
 
@@ -477,65 +522,56 @@ class ClusterHealthCheck:
             # Metadata
             version=REPORT_VERSION,
             timestamp=datetime.now().isoformat(),
-
             # Data source
-            data_source=data_source_info.get('description', 'Unknown'),
-            access_method=data_source_info.get('primary_method', 'unknown'),
-            used_cib_xml=data_source_info.get('used_cib_xml', False),
+            data_source=data_source_info.get("description", "Unknown"),
+            access_method=data_source_info.get("primary_method", "unknown"),
+            used_cib_xml=data_source_info.get("used_cib_xml", False),
             cluster_running=cluster_running,
             hana_resource_state=self._hana_resource_state,
             hana_db_status=self._hana_db_status if self._hana_db_status else None,
-
             # Cluster info
             cluster_name=cluster_name,
             cluster_type=cluster_type,
             nodes=node_list,
             majority_makers=majority_makers,
-
             # OS/Software versions (from install_status or extracted config)
-            rhel_version=(install_status.get('rhel_version') if install_status else None) or cluster_config.get('rhel_version'),
-            pacemaker_version=(install_status.get('pacemaker_version') if install_status else None) or cluster_config.get('pacemaker_version'),
+            rhel_version=(install_status.get("rhel_version") if install_status else None)
+            or cluster_config.get("rhel_version"),
+            pacemaker_version=(install_status.get("pacemaker_version") if install_status else None)
+            or cluster_config.get("pacemaker_version"),
             resource_agent=self._get_resource_agent_label(),
-
             # SAP HANA config
-            sid=cluster_config.get('sid'),
-            instance_number=cluster_config.get('instance_number'),
-            virtual_ip=cluster_config.get('virtual_ip'),
-            secondary_vip=cluster_config.get('secondary_vip'),
-            replication_mode=cluster_config.get('replication_mode'),
-            operation_mode=cluster_config.get('operation_mode'),
-            secondary_read=cluster_config.get('secondary_read'),
-
+            sid=cluster_config.get("sid"),
+            instance_number=cluster_config.get("instance_number"),
+            virtual_ip=cluster_config.get("virtual_ip"),
+            secondary_vip=cluster_config.get("secondary_vip"),
+            replication_mode=cluster_config.get("replication_mode"),
+            operation_mode=cluster_config.get("operation_mode"),
+            secondary_read=cluster_config.get("secondary_read"),
             # Node config
-            node1_hostname=cluster_config.get('node1_hostname'),
-            node1_ip=cluster_config.get('node1_ip'),
-            node2_hostname=cluster_config.get('node2_hostname'),
-            node2_ip=cluster_config.get('node2_ip'),
-            sites=cluster_config.get('sites'),
-
+            node1_hostname=cluster_config.get("node1_hostname"),
+            node1_ip=cluster_config.get("node1_ip"),
+            node2_hostname=cluster_config.get("node2_hostname"),
+            node2_ip=cluster_config.get("node2_ip"),
+            sites=cluster_config.get("sites"),
             # HA parameters
-            prefer_site_takeover=cluster_config.get('prefer_site_takeover'),
-            automated_register=cluster_config.get('automated_register'),
-            duplicate_primary_timeout=cluster_config.get('duplicate_primary_timeout'),
-            migration_threshold=cluster_config.get('migration_threshold'),
-
+            prefer_site_takeover=cluster_config.get("prefer_site_takeover"),
+            automated_register=cluster_config.get("automated_register"),
+            duplicate_primary_timeout=cluster_config.get("duplicate_primary_timeout"),
+            migration_threshold=cluster_config.get("migration_threshold"),
             # Resource config
-            resource_type=cluster_config.get('resource_type'),
-            resource_name=cluster_config.get('resource_name'),
-            topology_resource=cluster_config.get('topology_resource'),
-            vip_resource=cluster_config.get('vip_resource'),
-            secondary_vip_resource=cluster_config.get('secondary_vip_resource'),
-
+            resource_type=cluster_config.get("resource_type"),
+            resource_name=cluster_config.get("resource_name"),
+            topology_resource=cluster_config.get("topology_resource"),
+            vip_resource=cluster_config.get("vip_resource"),
+            secondary_vip_resource=cluster_config.get("secondary_vip_resource"),
             # STONITH
-            stonith_device=cluster_config.get('stonith_device'),
-            stonith_params=cluster_config.get('stonith_params'),
-
+            stonith_device=cluster_config.get("stonith_device"),
+            stonith_params=cluster_config.get("stonith_params"),
             # CIB resource config
-            resource_config=resource_config if resource_config.get('available') else {},
-
+            resource_config=resource_config if resource_config.get("available") else {},
             # Installation status
             install_status=install_status or {},
-
             # Results
             results=results_dict,
             summary=summary,
@@ -552,38 +588,38 @@ class ClusterHealthCheck:
 
         status = {
             # Phase 1: Prerequisites
-            'subscription_registered': None,
-            'repos_enabled': None,
-            'firewall_configured': None,
-            'packages_installed': None,
-            'hacluster_password': None,
-            'pcsd_running': None,
-            'pcsd_enabled': None,
+            "subscription_registered": None,
+            "repos_enabled": None,
+            "firewall_configured": None,
+            "packages_installed": None,
+            "hacluster_password": None,
+            "pcsd_running": None,
+            "pcsd_enabled": None,
             # Phase 2: Cluster Creation
-            'nodes_authenticated': None,
-            'corosync_conf_exists': None,
-            'cib_exists': None,
-            'cluster_configured': None,
-            'corosync_running': None,
-            'pacemaker_running': None,
-            'cluster_enabled': None,
-            'cluster_online': None,
+            "nodes_authenticated": None,
+            "corosync_conf_exists": None,
+            "cib_exists": None,
+            "cluster_configured": None,
+            "corosync_running": None,
+            "pacemaker_running": None,
+            "cluster_enabled": None,
+            "cluster_online": None,
             # Phase 3: Fencing & Resources
-            'stonith_enabled': None,
-            'stonith_configured': None,
-            'hana_installed': None,
-            'hana_resources': None,
+            "stonith_enabled": None,
+            "stonith_configured": None,
+            "hana_installed": None,
+            "hana_resources": None,
             # Details
-            'missing_packages': [],
-            'missing_repos': [],
-            'node': node,
-            'method': 'sosreport',
-            'cluster_name': None,
-            'cluster_nodes': [],
-            'offline_nodes': [],
+            "missing_packages": [],
+            "missing_repos": [],
+            "node": node,
+            "method": "sosreport",
+            "cluster_name": None,
+            "cluster_nodes": [],
+            "offline_nodes": [],
             # Version info
-            'rhel_version': None,
-            'pacemaker_version': None,
+            "rhel_version": None,
+            "pacemaker_version": None,
         }
 
         # Detect RHEL version from redhat-release
@@ -591,11 +627,11 @@ class ClusterHealthCheck:
         if redhat_release.exists():
             try:
                 content = redhat_release.read_text().strip()
-                match = re.search(r'release\s+(\d+\.?\d*)', content)
+                match = re.search(r"release\s+(\d+\.?\d*)", content)
                 if match:
-                    status['rhel_version'] = f"RHEL {match.group(1)}"
+                    status["rhel_version"] = f"RHEL {match.group(1)}"
                 else:
-                    status['rhel_version'] = content[:50]
+                    status["rhel_version"] = content[:50]
             except Exception:
                 pass
 
@@ -604,46 +640,50 @@ class ClusterHealthCheck:
         if installed_rpms.exists():
             try:
                 content = installed_rpms.read_text()
-                match = re.search(r'pacemaker-(\d+\.\d+\.\d+)', content)
+                match = re.search(r"pacemaker-(\d+\.\d+\.\d+)", content)
                 if match:
-                    status['pacemaker_version'] = match.group(1)
+                    status["pacemaker_version"] = match.group(1)
             except Exception:
                 pass
 
         # Fallback: extract RHEL version and Pacemaker version from crm_report/sysinfo.txt
         # This file contains os-release data and package list when installed-rpms is absent
-        if not status['rhel_version'] or not status['pacemaker_version']:
-            sysinfo_candidates = list((sos_path / "sos_commands/pacemaker/crm_report").glob("sysinfo.txt")) if (sos_path / "sos_commands/pacemaker/crm_report").exists() else []
+        if not status["rhel_version"] or not status["pacemaker_version"]:
+            sysinfo_candidates = (
+                list((sos_path / "sos_commands/pacemaker/crm_report").glob("sysinfo.txt"))
+                if (sos_path / "sos_commands/pacemaker/crm_report").exists()
+                else []
+            )
             for sysinfo in sysinfo_candidates:
                 try:
                     content = sysinfo.read_text()
-                    if not status['rhel_version']:
+                    if not status["rhel_version"]:
                         match = re.search(r'VERSION_ID="(\d+\.?\d*)"', content)
                         if match:
-                            status['rhel_version'] = f"RHEL {match.group(1)}"
-                    if not status['pacemaker_version']:
-                        match = re.search(r'Pacemaker\s+(\d+\.\d+\.\d+)', content)
+                            status["rhel_version"] = f"RHEL {match.group(1)}"
+                    if not status["pacemaker_version"]:
+                        match = re.search(r"Pacemaker\s+(\d+\.\d+\.\d+)", content)
                         if match:
-                            status['pacemaker_version'] = match.group(1)
+                            status["pacemaker_version"] = match.group(1)
                     break
                 except Exception:
                     pass
 
         # Check if corosync.conf exists
         corosync_conf = sos_path / "etc/corosync/corosync.conf"
-        status['corosync_conf_exists'] = corosync_conf.exists()
+        status["corosync_conf_exists"] = corosync_conf.exists()
 
         # Check if cib.xml exists (cluster configuration exists)
         cib_xml = sos_path / "var/lib/pacemaker/cib/cib.xml"
-        status['cib_exists'] = cib_xml.exists()
+        status["cib_exists"] = cib_xml.exists()
 
         # Extract cluster name from corosync.conf
         if corosync_conf.exists():
             try:
                 content = corosync_conf.read_text()
-                match = re.search(r'cluster_name:\s*(\S+)', content)
+                match = re.search(r"cluster_name:\s*(\S+)", content)
                 if match:
-                    status['cluster_name'] = match.group(1)
+                    status["cluster_name"] = match.group(1)
             except Exception:
                 pass
 
@@ -667,8 +707,12 @@ class ClusterHealthCheck:
 
         if pkg_content:
             try:
-                required_packages = ['pacemaker', 'corosync', 'pcs']
-                sap_packages = ['sap-hana-ha', 'resource-agents-sap-hana', 'resource-agents-sap-hana-scaleout']
+                required_packages = ["pacemaker", "corosync", "pcs"]
+                sap_packages = [
+                    "sap-hana-ha",
+                    "resource-agents-sap-hana",
+                    "resource-agents-sap-hana-scaleout",
+                ]
 
                 missing = []
                 for pkg in required_packages:
@@ -677,10 +721,10 @@ class ClusterHealthCheck:
 
                 sap_found = any(pkg in pkg_content for pkg in sap_packages)
                 if not sap_found:
-                    missing.append('sap-hana-ha')
+                    missing.append("sap-hana-ha")
 
-                status['missing_packages'] = missing
-                status['packages_installed'] = len(missing) == 0
+                status["missing_packages"] = missing
+                status["packages_installed"] = len(missing) == 0
             except Exception:
                 pass
 
@@ -691,34 +735,46 @@ class ClusterHealthCheck:
         if pcs_status.exists():
             try:
                 content = pcs_status.read_text()
-                status['cluster_configured'] = 'Cluster name:' in content or 'nodes configured' in content
+                status["cluster_configured"] = (
+                    "Cluster name:" in content or "nodes configured" in content
+                )
 
                 # Check for online nodes - handle both formats:
                 # Old format: "Online: [ node1 node2 ]"
                 # New format: "Node nodename (id): online"
-                if 'Online:' in content:
-                    status['cluster_online'] = True
-                    match = re.search(r'Online:\s*\[\s*(.*?)\s*\]', content)
+                if "Online:" in content:
+                    status["cluster_online"] = True
+                    match = re.search(r"Online:\s*\[\s*(.*?)\s*\]", content)
                     if match:
-                        status['cluster_nodes'] = [n.strip() for n in match.group(1).split() if n.strip()]
+                        status["cluster_nodes"] = [
+                            n.strip() for n in match.group(1).split() if n.strip()
+                        ]
 
                 # New pcs status format: "Node nodename (id): online"
-                node_matches = re.findall(r'Node\s+(\S+)\s+\(\d+\):\s+online', content, re.IGNORECASE)
+                node_matches = re.findall(
+                    r"Node\s+(\S+)\s+\(\d+\):\s+online", content, re.IGNORECASE
+                )
                 if node_matches:
-                    status['cluster_online'] = True
-                    status['cluster_nodes'] = node_matches
+                    status["cluster_online"] = True
+                    status["cluster_nodes"] = node_matches
 
                 # Check STONITH - look for stonith resources running
-                if 'stonith:' in content.lower() and 'Started' in content:
-                    status['stonith_enabled'] = True
-                elif 'stonith-enabled=true' in content.lower() or 'stonith-enabled: true' in content.lower():
-                    status['stonith_enabled'] = True
-                elif 'stonith-enabled=false' in content.lower() or 'stonith-enabled: false' in content.lower():
-                    status['stonith_enabled'] = False
+                if "stonith:" in content.lower() and "Started" in content:
+                    status["stonith_enabled"] = True
+                elif (
+                    "stonith-enabled=true" in content.lower()
+                    or "stonith-enabled: true" in content.lower()
+                ):
+                    status["stonith_enabled"] = True
+                elif (
+                    "stonith-enabled=false" in content.lower()
+                    or "stonith-enabled: false" in content.lower()
+                ):
+                    status["stonith_enabled"] = False
 
                 # Check HANA resources
-                if 'SAPHana' in content:
-                    status['hana_resources'] = True
+                if "SAPHana" in content:
+                    status["hana_resources"] = True
             except Exception:
                 pass
 
@@ -730,20 +786,20 @@ class ClusterHealthCheck:
                 # Match pacemaker.service line specifically for 'running'
                 for line in content.splitlines():
                     line_lower = line.lower()
-                    if 'corosync.service' in line and 'running' in line_lower:
-                        status['corosync_running'] = True
-                    if 'pacemaker.service' in line and 'running' in line_lower:
-                        status['pacemaker_running'] = True
-                    if 'pcsd.service' in line and 'running' in line_lower:
-                        status['pcsd_running'] = True
+                    if "corosync.service" in line and "running" in line_lower:
+                        status["corosync_running"] = True
+                    if "pacemaker.service" in line and "running" in line_lower:
+                        status["pacemaker_running"] = True
+                    if "pcsd.service" in line and "running" in line_lower:
+                        status["pcsd_running"] = True
             except Exception:
                 pass
 
         # Fallback: if systemd check didn't determine pacemaker_running,
         # infer from cluster_online (if nodes are online, pacemaker is running)
-        if status.get('pacemaker_running') is None and status.get('cluster_online'):
-            status['pacemaker_running'] = True
-            status['corosync_running'] = True
+        if status.get("pacemaker_running") is None and status.get("cluster_online"):
+            status["pacemaker_running"] = True
+            status["corosync_running"] = True
 
         # Check for HANA installation
         hana_check = sos_path / "usr/sap"
@@ -753,7 +809,7 @@ class ClusterHealthCheck:
             if proc_mounts.exists():
                 try:
                     content = proc_mounts.read_text()
-                    status['hana_installed'] = '/usr/sap/' in content or '/hana/' in content.lower()
+                    status["hana_installed"] = "/usr/sap/" in content or "/hana/" in content.lower()
                 except Exception:
                     pass
 
@@ -762,13 +818,16 @@ class ClusterHealthCheck:
     def _execute_check_cmd(self, cmd: str, node: str, method: str, user: str = None) -> tuple:
         """Execute a command on a node and return (success, output)."""
         import subprocess
+
         try:
-            if method == 'local':
+            if method == "local":
                 full_cmd = cmd
-            elif method == 'ssh':
-                ssh_user = user or 'root'
+            elif method == "ssh":
+                ssh_user = user or "root"
                 escaped_cmd = cmd.replace("'", "'\"'\"'")
-                full_cmd = f"ssh -o BatchMode=yes -o ConnectTimeout=10 {ssh_user}@{node} '{escaped_cmd}'"
+                full_cmd = (
+                    f"ssh -o BatchMode=yes -o ConnectTimeout=10 {ssh_user}@{node} '{escaped_cmd}'"
+                )
             else:
                 return False, "Unsupported method"
 
@@ -776,14 +835,20 @@ class ClusterHealthCheck:
                 print(f"  [DEBUG] Executing: {full_cmd[:100]}...")
 
             result = subprocess.run(
-                full_cmd, shell=True,
+                full_cmd,
+                shell=True,
                 stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                universal_newlines=True, timeout=30
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True,
+                timeout=30,
+                check=False,
             )
 
             if self.debug:
-                print(f"  [DEBUG] Return code: {result.returncode}, Output: {result.stdout.strip()[:50]}...")
+                print(
+                    f"  [DEBUG] Return code: {result.returncode}, Output: {result.stdout.strip()[:50]}..."
+                )
 
             return result.returncode == 0, result.stdout.strip()
         except Exception as e:
@@ -791,45 +856,45 @@ class ClusterHealthCheck:
                 print(f"  [DEBUG] Exception: {e}")
             return False, str(e)
 
-    def check_install_status(self, node: str = None, method: str = 'ssh', user: str = None) -> dict:
+    def check_install_status(self, node: str = None, method: str = "ssh", user: str = None) -> dict:
         """
         Check installation status on a node.
         Returns dict with status of each installation step.
         """
         status = {
             # Phase 1: Prerequisites
-            'subscription_registered': None,
-            'repos_enabled': None,
-            'firewall_configured': None,
-            'packages_installed': None,
-            'hacluster_password': None,
-            'pcsd_running': None,
-            'pcsd_enabled': None,
+            "subscription_registered": None,
+            "repos_enabled": None,
+            "firewall_configured": None,
+            "packages_installed": None,
+            "hacluster_password": None,
+            "pcsd_running": None,
+            "pcsd_enabled": None,
             # Phase 2: Cluster Creation
-            'nodes_authenticated': None,
-            'corosync_conf_exists': None,
-            'cib_exists': None,
-            'cluster_configured': None,
-            'corosync_running': None,
-            'pacemaker_running': None,
-            'cluster_enabled': None,
-            'cluster_online': None,
+            "nodes_authenticated": None,
+            "corosync_conf_exists": None,
+            "cib_exists": None,
+            "cluster_configured": None,
+            "corosync_running": None,
+            "pacemaker_running": None,
+            "cluster_enabled": None,
+            "cluster_online": None,
             # Phase 3: Fencing & Resources
-            'stonith_enabled': None,
-            'stonith_configured': None,
-            'hana_installed': None,
-            'hana_resources': None,
+            "stonith_enabled": None,
+            "stonith_configured": None,
+            "hana_installed": None,
+            "hana_resources": None,
             # Details
-            'missing_packages': [],
-            'missing_repos': [],
-            'node': node,
-            'method': method,
-            'cluster_name': None,
-            'cluster_nodes': [],
-            'offline_nodes': [],
+            "missing_packages": [],
+            "missing_repos": [],
+            "node": node,
+            "method": method,
+            "cluster_name": None,
+            "cluster_nodes": [],
+            "offline_nodes": [],
             # Version info
-            'rhel_version': None,
-            'pacemaker_version': None,
+            "rhel_version": None,
+            "pacemaker_version": None,
         }
 
         if not node and not self.access_config:
@@ -838,21 +903,21 @@ class ClusterHealthCheck:
         # Use first accessible node if not specified
         if not node and self.access_config:
             for n, info in self.access_config.nodes.items():
-                if info.get('preferred_method'):
+                if info.get("preferred_method"):
                     node = n
-                    method = info.get('preferred_method', 'ssh')
-                    user = info.get('ssh_user', 'root')
+                    method = info.get("preferred_method", "ssh")
+                    user = info.get("ssh_user", "root")
                     break
 
         if not node:
             return status
 
-        status['node'] = node
+        status["node"] = node
 
         # For sosreport mode, use the sosreport-specific method
-        if method == 'sosreport' and self.access_config:
+        if method == "sosreport" and self.access_config:
             node_info = self.access_config.nodes.get(node, {})
-            sosreport_path = node_info.get('sosreport_path')
+            sosreport_path = node_info.get("sosreport_path")
             if sosreport_path:
                 return self.check_install_status_sosreport(node, sosreport_path)
 
@@ -862,232 +927,240 @@ class ClusterHealthCheck:
         #   - sap-hana-ha: RHEL 9/10, Scale-Up & Scale-Out (recommended, required for RHEL 10)
         #   - resource-agents-sap-hana: legacy Scale-Up (RHEL 8/9)
         #   - resource-agents-sap-hana-scaleout: legacy Scale-Out (RHEL 8/9)
-        required_packages = ['pacemaker', 'corosync', 'pcs']
-        sap_packages = ['sap-hana-ha', 'resource-agents-sap-hana', 'resource-agents-sap-hana-scaleout']
+        required_packages = ["pacemaker", "corosync", "pcs"]
+        sap_packages = [
+            "sap-hana-ha",
+            "resource-agents-sap-hana",
+            "resource-agents-sap-hana-scaleout",
+        ]
         success, output = self._execute_check_cmd(
             "rpm -q pacemaker corosync pcs sap-hana-ha resource-agents-sap-hana resource-agents-sap-hana-scaleout 2>/dev/null",
-            node, method, user
+            node,
+            method,
+            user,
         )
         # Parse output even if exit code is non-zero (rpm returns 1 if any package missing)
         if output:
             for pkg in required_packages:
-                if f'{pkg} is not installed' in output or f'package {pkg} is not installed' in output:
-                    status['missing_packages'].append(pkg)
+                if (
+                    f"{pkg} is not installed" in output
+                    or f"package {pkg} is not installed" in output
+                ):
+                    status["missing_packages"].append(pkg)
                 elif pkg not in output:
-                    status['missing_packages'].append(pkg)
+                    status["missing_packages"].append(pkg)
             # Check if at least one SAP package is installed
-            sap_pkg_found = any(pkg in output and f'{pkg} is not installed' not in output
-                               for pkg in sap_packages)
+            sap_pkg_found = any(
+                pkg in output and f"{pkg} is not installed" not in output for pkg in sap_packages
+            )
             if not sap_pkg_found:
-                status['missing_packages'].append('sap-hana-ha')  # Recommend newer package
-            status['packages_installed'] = len(status['missing_packages']) == 0
+                status["missing_packages"].append("sap-hana-ha")  # Recommend newer package
+            status["packages_installed"] = len(status["missing_packages"]) == 0
         else:
-            status['packages_installed'] = False
-            status['missing_packages'] = required_packages + ['sap-hana-ha']
+            status["packages_installed"] = False
+            status["missing_packages"] = required_packages + ["sap-hana-ha"]
 
         # Detect RHEL version from /etc/redhat-release
         success, output = self._execute_check_cmd(
-            "cat /etc/redhat-release 2>/dev/null",
-            node, method, user
+            "cat /etc/redhat-release 2>/dev/null", node, method, user
         )
         if success and output:
             # Extract version like "Red Hat Enterprise Linux release 9.5 (Plow)" -> "RHEL 9.5"
-            import re as regex_mod
-            match = regex_mod.search(r'release\s+(\d+\.?\d*)', output)
+            match = re.search(r"release\s+(\d+\.?\d*)", output)
             if match:
-                status['rhel_version'] = f"RHEL {match.group(1)}"
+                status["rhel_version"] = f"RHEL {match.group(1)}"
             else:
-                status['rhel_version'] = output.strip()[:50]  # Fallback to raw output
+                status["rhel_version"] = output.strip()[:50]  # Fallback to raw output
 
         # Detect Pacemaker version
         success, output = self._execute_check_cmd(
-            "rpm -q pacemaker 2>/dev/null | head -1",
-            node, method, user
+            "rpm -q pacemaker 2>/dev/null | head -1", node, method, user
         )
-        if success and output and 'not installed' not in output:
+        if success and output and "not installed" not in output:
             # Extract version like "pacemaker-2.1.8-3.el9.x86_64" -> "2.1.8"
-            import re as regex_mod
-            match = regex_mod.search(r'pacemaker-(\d+\.\d+\.\d+)', output)
+            match = re.search(r"pacemaker-(\d+\.\d+\.\d+)", output)
             if match:
-                status['pacemaker_version'] = match.group(1)
+                status["pacemaker_version"] = match.group(1)
             else:
-                status['pacemaker_version'] = output.strip()[:30]
+                status["pacemaker_version"] = output.strip()[:30]
 
         # If packages are installed, subscription/repos are OK (could be local repo)
-        if status['packages_installed']:
-            status['subscription_registered'] = True
-            status['repos_enabled'] = True
+        if status["packages_installed"]:
+            status["subscription_registered"] = True
+            status["repos_enabled"] = True
         else:
             # Check subscription status
             success, output = self._execute_check_cmd(
                 "subscription-manager identity 2>/dev/null | grep -qE 'system identity|org ID' && echo 'registered' || "
                 "subscription-manager status 2>/dev/null | grep -qE 'Overall Status:' && echo 'registered' || "
                 "test -f /etc/yum.repos.d/*.repo && echo 'registered'",
-                node, method, user
+                node,
+                method,
+                user,
             )
-            status['subscription_registered'] = success and 'registered' in output
+            status["subscription_registered"] = success and "registered" in output
 
             # Check required repos
             success, output = self._execute_check_cmd(
                 "subscription-manager repos --list-enabled 2>/dev/null | grep -E 'highavailability|sap' || "
                 "dnf repolist 2>/dev/null | grep -iE 'highavailability|ha|sap'",
-                node, method, user
+                node,
+                method,
+                user,
             )
-            status['repos_enabled'] = success and output.strip() != ''
-            if not status['repos_enabled']:
-                status['missing_repos'] = ['highavailability', 'sap-solutions']
+            status["repos_enabled"] = success and output.strip() != ""
+            if not status["repos_enabled"]:
+                status["missing_repos"] = ["highavailability", "sap-solutions"]
 
         # Check firewall configuration
         success, output = self._execute_check_cmd(
             "firewall-cmd --list-services 2>/dev/null | grep -q high-availability && echo 'configured' || "
             "systemctl is-active firewalld 2>/dev/null | grep -q inactive && echo 'configured'",
-            node, method, user
+            node,
+            method,
+            user,
         )
-        status['firewall_configured'] = success and 'configured' in output
+        status["firewall_configured"] = success and "configured" in output
 
         # Check hacluster user password is set (can login)
         success, output = self._execute_check_cmd(
             "getent shadow hacluster 2>/dev/null | grep -v '!' | grep -q ':' && echo 'password_set'",
-            node, method, user
+            node,
+            method,
+            user,
         )
-        status['hacluster_password'] = success and 'password_set' in output
+        status["hacluster_password"] = success and "password_set" in output
 
         # Check pcsd service running
         success, output = self._execute_check_cmd(
-            "systemctl is-active pcsd 2>/dev/null",
-            node, method, user
+            "systemctl is-active pcsd 2>/dev/null", node, method, user
         )
-        status['pcsd_running'] = success and 'active' in output
+        status["pcsd_running"] = success and "active" in output
 
         # Check pcsd service enabled
         success, output = self._execute_check_cmd(
-            "systemctl is-enabled pcsd 2>/dev/null",
-            node, method, user
+            "systemctl is-enabled pcsd 2>/dev/null", node, method, user
         )
-        status['pcsd_enabled'] = success and 'enabled' in output
+        status["pcsd_enabled"] = success and "enabled" in output
 
         # Check if nodes are authenticated (known-hosts has multiple nodes)
         # pcs host auth stores tokens in /var/lib/pcsd/known-hosts
         success, output = self._execute_check_cmd(
             "cat /var/lib/pcsd/known-hosts 2>/dev/null | grep -c '\"token\"' || echo '0'",
-            node, method, user
+            node,
+            method,
+            user,
         )
         try:
             token_count = int(output.strip())
-            status['nodes_authenticated'] = token_count >= 2  # At least 2 nodes authenticated
+            status["nodes_authenticated"] = token_count >= 2  # At least 2 nodes authenticated
         except (ValueError, AttributeError):
-            status['nodes_authenticated'] = False
+            status["nodes_authenticated"] = False
 
         # Check if corosync.conf exists (cluster was set up)
         success, output = self._execute_check_cmd(
-            "test -f /etc/corosync/corosync.conf && echo 'exists'",
-            node, method, user
+            "test -f /etc/corosync/corosync.conf && echo 'exists'", node, method, user
         )
-        status['corosync_conf_exists'] = success and 'exists' in output
+        status["corosync_conf_exists"] = success and "exists" in output
 
         # Check if cib.xml exists (cluster configuration exists - even if not running)
         success, output = self._execute_check_cmd(
-            "test -f /var/lib/pacemaker/cib/cib.xml && echo 'exists'",
-            node, method, user
+            "test -f /var/lib/pacemaker/cib/cib.xml && echo 'exists'", node, method, user
         )
-        status['cib_exists'] = success and 'exists' in output
+        status["cib_exists"] = success and "exists" in output
 
         # Check cluster configured and get cluster name
         success, output = self._execute_check_cmd(
-            "pcs cluster status 2>/dev/null | head -10",
-            node, method, user
+            "pcs cluster status 2>/dev/null | head -10", node, method, user
         )
-        status['cluster_configured'] = success and 'Cluster' in output
+        status["cluster_configured"] = success and "Cluster" in output
         if success:
             # Try to extract cluster name
-            match = re.search(r'Cluster name:\s*(\S+)', output)
+            match = re.search(r"Cluster name:\s*(\S+)", output)
             if match:
-                status['cluster_name'] = match.group(1)
+                status["cluster_name"] = match.group(1)
 
         # Check corosync service
         success, output = self._execute_check_cmd(
-            "systemctl is-active corosync 2>/dev/null",
-            node, method, user
+            "systemctl is-active corosync 2>/dev/null", node, method, user
         )
-        status['corosync_running'] = success and 'active' in output
+        status["corosync_running"] = success and "active" in output
 
         # Check pacemaker service
         success, output = self._execute_check_cmd(
-            "systemctl is-active pacemaker 2>/dev/null",
-            node, method, user
+            "systemctl is-active pacemaker 2>/dev/null", node, method, user
         )
-        status['pacemaker_running'] = success and 'active' in output
+        status["pacemaker_running"] = success and "active" in output
 
         # Check cluster enabled (auto-start on boot)
         success, output = self._execute_check_cmd(
             "systemctl is-enabled corosync pacemaker 2>/dev/null | grep -q enabled && echo 'enabled'",
-            node, method, user
+            node,
+            method,
+            user,
         )
-        status['cluster_enabled'] = success and 'enabled' in output
+        status["cluster_enabled"] = success and "enabled" in output
 
         # Check if nodes are online
         success, output = self._execute_check_cmd(
-            "pcs status nodes 2>/dev/null",
-            node, method, user
+            "pcs status nodes 2>/dev/null", node, method, user
         )
         if success:
-            status['cluster_online'] = 'Online:' in output and output.strip() != ''
+            status["cluster_online"] = "Online:" in output and output.strip() != ""
             # Extract online nodes - handles both "Online: [ node1 node2 ]" and "Online: node1 node2"
             # Try bracket format first
-            match = re.search(r'Online:\s*\[\s*(.*?)\s*\]', output)
+            match = re.search(r"Online:\s*\[\s*(.*?)\s*\]", output)
             if match:
-                status['cluster_nodes'] = [n.strip() for n in match.group(1).split() if n.strip()]
+                status["cluster_nodes"] = [n.strip() for n in match.group(1).split() if n.strip()]
             else:
                 # Try space-separated format: "Online: node1 node2"
-                match = re.search(r'Online:\s*(.+?)(?:\n|$)', output)
+                match = re.search(r"Online:\s*(.+?)(?:\n|$)", output)
                 if match:
                     nodes = match.group(1).strip()
                     # Filter out empty strings and common non-node words
-                    status['cluster_nodes'] = [n.strip() for n in nodes.split()
-                                               if n.strip() and n.strip() not in ['Standby:', 'Offline:', 'Maintenance:']]
+                    status["cluster_nodes"] = [
+                        n.strip()
+                        for n in nodes.split()
+                        if n.strip() and n.strip() not in ["Standby:", "Offline:", "Maintenance:"]
+                    ]
 
         # Check STONITH enabled (default is true if not explicitly set in modern pacemaker)
         success, output = self._execute_check_cmd(
-            "pcs property show stonith-enabled 2>/dev/null",
-            node, method, user
+            "pcs property show stonith-enabled 2>/dev/null", node, method, user
         )
         # If stonith-enabled is explicitly set to false, it's disabled
         # If not set or set to true, it's enabled
         if success:
-            if 'false' in output.lower():
-                status['stonith_enabled'] = False
+            if "false" in output.lower():
+                status["stonith_enabled"] = False
             else:
                 # Check if stonith devices exist (if they do, stonith is effectively enabled)
                 stonith_check, stonith_out = self._execute_check_cmd(
-                    "pcs stonith status 2>/dev/null | grep -E 'Started|Stopped'",
-                    node, method, user
+                    "pcs stonith status 2>/dev/null | grep -E 'Started|Stopped'", node, method, user
                 )
-                status['stonith_enabled'] = stonith_check and stonith_out.strip() != ''
+                status["stonith_enabled"] = stonith_check and stonith_out.strip() != ""
 
         # Check STONITH configured and running
         success, output = self._execute_check_cmd(
-            "pcs stonith status 2>/dev/null",
-            node, method, user
+            "pcs stonith status 2>/dev/null", node, method, user
         )
         if success:
-            status['stonith_configured'] = 'Started' in output
-            if 'NO stonith' in output or 'no stonith' in output.lower():
-                status['stonith_configured'] = False
-                status['stonith_enabled'] = False
+            status["stonith_configured"] = "Started" in output
+            if "NO stonith" in output or "no stonith" in output.lower():
+                status["stonith_configured"] = False
+                status["stonith_enabled"] = False
 
         # Check HANA installed
         success, output = self._execute_check_cmd(
-            "ls -d /usr/sap/*/HDB[0-9][0-9] 2>/dev/null | head -1",
-            node, method, user
+            "ls -d /usr/sap/*/HDB[0-9][0-9] 2>/dev/null | head -1", node, method, user
         )
-        status['hana_installed'] = success and '/usr/sap/' in output
+        status["hana_installed"] = success and "/usr/sap/" in output
 
         # Check HANA resources
         success, output = self._execute_check_cmd(
-            "pcs resource status 2>/dev/null | grep -i saphana",
-            node, method, user
+            "pcs resource status 2>/dev/null | grep -i saphana", node, method, user
         )
-        status['hana_resources'] = success and 'SAPHana' in output
+        status["hana_resources"] = success and "SAPHana" in output
 
         return status
 
@@ -1098,22 +1171,22 @@ class ClusterHealthCheck:
         print("=" * 63)
 
         # Get first accessible node
-        method = 'ssh'
-        user = 'root'
+        method = "ssh"
+        user = "root"
         if not node and self.access_config:
             for n, info in self.access_config.nodes.items():
-                if info.get('preferred_method'):
+                if info.get("preferred_method"):
                     node = n
-                    method = info.get('preferred_method', 'ssh')
-                    user = info.get('ssh_user', 'root')
+                    method = info.get("preferred_method", "ssh")
+                    user = info.get("ssh_user", "root")
                     break
 
         if not node:
             print("\n[WARNING] No accessible nodes found. Showing full guide.")
-            print_suggestions('install', self._get_rhel_major())
+            print_suggestions("install", self._get_rhel_major())
             return
 
-        if method == 'local':
+        if method == "local":
             print("  Checking: LOCAL execution (this machine)")
         else:
             print(f"  Checking: {node} via {method.upper()} (user={user})")
@@ -1132,9 +1205,11 @@ class ClusterHealthCheck:
         # Phase 1: Prerequisites
         print("\n  PHASE 1 - PREREQUISITES:")
         print(f"    {status_icon(status['subscription_registered'])} Subscription/repos available")
-        print(f"    {status_icon(status['firewall_configured'])} Firewall ports open (high-availability)")
+        print(
+            f"    {status_icon(status['firewall_configured'])} Firewall ports open (high-availability)"
+        )
         print(f"    {status_icon(status['packages_installed'])} Cluster packages installed")
-        if status['missing_packages']:
+        if status["missing_packages"]:
             print(f"        Missing: {', '.join(status['missing_packages'])}")
         print(f"    {status_icon(status['hacluster_password'])} hacluster user password set")
         print(f"    {status_icon(status['pcsd_running'])} PCSD daemon running")
@@ -1142,28 +1217,34 @@ class ClusterHealthCheck:
 
         # Phase 2: Cluster Creation
         print("\n  PHASE 2 - CLUSTER CREATION:")
-        print(f"    {status_icon(status['nodes_authenticated'])} Nodes authenticated (pcs host auth)")
-        cluster_info = f" ({status['cluster_name']})" if status['cluster_name'] else ""
-        print(f"    {status_icon(status.get('corosync_conf_exists'))} Cluster created (corosync.conf)")
+        print(
+            f"    {status_icon(status['nodes_authenticated'])} Nodes authenticated (pcs host auth)"
+        )
+        cluster_info = f" ({status['cluster_name']})" if status["cluster_name"] else ""
+        print(
+            f"    {status_icon(status.get('corosync_conf_exists'))} Cluster created (corosync.conf)"
+        )
         print(f"    {status_icon(status.get('cib_exists'))} Cluster configured (cib.xml)")
         print(f"    {status_icon(status['cluster_configured'])} Cluster running{cluster_info}")
         print(f"    {status_icon(status['corosync_running'])} Corosync running (messaging)")
         print(f"    {status_icon(status['pacemaker_running'])} Pacemaker running (resource mgr)")
         # Cluster enabled on boot is optional - show warning if not enabled
-        if status['cluster_enabled']:
+        if status["cluster_enabled"]:
             print(f"    {status_icon(True)} Cluster enabled on boot")
-        elif status['cluster_enabled'] is False:
+        elif status["cluster_enabled"] is False:
             print("    [~] Cluster enabled on boot (optional)")
         else:
             print("    [?] Cluster enabled on boot (optional)")
         print(f"    {status_icon(status['cluster_online'])} All nodes online")
-        if status['cluster_nodes']:
+        if status["cluster_nodes"]:
             print(f"        Online: {', '.join(status['cluster_nodes'])}")
-        if status.get('offline_nodes'):
+        if status.get("offline_nodes"):
             print(f"        Offline: {', '.join(status['offline_nodes'])}")
 
         # Warning if cluster is configured but not running
-        if (status.get('corosync_conf_exists') or status.get('cib_exists')) and not status['pacemaker_running']:
+        if (status.get("corosync_conf_exists") or status.get("cib_exists")) and not status[
+            "pacemaker_running"
+        ]:
             print("""
   ╔═════════════════════════════════════════════════════════════╗
   ║  [!] CLUSTER NOT RUNNING                                    ║
@@ -1182,36 +1263,36 @@ class ClusterHealthCheck:
         steps_needed = []
 
         # If cluster is running, prerequisites must have been completed
-        cluster_running = status['cluster_configured'] or status['pacemaker_running']
+        cluster_running = status["cluster_configured"] or status["pacemaker_running"]
 
         # Phase 1: Prerequisites - skip if cluster is already running
         if not cluster_running:
-            if status['subscription_registered'] is False:
-                steps_needed.append('subscription')
-            if status['firewall_configured'] is False:
-                steps_needed.append('firewall')
-            if status['packages_installed'] is False:
-                steps_needed.append('packages')
-            if status['hacluster_password'] is False:
-                steps_needed.append('hacluster')
-            if status['pcsd_running'] is False:
-                steps_needed.append('pcsd')
+            if status["subscription_registered"] is False:
+                steps_needed.append("subscription")
+            if status["firewall_configured"] is False:
+                steps_needed.append("firewall")
+            if status["packages_installed"] is False:
+                steps_needed.append("packages")
+            if status["hacluster_password"] is False:
+                steps_needed.append("hacluster")
+            if status["pcsd_running"] is False:
+                steps_needed.append("pcsd")
 
         # Phase 2: Cluster Creation - skip auth/setup if cluster already exists
         if not cluster_running:
-            if status['pcsd_running'] and status['nodes_authenticated'] is False:
-                steps_needed.append('authenticate')
-            if status['nodes_authenticated'] and not status['cluster_configured']:
-                steps_needed.append('cluster_setup')
-        if status['cluster_configured'] and not status['corosync_running']:
-            steps_needed.append('cluster_start')
+            if status["pcsd_running"] and status["nodes_authenticated"] is False:
+                steps_needed.append("authenticate")
+            if status["nodes_authenticated"] and not status["cluster_configured"]:
+                steps_needed.append("cluster_setup")
+        if status["cluster_configured"] and not status["corosync_running"]:
+            steps_needed.append("cluster_start")
         # Note: cluster_enable is optional - cluster works without being enabled on boot
 
         # Phase 3: Fencing & Resources
-        if status['cluster_online'] and status['stonith_enabled'] is False:
-            steps_needed.append('stonith')
-        if status['hana_installed'] and status['hana_resources'] is False:
-            steps_needed.append('hana')
+        if status["cluster_online"] and status["stonith_enabled"] is False:
+            steps_needed.append("stonith")
+        if status["hana_installed"] and status["hana_resources"] is False:
+            steps_needed.append("hana")
 
         if not steps_needed:
             print("\n" + "=" * 63)
@@ -1237,7 +1318,7 @@ class ClusterHealthCheck:
 
         step_num = 1
 
-        if 'subscription' in steps_needed:
+        if "subscription" in steps_needed:
             print(f"""
 STEP {step_num}: REGISTER SUBSCRIPTION (both nodes)
 ---------------------------------------------------------------
@@ -1250,7 +1331,7 @@ STEP {step_num}: REGISTER SUBSCRIPTION (both nodes)
 """)
             step_num += 1
 
-        if 'firewall' in steps_needed:
+        if "firewall" in steps_needed:
             print(f"""
 STEP {step_num}: CONFIGURE FIREWALL (both nodes)
 ---------------------------------------------------------------
@@ -1263,9 +1344,11 @@ STEP {step_num}: CONFIGURE FIREWALL (both nodes)
 """)
             step_num += 1
 
-        if 'packages' in steps_needed:
-            missing = status['missing_packages']
-            pkg_list = ' '.join(missing) if missing else 'pacemaker pcs fence-agents-all sap-hana-ha'
+        if "packages" in steps_needed:
+            missing = status["missing_packages"]
+            pkg_list = (
+                " ".join(missing) if missing else "pacemaker pcs fence-agents-all sap-hana-ha"
+            )
             print(f"""
 STEP {step_num}: INSTALL CLUSTER PACKAGES (both nodes)
 ---------------------------------------------------------------
@@ -1283,7 +1366,7 @@ STEP {step_num}: INSTALL CLUSTER PACKAGES (both nodes)
 """)
             step_num += 1
 
-        if 'hacluster' in steps_needed:
+        if "hacluster" in steps_needed:
             print(f"""
 STEP {step_num}: SET HACLUSTER PASSWORD (both nodes)
 ---------------------------------------------------------------
@@ -1295,7 +1378,7 @@ STEP {step_num}: SET HACLUSTER PASSWORD (both nodes)
 """)
             step_num += 1
 
-        if 'pcsd' in steps_needed:
+        if "pcsd" in steps_needed:
             print(f"""
 STEP {step_num}: START PCSD DAEMON (both nodes)
 ---------------------------------------------------------------
@@ -1307,7 +1390,7 @@ STEP {step_num}: START PCSD DAEMON (both nodes)
 """)
             step_num += 1
 
-        if 'authenticate' in steps_needed:
+        if "authenticate" in steps_needed:
             print(f"""
 STEP {step_num}: AUTHENTICATE NODES (one node only)
 ---------------------------------------------------------------
@@ -1319,7 +1402,7 @@ STEP {step_num}: AUTHENTICATE NODES (one node only)
 """)
             step_num += 1
 
-        if 'cluster_setup' in steps_needed:
+        if "cluster_setup" in steps_needed:
             print(f"""
 STEP {step_num}: CREATE CLUSTER (one node only)
 ---------------------------------------------------------------
@@ -1330,7 +1413,7 @@ STEP {step_num}: CREATE CLUSTER (one node only)
 """)
             step_num += 1
 
-        if 'cluster_start' in steps_needed:
+        if "cluster_start" in steps_needed:
             print(f"""
 STEP {step_num}: START CLUSTER (one node only)
 ---------------------------------------------------------------
@@ -1352,7 +1435,7 @@ STEP {step_num}: START CLUSTER (one node only)
 """)
             step_num += 1
 
-        if 'cluster_enable' in steps_needed:
+        if "cluster_enable" in steps_needed:
             print(f"""
 STEP {step_num}: ENABLE CLUSTER ON BOOT (one node only)
 ---------------------------------------------------------------
@@ -1364,7 +1447,7 @@ STEP {step_num}: ENABLE CLUSTER ON BOOT (one node only)
 """)
             step_num += 1
 
-        if 'stonith' in steps_needed:
+        if "stonith" in steps_needed:
             print(f"""
 STEP {step_num}: CONFIGURE STONITH/FENCING (one node only)
 ---------------------------------------------------------------
@@ -1397,7 +1480,7 @@ STEP {step_num}: CONFIGURE STONITH/FENCING (one node only)
 """)
             step_num += 1
 
-        if 'hana' in steps_needed:
+        if "hana" in steps_needed:
             print(f"""
 STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
 ---------------------------------------------------------------
@@ -1481,7 +1564,7 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
             ansible_group=self.ansible_group,
             skip_ansible=self.skip_ansible,
             cluster_name=self.cluster_name,
-            local_mode=self.local_mode
+            local_mode=self.local_mode,
         )
         discovery.MAX_WORKERS = self.workers
 
@@ -1494,8 +1577,7 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
 
         # Check if we have any accessible nodes
         accessible_nodes = [
-            node for node in self.access_config.nodes.values()
-            if node.get('preferred_method')
+            node for node in self.access_config.nodes.values() if node.get("preferred_method")
         ]
 
         if not accessible_nodes:
@@ -1510,7 +1592,7 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
         node_names = list(self.access_config.nodes.keys())
         cluster_name = None
         for cname, cinfo in self.access_config.clusters.items():
-            if any(n in node_names for n in cinfo.get('nodes', [])):
+            if any(n in node_names for n in cinfo.get("nodes", [])):
                 cluster_name = cname
                 break
 
@@ -1528,16 +1610,16 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
             self._debug_print(f"Loading rules engine from: {self.rules_path}")
             access_dict = asdict(self.access_config) if self.access_config else {}
             self.rules_engine = RulesEngine(
-                rules_path=self.rules_path,
-                access_config=access_dict,
-                strict_mode=self.strict_mode
+                rules_path=self.rules_path, access_config=access_dict, strict_mode=self.strict_mode
             )
             self.rules_engine.load_rules()
             self._debug_print(f"Loaded {len(self.rules_engine.rules)} rules")
             if not self.strict_mode:
                 optional_count = sum(1 for r in self.rules_engine.rules if r.optional)
                 if optional_count > 0:
-                    self._debug_print(f"Non-strict mode: {optional_count} optional checks will be warnings")
+                    self._debug_print(
+                        f"Non-strict mode: {optional_count} optional checks will be warnings"
+                    )
 
             # Validate dispatch manifest against loaded rules
             warnings = self.dispatch.validate_against_rules(self.rules_engine.rules)
@@ -1565,14 +1647,16 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                     self._debug_print(f"Completed: {check_id} ({len(results)} results)")
                 except Exception as e:
                     self._debug_print(f"Error in {check_id}: {e}")
-                    all_results.append(CheckResult(
-                        check_id=check_id,
-                        description="Check failed with exception",
-                        status=CheckStatus.ERROR,
-                        severity=Severity.WARNING,
-                        message=str(e),
-                        node=None
-                    ))
+                    all_results.append(
+                        CheckResult(
+                            check_id=check_id,
+                            description="Check failed with exception",
+                            status=CheckStatus.ERROR,
+                            severity=Severity.WARNING,
+                            message=str(e),
+                            node=None,
+                        )
+                    )
 
         # Sync results to the engine so requires/context lookups work
         # (e.g., _get_hadr_sid, _get_rhel_major, requires gate)
@@ -1585,8 +1669,9 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
 
     def _filter_rules_by_prefix(self, prefixes: list) -> list:
         """Filter loaded rules by check_id prefix."""
-        return [r for r in self.rules_engine.rules
-                if any(r.check_id.startswith(p) for p in prefixes)]
+        return [
+            r for r in self.rules_engine.rules if any(r.check_id.startswith(p) for p in prefixes)
+        ]
 
     # ------------------------------------------------------------------
     # Dispatch-driven step execution
@@ -1619,7 +1704,7 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
 
         # For the SAP step, use filtered hana_nodes if available
         effective_nodes = nodes
-        if step_name == 'sap' and self._hana_nodes:
+        if step_name == "sap" and self._hana_nodes:
             effective_nodes = self._hana_nodes
 
         # Get phases with topology filtering (if topology is known)
@@ -1631,7 +1716,7 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
         for phase in phases:
             # Re-evaluate effective nodes each phase (SAP phase 1 sets _hana_nodes
             # which must be picked up by phase 2+ to exclude non-HANA nodes)
-            if step_name == 'sap' and self._hana_nodes:
+            if step_name == "sap" and self._hana_nodes:
                 effective_nodes = self._hana_nodes
 
             # Evaluate phase-level gate
@@ -1639,25 +1724,33 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                 self._debug_print(f"Phase {phase.phase} skipped: gate '{phase.gate}' is closed")
                 # Add SKIPPED results for all checks in this phase
                 for chk_entry in phase.checks:
-                    rule = next((r for r in self.rules_engine.rules
-                                 if r.check_id == chk_entry.check_id), None)
+                    rule = next(
+                        (r for r in self.rules_engine.rules if r.check_id == chk_entry.check_id),
+                        None,
+                    )
                     if rule:
                         skip_msg = self._gate_skip_message(phase.gate)
                         # hana_installed skip is INFO (not applicable), others are WARNING
-                        skip_sev = Severity.INFO if phase.gate == 'hana_installed' else Severity.WARNING
-                        self.check_results.append(CheckResult(
-                            check_id=chk_entry.check_id,
-                            description=rule.description,
-                            status=CheckStatus.SKIPPED,
-                            severity=skip_sev,
-                            message=skip_msg,
-                            node="all"
-                        ))
-                if phase.gate == 'hana_installed':
+                        skip_sev = (
+                            Severity.INFO if phase.gate == "hana_installed" else Severity.WARNING
+                        )
+                        self.check_results.append(
+                            CheckResult(
+                                check_id=chk_entry.check_id,
+                                description=rule.description,
+                                status=CheckStatus.SKIPPED,
+                                severity=skip_sev,
+                                message=skip_msg,
+                                node="all",
+                            )
+                        )
+                if phase.gate == "hana_installed":
                     print("[SKIP] SAP HANA not installed - skipping HANA-specific checks")
-                elif phase.gate == 'hana_resource_running':
-                    print(f"  [WARN] HANA resource is {self._hana_resource_state}"
-                          " - skipping resource-dependent checks")
+                elif phase.gate == "hana_resource_running":
+                    print(
+                        f"  [WARN] HANA resource is {self._hana_resource_state}"
+                        " - skipping resource-dependent checks"
+                    )
                 continue
 
             # Collect rules to run in this phase, evaluating per-check gates
@@ -1665,22 +1758,27 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
             for chk_entry in phase.checks:
                 # Check per-check gate
                 if chk_entry.gate and not self._gate_registry.evaluate(chk_entry.gate):
-                    rule = next((r for r in self.rules_engine.rules
-                                 if r.check_id == chk_entry.check_id), None)
+                    rule = next(
+                        (r for r in self.rules_engine.rules if r.check_id == chk_entry.check_id),
+                        None,
+                    )
                     if rule:
                         skip_msg = self._gate_skip_message(chk_entry.gate)
-                        self.check_results.append(CheckResult(
-                            check_id=chk_entry.check_id,
-                            description=rule.description,
-                            status=CheckStatus.SKIPPED,
-                            severity=Severity.WARNING,
-                            message=skip_msg,
-                            node="all"
-                        ))
+                        self.check_results.append(
+                            CheckResult(
+                                check_id=chk_entry.check_id,
+                                description=rule.description,
+                                status=CheckStatus.SKIPPED,
+                                severity=Severity.WARNING,
+                                message=skip_msg,
+                                node="all",
+                            )
+                        )
                     continue
 
-                rule = next((r for r in self.rules_engine.rules
-                             if r.check_id == chk_entry.check_id), None)
+                rule = next(
+                    (r for r in self.rules_engine.rules if r.check_id == chk_entry.check_id), None
+                )
                 if rule:
                     rules_to_run.append(rule)
 
@@ -1692,7 +1790,7 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
 
             # Run checks (parallel or sequential)
             spinner_msg = f"Running {len(rules_to_run)} {step_display.lower()} checks"
-            if step_name == 'sap' and phase.phase == 1:
+            if step_name == "sap" and phase.phase == 1:
                 spinner_msg = "Checking if SAP HANA is installed"
 
             with Spinner(spinner_msg):
@@ -1704,46 +1802,52 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
             self._post_phase_hook(step_name, phase.phase, results, nodes)
 
         # Print completion
-        total_run = len([r for r in all_step_results])
+        total_run = len(all_step_results)
         if total_run > 0:
             print(f"  Completed {step_display.lower()} checks")
 
         # Determine success (no CRITICAL failures in this step)
-        failed = [r for r in self.check_results if r.status == CheckStatus.FAILED
-                  and r.check_id in all_check_ids]
+        failed = [
+            r
+            for r in self.check_results
+            if r.status == CheckStatus.FAILED and r.check_id in all_check_ids
+        ]
         return len([f for f in failed if f.severity == Severity.CRITICAL]) == 0
 
     def _get_resource_agent_label(self) -> str:
         """Return a human-readable label for the installed resource agent package."""
         ra_package = None
         for r in self.check_results:
-            if r.check_id == 'CHK_PACKAGE_CONSISTENCY' and r.details:
-                parsed = r.details.get('parsed', {})
-                if parsed.get('sap_hana_ha_version'):
-                    ra_package = parsed['sap_hana_ha_version']
+            if r.check_id == "CHK_PACKAGE_CONSISTENCY" and r.details:
+                parsed = r.details.get("parsed", {})
+                if parsed.get("sap_hana_ha_version"):
+                    ra_package = parsed["sap_hana_ha_version"]
                     break
-                elif parsed.get('resource_agents_sap_hana_scaleout'):
-                    ra_package = parsed['resource_agents_sap_hana_scaleout']
+                if parsed.get("resource_agents_sap_hana_scaleout"):
+                    ra_package = parsed["resource_agents_sap_hana_scaleout"]
                     break
-                elif parsed.get('resource_agents_sap_hana'):
-                    ra_package = parsed['resource_agents_sap_hana']
+                if parsed.get("resource_agents_sap_hana"):
+                    ra_package = parsed["resource_agents_sap_hana"]
                     break
-        arch_suffix = {'angi': 'sap-hana-ha (ANGI)', 'legacy': 'legacy'}.get(
-            self._detected_arch_type, '')
+        arch_suffix = {"angi": "sap-hana-ha (ANGI)", "legacy": "legacy"}.get(
+            self._detected_arch_type, ""
+        )
         if ra_package:
             return f"{ra_package} ({arch_suffix})" if arch_suffix else ra_package
-        return {'angi': 'sap-hana-ha (ANGI)',
-                'legacy': 'resource-agents-sap-hana (legacy)',
-                }.get(self._detected_arch_type,
-                      self._detected_arch_type or 'unknown')
+        return {
+            "angi": "sap-hana-ha (ANGI)",
+            "legacy": "resource-agents-sap-hana (legacy)",
+        }.get(self._detected_arch_type, self._detected_arch_type or "unknown")
 
     def _gate_skip_message(self, gate_name: str) -> str:
         """Return a human-readable skip message for a gate."""
-        if gate_name == 'hana_resource_running':
-            return f"Skipped: HANA resource is {self._hana_resource_state} (not managed by Pacemaker)"
-        elif gate_name == 'hana_installed':
+        if gate_name == "hana_resource_running":
+            return (
+                f"Skipped: HANA resource is {self._hana_resource_state} (not managed by Pacemaker)"
+            )
+        if gate_name == "hana_installed":
             return "SAP HANA not installed"
-        elif gate_name == 'not_legacy_scaleup':
+        if gate_name == "not_legacy_scaleup":
             return "Skipped: not applicable for legacy scale-up (resource-agents-sap-hana)"
         return f"Skipped: gate '{gate_name}' is closed"
 
@@ -1752,40 +1856,40 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
 
         These hooks extract runtime state needed by subsequent phases or steps.
         """
-        if step_name == 'config' and phase == 1:
+        if step_name == "config" and phase == 1:
             self._post_config_phase1(results)
-        elif step_name == 'pacemaker' and phase == 1:
+        elif step_name == "pacemaker" and phase == 1:
             self._post_pacemaker_phase1(results)
-        elif step_name == 'sap' and phase == 1:
+        elif step_name == "sap" and phase == 1:
             self._post_sap_phase1(results, nodes)
 
     def _post_config_phase1(self, results: list):
         """After config phase 1: extract topology, apply retroactive filtering."""
         # Extract topology from CHK_CLUSTER_TYPE result
-        cluster_type_result = next(
-            (r for r in results if r.check_id == 'CHK_CLUSTER_TYPE'), None
-        )
+        cluster_type_result = next((r for r in results if r.check_id == "CHK_CLUSTER_TYPE"), None)
         if cluster_type_result and cluster_type_result.details:
-            topology = cluster_type_result.details.get('cluster_type')
-            if topology in ('Scale-Up', 'Scale-Out'):
+            topology = cluster_type_result.details.get("cluster_type")
+            if topology in ("Scale-Up", "Scale-Out"):
                 self._detected_topology = topology
                 if self.rules_engine:
                     self.rules_engine.set_detected_topology(topology)
                 self._debug_print(f"Detected topology: {topology}")
 
         # Extract architecture type from CHK_PACKAGE_CONSISTENCY result
-        pkg_result = next(
-            (r for r in results if r.check_id == 'CHK_PACKAGE_CONSISTENCY'), None
-        )
+        pkg_result = next((r for r in results if r.check_id == "CHK_PACKAGE_CONSISTENCY"), None)
         if pkg_result and pkg_result.details:
-            parsed = pkg_result.details.get('parsed', {})
+            parsed = pkg_result.details.get("parsed", {})
             packages = []
-            for key in ('sap_hana_ha_version', 'resource_agents_sap_hana',
-                        'resource_agents_sap_hana_scaleout'):
+            for key in (
+                "sap_hana_ha_version",
+                "resource_agents_sap_hana",
+                "resource_agents_sap_hana_scaleout",
+            ):
                 val = parsed.get(key)
                 if val:
                     packages.append(val)
             from hadr_provider.config_matrix import detect_arch_type
+
             arch = detect_arch_type(packages)
             if arch is not None:
                 self._detected_arch_type = arch.value  # 'legacy' or 'angi'
@@ -1795,19 +1899,25 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
         # don't match the detected topology (they ran in the same phase because
         # topology wasn't known yet)
         if self._detected_topology:
-            phases = self.dispatch.get_phases('config')  # Unfiltered
+            phases = self.dispatch.get_phases("config")  # Unfiltered
             if phases:
                 for chk_entry in phases[0].checks:
-                    if chk_entry.topology != 'all' and self._detected_topology not in chk_entry.topology:
+                    if (
+                        chk_entry.topology != "all"
+                        and self._detected_topology not in chk_entry.topology
+                    ):
                         # Find and downgrade results for this check
                         for result in self.check_results:
                             if result.check_id == chk_entry.check_id:
                                 result.status = CheckStatus.SKIPPED
                                 result.severity = Severity.INFO
-                                result.message = f"Not applicable for {self._detected_topology} topology"
+                                result.message = (
+                                    f"Not applicable for {self._detected_topology} topology"
+                                )
                                 self._debug_print(
                                     f"Retroactive skip: {chk_entry.check_id} "
-                                    f"(topology {chk_entry.topology} vs {self._detected_topology})")
+                                    f"(topology {chk_entry.topology} vs {self._detected_topology})"
+                                )
 
     def _post_pacemaker_phase1(self, results: list):
         """After pacemaker phase 1: extract HANA resource state and majority maker."""
@@ -1821,9 +1931,9 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
         # source for majority maker detection — the CIB parser in
         # _build_cluster_report_data() serves as an additional source.
         for r in results:
-            if r.check_id == 'CHK_MAJORITY_MAKER' and r.details:
-                parsed = r.details.get('parsed', {})
-                mm_node = parsed.get('majority_maker_node')
+            if r.check_id == "CHK_MAJORITY_MAKER" and r.details:
+                parsed = r.details.get("parsed", {})
+                mm_node = parsed.get("majority_maker_node")
                 if mm_node and mm_node not in self.majority_makers:
                     self.majority_makers.append(mm_node)
                     self._debug_print(f"Majority maker detected: {mm_node}")
@@ -1831,7 +1941,7 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
 
     def _post_sap_phase1(self, results: list, nodes: dict):
         """After SAP phase 1: determine HANA install status, handle majority maker nodes."""
-        install_results = [r for r in results if r.check_id == 'CHK_HANA_INSTALLED']
+        install_results = [r for r in results if r.check_id == "CHK_HANA_INSTALLED"]
         self._install_results = install_results
 
         # Distinguish actual HANA nodes from non-HANA nodes (app servers, majority makers)
@@ -1841,23 +1951,23 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
         nodes_with_hana = []
         nodes_without_hana = []
         for r in install_results:
-            parsed = r.details.get('parsed', {}) if r.details else {}
-            if parsed.get('hana_installed') == 'HANA_INSTALLED':
+            parsed = r.details.get("parsed", {}) if r.details else {}
+            if parsed.get("hana_installed") == "HANA_INSTALLED":
                 nodes_with_hana.append(r.node)
-            elif parsed.get('hdb_process'):
+            elif parsed.get("hdb_process"):
                 # SOSreport alternate: HANA detected from saphana process data
                 nodes_with_hana.append(r.node)
                 # Promote SID/instance from alternate fields if primary not set
-                if not parsed.get('sid') and parsed.get('profile_sid'):
-                    parsed['sid'] = parsed['profile_sid']
-                if not parsed.get('instance') and parsed.get('profile_instance'):
-                    parsed['instance'] = parsed['profile_instance']
-                if not parsed.get('sidadm') and parsed.get('profile_sidadm'):
-                    parsed['sidadm'] = parsed['profile_sidadm']
+                if not parsed.get("sid") and parsed.get("profile_sid"):
+                    parsed["sid"] = parsed["profile_sid"]
+                if not parsed.get("instance") and parsed.get("profile_instance"):
+                    parsed["instance"] = parsed["profile_instance"]
+                if not parsed.get("sidadm") and parsed.get("profile_sidadm"):
+                    parsed["sidadm"] = parsed["profile_sidadm"]
                 # Mark as HANA_INSTALLED for downstream consistency
-                parsed['hana_installed'] = 'HANA_INSTALLED'
+                parsed["hana_installed"] = "HANA_INSTALLED"
                 if r.details:
-                    r.details['parsed'] = parsed
+                    r.details["parsed"] = parsed
                 # Fix check status (was ERROR because primary sos_path failed)
                 if r.status == CheckStatus.ERROR:
                     r.status = CheckStatus.PASSED
@@ -1865,15 +1975,17 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
             else:
                 nodes_without_hana.append(r.node)
 
-        self._debug_print(f"HANA install check (raw): nodes_with={nodes_with_hana}, nodes_without={nodes_without_hana}")
+        self._debug_print(
+            f"HANA install check (raw): nodes_with={nodes_with_hana}, nodes_without={nodes_without_hana}"
+        )
 
         # Nodes excluded from HANA: majority makers (from _post_pacemaker_phase1)
         # and any additional CIB constraint-based exclusions
         hana_excluded_nodes = set(self.majority_makers)
         if self.rules_engine:
             resource_config = self.rules_engine.get_cluster_resources_config()
-            if resource_config.get('available'):
-                excluded = resource_config.get('hana_excluded_node')
+            if resource_config.get("available"):
+                excluded = resource_config.get("hana_excluded_node")
                 if excluded:
                     hana_excluded_nodes.add(excluded)
 
@@ -1884,11 +1996,15 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
             for node_name in false_positives:
                 nodes_with_hana.remove(node_name)
                 nodes_without_hana.append(node_name)
-                self._debug_print(f"Overriding HANA detection for {node_name} (excluded by constraints)")
+                self._debug_print(
+                    f"Overriding HANA detection for {node_name} (excluded by constraints)"
+                )
 
         self._hana_installed = len(nodes_with_hana) > 0
 
-        self._debug_print(f"HANA install check: nodes_with={nodes_with_hana}, nodes_without={nodes_without_hana}")
+        self._debug_print(
+            f"HANA install check: nodes_with={nodes_with_hana}, nodes_without={nodes_without_hana}"
+        )
         self._debug_print(f"HANA installed: {self._hana_installed}")
 
         # Update CHK_HANA_INSTALLED results for excluded nodes
@@ -1896,16 +2012,20 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
         for node_name in nodes_without_hana:
             if node_name in hana_excluded_nodes:
                 for result in self.check_results:
-                    if result.check_id == 'CHK_HANA_INSTALLED' and result.node == node_name:
+                    if result.check_id == "CHK_HANA_INSTALLED" and result.node == node_name:
                         result.status = CheckStatus.SKIPPED
-                        result.message = "Node excluded from HANA resources by constraints (majority maker)"
+                        result.message = (
+                            "Node excluded from HANA resources by constraints (majority maker)"
+                        )
                         break
                 excluded_nodes_updated.append(node_name)
 
         other_without_hana = [n for n in nodes_without_hana if n not in hana_excluded_nodes]
 
         if excluded_nodes_updated:
-            print(f"[OK] Nodes excluded from HANA by constraints: {', '.join(excluded_nodes_updated)}")
+            print(
+                f"[OK] Nodes excluded from HANA by constraints: {', '.join(excluded_nodes_updated)}"
+            )
         if other_without_hana:
             print(f"[INFO] Nodes without HANA: {', '.join(other_without_hana)}")
 
@@ -1930,16 +2050,16 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
         then falls back to inferring from individual regex matches (SOSreport).
         """
         resource_status_result = next(
-            (r for r in results if r.check_id == 'CHK_RESOURCE_STATUS'), None
+            (r for r in results if r.check_id == "CHK_RESOURCE_STATUS"), None
         )
         if not resource_status_result or not resource_status_result.details:
-            return 'unknown'
+            return "unknown"
 
-        parsed = resource_status_result.details.get('parsed', {})
+        parsed = resource_status_result.details.get("parsed", {})
 
         # Primary: use the explicit state summary (from live_cmd)
-        state = parsed.get('hana_resource_state')
-        if state and state != 'unknown':
+        state = parsed.get("hana_resource_state")
+        if state and state != "unknown":
             return state
 
         # Fallback: infer from individual regex matches (SOSreport data)
@@ -1947,18 +2067,18 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
         # lines), so order matters.  If resource_started is present (Master/
         # Slave/Promoted), the HANA resource is running - even if non-HANA
         # resources happen to be disabled (e.g. S4H_ERS29_group (disabled)).
-        has_resource = parsed.get('sap_hana_resource') is not None
+        has_resource = parsed.get("sap_hana_resource") is not None
         if not has_resource:
-            return 'absent'
-        if parsed.get('resource_unmanaged') is not None:
-            return 'unmanaged'
-        if parsed.get('resource_started') is not None:
-            return 'running'
-        if parsed.get('resource_disabled') is not None:
-            return 'disabled'
-        if parsed.get('resource_stopped') is not None:
-            return 'stopped'
-        return 'unknown'
+            return "absent"
+        if parsed.get("resource_unmanaged") is not None:
+            return "unmanaged"
+        if parsed.get("resource_started") is not None:
+            return "running"
+        if parsed.get("resource_disabled") is not None:
+            return "disabled"
+        if parsed.get("resource_stopped") is not None:
+            return "stopped"
+        return "unknown"
 
     # ------------------------------------------------------------------
     # Public step methods (thin wrappers around _run_step)
@@ -1966,15 +2086,15 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
 
     def step_cluster_config_check(self) -> bool:
         """Step 2: Check cluster configuration."""
-        return self._run_step('config')
+        return self._run_step("config")
 
     def step_pacemaker_check(self) -> bool:
         """Step 3: Check Pacemaker/Corosync status."""
-        return self._run_step('pacemaker')
+        return self._run_step("pacemaker")
 
     def step_sap_check(self) -> bool:
         """Step 4: SAP-specific checks."""
-        return self._run_step('sap')
+        return self._run_step("sap")
 
     def _gather_hana_db_status(self, install_results: list, hana_nodes: dict):
         """
@@ -1991,13 +2111,13 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
         Results are stored in self._hana_db_status for report generation.
         """
         cluster_running = True
-        if self.access_config and hasattr(self.access_config, 'clusters'):
+        if self.access_config and hasattr(self.access_config, "clusters"):
             for cinfo in self.access_config.clusters.values():
-                if cinfo.get('cluster_running') is False:
+                if cinfo.get("cluster_running") is False:
                     cluster_running = False
                     break
 
-        hana_resource_active = self._hana_resource_state == 'running'
+        hana_resource_active = self._hana_resource_state == "running"
 
         # Determine HANA managed state:
         # Managed = cluster is running AND resource is started/running
@@ -2011,37 +2131,41 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
         for result in install_results:
             if result.status != CheckStatus.PASSED or not result.details:
                 continue
-            parsed = result.details.get('parsed', {})
-            node_sidadm = parsed.get('sidadm')
+            parsed = result.details.get("parsed", {})
+            node_sidadm = parsed.get("sidadm")
             if node_sidadm:
                 sidadm = node_sidadm  # Keep last valid sidadm for offline queries
 
-            if parsed.get('hana_running') == 'yes' and node_sidadm:
-                hana_running_nodes.append({
-                    'node': result.node,
-                    'sidadm': node_sidadm,
-                    'sid': parsed.get('sid'),
-                })
-            elif parsed.get('hana_installed') == 'HANA_INSTALLED':
-                hana_stopped_nodes.append({
-                    'node': result.node,
-                    'sidadm': node_sidadm,
-                    'sid': parsed.get('sid'),
-                })
+            if parsed.get("hana_running") == "yes" and node_sidadm:
+                hana_running_nodes.append(
+                    {
+                        "node": result.node,
+                        "sidadm": node_sidadm,
+                        "sid": parsed.get("sid"),
+                    }
+                )
+            elif parsed.get("hana_installed") == "HANA_INSTALLED":
+                hana_stopped_nodes.append(
+                    {
+                        "node": result.node,
+                        "sidadm": node_sidadm,
+                        "sid": parsed.get("sid"),
+                    }
+                )
 
         db_running = len(hana_running_nodes) > 0
-        running_nodes = [n['node'] for n in hana_running_nodes]
-        stopped_nodes = [n['node'] for n in hana_stopped_nodes]
+        running_nodes = [n["node"] for n in hana_running_nodes]
+        stopped_nodes = [n["node"] for n in hana_stopped_nodes]
 
         # Store status for report generation
         self._hana_db_status = {
-            'db_running': db_running,
-            'hana_managed': hana_managed,
-            'running_nodes': running_nodes,
-            'stopped_nodes': stopped_nodes,
-            'hana_resource_state': self._hana_resource_state,
-            'sr_source': None,
-            'sr_info': None,
+            "db_running": db_running,
+            "hana_managed": hana_managed,
+            "running_nodes": running_nodes,
+            "stopped_nodes": stopped_nodes,
+            "hana_resource_state": self._hana_resource_state,
+            "sr_source": None,
+            "sr_info": None,
         }
 
         if db_running:
@@ -2055,17 +2179,19 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
 
         if hana_managed:
             print(f"  [INFO] HANA is managed by the cluster (resource {self._hana_resource_state})")
-            self._hana_db_status['sr_source'] = 'hdbnsutil -sr_state'
+            self._hana_db_status["sr_source"] = "hdbnsutil -sr_state"
             return
 
-        print(f"  [INFO] HANA is NOT managed by the cluster"
-              f" (resource {self._hana_resource_state})")
+        print(
+            f"  [INFO] HANA is NOT managed by the cluster"
+            f" (resource {self._hana_resource_state})"
+        )
 
         # --- Gather replication info for non-managed scenarios ---
 
         if db_running:
             # Topology already gathered above; add maintenance check result
-            self._add_maintenance_sr_result(hana_running_nodes[0]['node'])
+            self._add_maintenance_sr_result(hana_running_nodes[0]["node"])
         else:
             # DB not running: try offline config queries and global.ini
             self._query_sr_state_configuration(hana_nodes, sidadm)
@@ -2074,33 +2200,35 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
     def _query_sr_topology(self, hana_running_nodes: list, hana_nodes: dict):
         """Query hdbnsutil -sr_state from running nodes and parse SR topology."""
         for node_info in hana_running_nodes:
-            sidadm = node_info['sidadm']
-            node_name = node_info['node']
+            sidadm = node_info["sidadm"]
+            node_name = node_info["node"]
 
-            if not re.match(r'^[a-z0-9]+adm$', sidadm):
+            if not re.match(r"^[a-z0-9]+adm$", sidadm):
                 self._debug_print(f"Invalid sidadm user: {sidadm}")
                 continue
 
             node_access = hana_nodes.get(node_name, {})
-            method = node_access.get('preferred_method', 'ssh')
-            user = node_access.get('ssh_user')
+            method = node_access.get("preferred_method", "ssh")
+            user = node_access.get("ssh_user")
 
             sr_cmd = f"su - {sidadm} -c 'hdbnsutil -sr_state' 2>/dev/null"
             self._debug_print(f"Running: {sr_cmd} on {node_name}")
 
-            success, output = self.rules_engine._execute_command_raw(
-                sr_cmd, node_name, method, user)
+            success, output = (
+                self.rules_engine._execute_command_raw(  # pylint: disable=protected-access
+                    sr_cmd, node_name, method, user
+                )
+            )
 
             if success and output and output.strip():
-                self._hana_db_status['sr_source'] = 'hdbnsutil -sr_state'
-                self._hana_db_status['sr_info'] = output.strip()
+                self._hana_db_status["sr_source"] = "hdbnsutil -sr_state"
+                self._hana_db_status["sr_info"] = output.strip()
                 topology = self._parse_sr_topology(output)
                 if topology:
-                    self._hana_db_status['sr_topology'] = topology
+                    self._hana_db_status["sr_topology"] = topology
                     print(f"  [OK] SR topology retrieved from {node_name}")
                     return  # Got what we need from one node
-                else:
-                    self._debug_print(f"Could not parse SR topology from {node_name}")
+                self._debug_print(f"Could not parse SR topology from {node_name}")
             else:
                 self._debug_print(f"hdbnsutil query failed on {node_name}")
 
@@ -2113,17 +2241,17 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
             mapping: str       - e.g. "DC1 -> DC2, DC1 -> DC3"
             sites: list[dict]  - [{name, role, op_mode, tier, hosts}, ...]
         """
-        topology = {'mapping': None, 'sites': []}
+        topology = {"mapping": None, "sites": []}
 
         # Extract all site mapping directions (multi-target has multiple lines)
         # "Mapping: DC1 -> DC2"
-        mappings = re.findall(r'^Mapping:\s*(.+?)\s*$', output, re.MULTILINE)
+        mappings = re.findall(r"^Mapping:\s*(.+?)\s*$", output, re.MULTILINE)
         if mappings:
-            topology['mapping'] = ', '.join(m.strip() for m in mappings)
+            topology["mapping"] = ", ".join(m.strip() for m in mappings)
 
         # Extract host-to-site mappings: "hostname -> [SiteName] hostname"
         host_site_map = {}  # {site_name: [hostname, ...]}
-        for hm in re.finditer(r'(\S+)\s+->\s+\[(\S+)\]\s+(\S+)', output):
+        for hm in re.finditer(r"(\S+)\s+->\s+\[(\S+)\]\s+(\S+)", output):
             site_name = hm.group(2)
             host = hm.group(3)
             if site_name not in host_site_map:
@@ -2134,117 +2262,133 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
         # Extract replication/operation modes per site
         site_repl_mode = {}
         site_op_mode = {}
-        for rm in re.finditer(r'Replication mode of (\S+):\s*(\S+)', output):
+        for rm in re.finditer(r"Replication mode of (\S+):\s*(\S+)", output):
             site_repl_mode[rm.group(1)] = rm.group(2)
-        for om in re.finditer(r'Operation mode of (\S+):\s*(\S+)', output):
+        for om in re.finditer(r"Operation mode of (\S+):\s*(\S+)", output):
             site_op_mode[om.group(1)] = om.group(2)
 
         # Extract tiers: "Tier of DC1: 1"
         site_tiers = {}
-        for tm in re.finditer(r'Tier of (\S+):\s*(\d+)', output):
+        for tm in re.finditer(r"Tier of (\S+):\s*(\d+)", output):
             site_tiers[tm.group(1)] = int(tm.group(2))
 
         # Build sites list, ordered by tier (primary first)
         for site_name in sorted(host_site_map, key=lambda s: site_tiers.get(s, 99)):
-            role = site_repl_mode.get(site_name, 'unknown')
-            op_mode = site_op_mode.get(site_name, '')
+            role = site_repl_mode.get(site_name, "unknown")
+            op_mode = site_op_mode.get(site_name, "")
             tier = site_tiers.get(site_name)
             hosts = host_site_map[site_name]
 
-            topology['sites'].append({
-                'name': site_name,
-                'role': role,
-                'op_mode': op_mode,
-                'tier': tier,
-                'hosts': hosts,
-            })
+            topology["sites"].append(
+                {
+                    "name": site_name,
+                    "role": role,
+                    "op_mode": op_mode,
+                    "tier": tier,
+                    "hosts": hosts,
+                }
+            )
 
-        return topology if topology['sites'] else None
+        return topology if topology["sites"] else None
 
     def _add_maintenance_sr_result(self, node_name: str):
         """Add a CHK_HANA_SR_STATUS check result for maintenance (not-managed) scenarios."""
-        sr_info = self._hana_db_status.get('sr_info', '')
-        self._hana_db_status['sr_source'] = 'hdbnsutil -sr_state (direct query)'
+        sr_info = self._hana_db_status.get("sr_info", "")
+        self._hana_db_status["sr_source"] = "hdbnsutil -sr_state (direct query)"
 
-        self.check_results.append(CheckResult(
-            check_id='CHK_HANA_SR_STATUS',
-            description='HANA System Replication status (direct query - resource not managed)',
-            status=CheckStatus.PASSED,
-            severity=Severity.WARNING,
-            message=(f"Replication info gathered directly from HANA (NOT via Pacemaker). "
-                     f"HANA resource is {self._hana_resource_state}."),
-            details={
-                'maintenance_mode': True,
-                'hana_resource_state': self._hana_resource_state,
-                'sr_state_output': sr_info[:1000],
-                'source': 'hdbnsutil -sr_state',
-                'note': 'HANA is NOT managed by Pacemaker in this state'
-            },
-            node=node_name
-        ))
+        self.check_results.append(
+            CheckResult(
+                check_id="CHK_HANA_SR_STATUS",
+                description="HANA System Replication status (direct query - resource not managed)",
+                status=CheckStatus.PASSED,
+                severity=Severity.WARNING,
+                message=(
+                    f"Replication info gathered directly from HANA (NOT via Pacemaker). "
+                    f"HANA resource is {self._hana_resource_state}."
+                ),
+                details={
+                    "maintenance_mode": True,
+                    "hana_resource_state": self._hana_resource_state,
+                    "sr_state_output": sr_info[:1000],
+                    "source": "hdbnsutil -sr_state",
+                    "note": "HANA is NOT managed by Pacemaker in this state",
+                },
+                node=node_name,
+            )
+        )
         # Remove the SKIPPED result we added earlier for CHK_HANA_SR_STATUS
         self.check_results = [
-            r for r in self.check_results
-            if not (r.check_id == 'CHK_HANA_SR_STATUS'
-                    and r.status == CheckStatus.SKIPPED
-                    and 'HANA resource is' in (r.message or ''))
+            r
+            for r in self.check_results
+            if not (
+                r.check_id == "CHK_HANA_SR_STATUS"
+                and r.status == CheckStatus.SKIPPED
+                and "HANA resource is" in (r.message or "")
+            )
         ]
         print(f"  [OK] Replication status retrieved from {node_name} (via hdbnsutil)")
 
     def _query_sr_topology_offline(self, hana_nodes: dict, sidadm: str = None):
         """Parse global.ini from each node to build SR topology when DB is stopped."""
-        if not sidadm or not re.match(r'^[a-z0-9]+adm$', sidadm):
+        if not sidadm or not re.match(r"^[a-z0-9]+adm$", sidadm):
             return
         sid = sidadm[:-3].upper()
 
         sites = []
         for node_name, node_access in hana_nodes.items():
-            method = node_access.get('preferred_method', 'ssh')
-            user = node_access.get('ssh_user')
+            method = node_access.get("preferred_method", "ssh")
+            user = node_access.get("ssh_user")
 
-            ini_cmd = (f"su - {sidadm} -c "
-                       f"'grep -E \"^(mode|site_id|site_name)\" "
-                       f"/usr/sap/{sid}/SYS/global/hdb/custom/config/global.ini' "
-                       f"2>/dev/null")
+            ini_cmd = (
+                f"su - {sidadm} -c "
+                f'\'grep -E "^(mode|site_id|site_name)" '
+                f"/usr/sap/{sid}/SYS/global/hdb/custom/config/global.ini' "
+                f"2>/dev/null"
+            )
             self._debug_print(f"Reading global.ini from {node_name}")
 
-            success, output = self.rules_engine._execute_command_raw(
-                ini_cmd, node_name, method, user)
+            success, output = (
+                self.rules_engine._execute_command_raw(  # pylint: disable=protected-access
+                    ini_cmd, node_name, method, user
+                )
+            )
 
             if success and output:
                 site_name = None
                 role = None
-                for line in output.strip().split('\n'):
+                for line in output.strip().split("\n"):
                     line = line.strip()
-                    if line.startswith('site_name'):
-                        site_name = line.split('=', 1)[1].strip()
-                    elif line.startswith('mode') and '=' in line:
-                        role = line.split('=', 1)[1].strip()
+                    if line.startswith("site_name"):
+                        site_name = line.split("=", 1)[1].strip()
+                    elif line.startswith("mode") and "=" in line:
+                        role = line.split("=", 1)[1].strip()
                 if site_name:
                     # Check if site already in list
-                    existing = next((s for s in sites if s['name'] == site_name), None)
+                    existing = next((s for s in sites if s["name"] == site_name), None)
                     if existing:
-                        if node_name not in existing['hosts']:
-                            existing['hosts'].append(node_name)
+                        if node_name not in existing["hosts"]:
+                            existing["hosts"].append(node_name)
                     else:
-                        sites.append({
-                            'name': site_name,
-                            'role': role or 'unknown',
-                            'op_mode': '',
-                            'tier': None,
-                            'hosts': [node_name],
-                        })
+                        sites.append(
+                            {
+                                "name": site_name,
+                                "role": role or "unknown",
+                                "op_mode": "",
+                                "tier": None,
+                                "hosts": [node_name],
+                            }
+                        )
 
         if sites:
             # Sort: primary first
-            sites.sort(key=lambda s: 0 if s['role'] == 'primary' else 1)
-            primary = next((s['name'] for s in sites if s['role'] == 'primary'), None)
-            secondary = next((s['name'] for s in sites if s['role'] != 'primary'), None)
+            sites.sort(key=lambda s: 0 if s["role"] == "primary" else 1)
+            primary = next((s["name"] for s in sites if s["role"] == "primary"), None)
+            secondary = next((s["name"] for s in sites if s["role"] != "primary"), None)
             mapping = f"{primary} -> {secondary}" if primary and secondary else None
 
-            self._hana_db_status['sr_topology'] = {
-                'mapping': mapping,
-                'sites': sites,
+            self._hana_db_status["sr_topology"] = {
+                "mapping": mapping,
+                "sites": sites,
             }
             print(f"  [OK] SR topology from global.ini ({len(sites)} site(s))")
 
@@ -2260,22 +2404,25 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
         """
         # Try on any accessible node
         for node_name, node_access in hana_nodes.items():
-            method = node_access.get('preferred_method', 'ssh')
+            method = node_access.get("preferred_method", "ssh")
             if not method:
                 continue
-            user = node_access.get('ssh_user')
+            user = node_access.get("ssh_user")
 
             # 1. Try hdbnsutil -sr_stateConfiguration via sidadm (primary method)
-            if sidadm and re.match(r'^[a-z0-9]+adm$', sidadm):
+            if sidadm and re.match(r"^[a-z0-9]+adm$", sidadm):
                 sr_cmd = f"su - {sidadm} -c 'hdbnsutil -sr_stateConfiguration' 2>/dev/null"
                 self._debug_print(f"Running: {sr_cmd} on {node_name}")
 
-                success, output = self.rules_engine._execute_command_raw(
-                    sr_cmd, node_name, method, user)
+                success, output = (
+                    self.rules_engine._execute_command_raw(  # pylint: disable=protected-access
+                        sr_cmd, node_name, method, user
+                    )
+                )
 
-                if success and output and output.strip() and 'not found' not in output.lower():
-                    self._hana_db_status['sr_source'] = 'hdbnsutil -sr_stateConfiguration'
-                    self._hana_db_status['sr_info'] = output.strip()
+                if success and output and output.strip() and "not found" not in output.lower():
+                    self._hana_db_status["sr_source"] = "hdbnsutil -sr_stateConfiguration"
+                    self._hana_db_status["sr_info"] = output.strip()
                     print(f"  [OK] SR configuration retrieved via hdbnsutil on {node_name}")
                     return
 
@@ -2283,12 +2430,15 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
             sr_cmd = "SAPHanaSR-stateConfiguration 2>/dev/null"
             self._debug_print(f"Trying: {sr_cmd} on {node_name}")
 
-            success, output = self.rules_engine._execute_command_raw(
-                sr_cmd, node_name, method, user)
+            success, output = (
+                self.rules_engine._execute_command_raw(  # pylint: disable=protected-access
+                    sr_cmd, node_name, method, user
+                )
+            )
 
-            if success and output and output.strip() and 'not found' not in output.lower():
-                self._hana_db_status['sr_source'] = 'SAPHanaSR-stateConfiguration (CIB attributes)'
-                self._hana_db_status['sr_info'] = output.strip()
+            if success and output and output.strip() and "not found" not in output.lower():
+                self._hana_db_status["sr_source"] = "SAPHanaSR-stateConfiguration (CIB attributes)"
+                self._hana_db_status["sr_info"] = output.strip()
                 print(f"  [OK] SR configuration retrieved from CIB via {node_name}")
                 return
 
@@ -2296,12 +2446,15 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
             sr_cmd = "SAPHanaSR-showAttr 2>/dev/null"
             self._debug_print(f"Trying: {sr_cmd} on {node_name}")
 
-            success, output = self.rules_engine._execute_command_raw(
-                sr_cmd, node_name, method, user)
+            success, output = (
+                self.rules_engine._execute_command_raw(  # pylint: disable=protected-access
+                    sr_cmd, node_name, method, user
+                )
+            )
 
-            if success and output and output.strip() and 'not found' not in output.lower():
-                self._hana_db_status['sr_source'] = 'SAPHanaSR-showAttr (CIB attributes)'
-                self._hana_db_status['sr_info'] = output.strip()
+            if success and output and output.strip() and "not found" not in output.lower():
+                self._hana_db_status["sr_source"] = "SAPHanaSR-showAttr (CIB attributes)"
+                self._hana_db_status["sr_info"] = output.strip()
                 print(f"  [OK] SR attributes retrieved from CIB via {node_name}")
                 return
 
@@ -2310,12 +2463,15 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
             sr_cmd = "crm_mon -A1 2>/dev/null | grep -iE 'hana|srmode|sync|site|sra|srah|lss|srr'"
             self._debug_print(f"Legacy fallback: crm_mon -A1 on {node_name}")
 
-            success, output = self.rules_engine._execute_command_raw(
-                sr_cmd, node_name, method, user)
+            success, output = (
+                self.rules_engine._execute_command_raw(  # pylint: disable=protected-access
+                    sr_cmd, node_name, method, user
+                )
+            )
 
             if success and output and output.strip():
-                self._hana_db_status['sr_source'] = 'crm_mon -A1 (CIB node attributes)'
-                self._hana_db_status['sr_info'] = output.strip()
+                self._hana_db_status["sr_source"] = "crm_mon -A1 (CIB node attributes)"
+                self._hana_db_status["sr_info"] = output.strip()
                 print(f"  [OK] SR attributes retrieved from CIB node attributes via {node_name}")
                 return
 
@@ -2344,14 +2500,20 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
         skipped = len([r for r in self.check_results if r.status == CheckStatus.SKIPPED])
         errors = len([r for r in self.check_results if r.status == CheckStatus.ERROR])
 
-        critical_failures = [r for r in self.check_results
-                            if r.status == CheckStatus.FAILED and r.severity == Severity.CRITICAL]
-        warnings = [r for r in self.check_results
-                   if r.status == CheckStatus.FAILED and r.severity == Severity.WARNING]
+        critical_failures = [
+            r
+            for r in self.check_results
+            if r.status == CheckStatus.FAILED and r.severity == Severity.CRITICAL
+        ]
+        warnings = [
+            r
+            for r in self.check_results
+            if r.status == CheckStatus.FAILED and r.severity == Severity.WARNING
+        ]
 
         # Cluster info summary
         if self._detected_topology or self._detected_arch_type:
-            topo = self._detected_topology or 'unknown'
+            topo = self._detected_topology or "unknown"
             print(f"\n  Cluster Type:        {topo}")
             print(f"  Resource Agent:      {self._get_resource_agent_label()}")
 
@@ -2381,33 +2543,32 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
         # Build unified report data using single source of truth
         # Use pre-computed summary to avoid recalculating
         summary = {
-            'total': total,
-            'passed': passed,
-            'failed': failed,
-            'skipped': skipped,
-            'errors': errors,
-            'critical_count': len(critical_failures),
-            'warning_count': len(warnings)
+            "total": total,
+            "passed": passed,
+            "failed": failed,
+            "skipped": skipped,
+            "errors": errors,
+            "critical_count": len(critical_failures),
+            "warning_count": len(warnings),
         }
 
         # Use cluster_name override if explicitly set
         cluster_name_override = self.cluster_name if self.cluster_name else None
         report_data = self._build_cluster_report_data(
-            cluster_name=cluster_name_override,
-            summary=summary
+            cluster_name=cluster_name_override, summary=summary
         )
 
         # Sanitize cluster name for filename
         cluster_name = report_data.cluster_name
-        cluster_name_safe = "".join(c if c.isalnum() or c in '-_' else '_' for c in cluster_name)
+        cluster_name_safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in cluster_name)
 
         # Save unified report to YAML with format: YYYYMMDD_HHMMSS_clustername.yaml
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         report_file = self.config_dir / f"{timestamp}_{cluster_name_safe}.yaml"
 
         # Serialize unified data to YAML
         yaml_data = report_data.to_dict()
-        with open(report_file, 'w') as f:
+        with open(report_file, "w", encoding="utf-8") as f:
             yaml.dump(yaml_data, f, default_flow_style=False, sort_keys=False)
 
         print(f"\n  Report saved: {report_file}")
@@ -2424,9 +2585,12 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                 install_status = report_data.get_install_status()
 
                 # PDF filename format: YYYYMMDD_health_check_report_clustername_HHMM.pdf
-                pdf_timestamp = datetime.now().strftime('%Y%m%d')
-                pdf_time = datetime.now().strftime('%H%M')
-                pdf_file = self.config_dir / f"{pdf_timestamp}_health_check_report_{cluster_name_safe}_{pdf_time}.pdf"
+                pdf_timestamp = datetime.now().strftime("%Y%m%d")
+                pdf_time = datetime.now().strftime("%H%M")
+                pdf_file = (
+                    self.config_dir
+                    / f"{pdf_timestamp}_health_check_report_{cluster_name_safe}_{pdf_time}.pdf"
+                )
 
                 # Use spinner for PDF generation (can take a while in verbose mode)
                 with Spinner("Generating PDF report"):
@@ -2436,7 +2600,7 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                         cluster_info,
                         str(pdf_file),
                         install_status if install_status else None,
-                        verbose=self.verbose_pdf
+                        verbose=self.verbose_pdf,
                     )
                 print(f"  PDF report: {pdf_file}")
             except Exception as e:
@@ -2444,8 +2608,7 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
 
         return len(critical_failures) == 0
 
-    def run_all_checks(self, force_rediscover: bool = False,
-                       skip_steps: list = None) -> int:
+    def run_all_checks(self, force_rediscover: bool = False, skip_steps: list = None) -> int:
         """
         Run all health checks in sequence.
         Returns exit code (0 = success, non-zero = failure).
@@ -2481,27 +2644,27 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
         results = {}
 
         # Step 1: Access Discovery (required)
-        if 'access' not in skip_steps:
-            results['access'] = self.step_access_discovery(force=force_rediscover)
-            if not results['access']:
+        if "access" not in skip_steps:
+            results["access"] = self.step_access_discovery(force=force_rediscover)
+            if not results["access"]:
                 print("\n[ABORT] Cannot proceed without accessible nodes.")
                 return 1
 
         # Step 2: Cluster Config Check
-        if 'config' not in skip_steps:
-            results['config'] = self.step_cluster_config_check()
+        if "config" not in skip_steps:
+            results["config"] = self.step_cluster_config_check()
 
         # Step 3: Pacemaker Check
-        if 'pacemaker' not in skip_steps:
-            results['pacemaker'] = self.step_pacemaker_check()
+        if "pacemaker" not in skip_steps:
+            results["pacemaker"] = self.step_pacemaker_check()
 
         # Step 4: SAP Check
-        if 'sap' not in skip_steps:
-            results['sap'] = self.step_sap_check()
+        if "sap" not in skip_steps:
+            results["sap"] = self.step_sap_check()
 
         # Step 5: Generate Report
-        if 'report' not in skip_steps:
-            results['report'] = self.step_generate_report()
+        if "report" not in skip_steps:
+            results["report"] = self.step_generate_report()
 
         # Final summary
         print("\n" + "=" * 63)
@@ -2515,8 +2678,9 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
             # Find cluster name from config
             cluster_name = None
             for cname, cinfo in self.access_config.clusters.items():
-                if set(cinfo.get('nodes', [])) == set(nodes) or \
-                   any(n in nodes for n in cinfo.get('nodes', [])):
+                if set(cinfo.get("nodes", [])) == set(nodes) or any(
+                    n in nodes for n in cinfo.get("nodes", [])
+                ):
                     cluster_name = cname
                     break
 
@@ -2527,38 +2691,58 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
             # Show detected cluster type from CHK_CLUSTER_TYPE
             if self.check_results:
                 for r in self.check_results:
-                    if hasattr(r, 'check_id') and r.check_id == 'CHK_CLUSTER_TYPE':
-                        cluster_type = r.details.get('cluster_type', 'Unknown') if r.details else 'Unknown'
+                    if hasattr(r, "check_id") and r.check_id == "CHK_CLUSTER_TYPE":
+                        cluster_type = (
+                            r.details.get("cluster_type", "Unknown") if r.details else "Unknown"
+                        )
                         print(f"Cluster Type: {cluster_type}")
-                        if r.message and 'configuration' in r.message:
+                        if r.message and "configuration" in r.message:
                             print(f"  ({r.message})")
                         break
 
         # Show health check results summary
         if self.check_results:
             all_results = self.check_results
-            passed = [r for r in all_results if hasattr(r, 'status') and str(r.status) == 'CheckStatus.PASSED']
-            failed_checks = [r for r in all_results if hasattr(r, 'status') and str(r.status) == 'CheckStatus.FAILED']
-            skipped = [r for r in all_results if hasattr(r, 'status') and str(r.status) == 'CheckStatus.SKIPPED']
-            errors = [r for r in all_results if hasattr(r, 'status') and str(r.status) == 'CheckStatus.ERROR']
+            passed = [
+                r
+                for r in all_results
+                if hasattr(r, "status") and str(r.status) == "CheckStatus.PASSED"
+            ]
+            failed_checks = [
+                r
+                for r in all_results
+                if hasattr(r, "status") and str(r.status) == "CheckStatus.FAILED"
+            ]
+            skipped = [
+                r
+                for r in all_results
+                if hasattr(r, "status") and str(r.status) == "CheckStatus.SKIPPED"
+            ]
+            errors = [
+                r
+                for r in all_results
+                if hasattr(r, "status") and str(r.status) == "CheckStatus.ERROR"
+            ]
 
             print("\nHealth Check Results:")
-            print(f"  PASSED:  {len(passed):3d}  FAILED: {len(failed_checks):3d}  SKIPPED: {len(skipped):3d}  ERROR: {len(errors):3d}")
+            print(
+                f"  PASSED:  {len(passed):3d}  FAILED: {len(failed_checks):3d}  SKIPPED: {len(skipped):3d}  ERROR: {len(errors):3d}"
+            )
 
             # Show data source information
             if self.rules_engine:
                 data_source_info = self.rules_engine.get_data_source_info()
-                data_source = data_source_info.get('description', '')
+                data_source = data_source_info.get("description", "")
                 if data_source:
                     print(f"\n  Data Source: {data_source}")
 
             # Show cluster configuration in verbose mode
             if self.verbose_pdf:
-                config_file = self.config_dir / 'cluster_access_config.yaml'
+                config_file = self.config_dir / "cluster_access_config.yaml"
                 if config_file.exists():
                     # Get cluster name from access config
                     cluster_to_show = None
-                    if self.access_config and hasattr(self.access_config, 'clusters'):
+                    if self.access_config and hasattr(self.access_config, "clusters"):
                         clusters = self.access_config.clusters
                         if clusters:
                             cluster_to_show = list(clusters.keys())[0]
@@ -2569,12 +2753,15 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
 
             # Check for installation issues
             # Essential commands for RHEL clusters
-            essential_commands = ['pacemaker', 'corosync', 'pcs', 'crm_mon']  # noqa: F841
+            essential_commands = ["pacemaker", "corosync", "pcs", "crm_mon"]  # noqa: F841
             packages_missing = False
             commands_missing = []
             for r in all_results:
-                msg = getattr(r, 'message', '') or ''
-                if 'pacemaker package not found' in msg.lower() or 'corosync package not found' in msg.lower():
+                msg = getattr(r, "message", "") or ""
+                if (
+                    "pacemaker package not found" in msg.lower()
+                    or "corosync package not found" in msg.lower()
+                ):
                     packages_missing = True
                 if "command '" in msg.lower() and "not found" in msg.lower():
                     # Extract command name
@@ -2605,14 +2792,17 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                 print("-" * 63)
                 print(" Failed Checks (CRITICAL issues):")
                 for r in failed_checks:
-                    if hasattr(r, 'severity') and str(r.severity) == 'Severity.CRITICAL':
+                    if hasattr(r, "severity") and str(r.severity) == "Severity.CRITICAL":
                         print(f"  - {r.check_id}: {r.message}")
                 print("-" * 63)
 
             else:
                 # All checks passed - show healthy banner
                 resources_not_managed = self._hana_resource_state in (
-                    'stopped', 'disabled', 'unmanaged')
+                    "stopped",
+                    "disabled",
+                    "unmanaged",
+                )
                 print()
                 print("=" * 63)
                 if resources_not_managed:
@@ -2646,12 +2836,15 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                         # Use unified data model for PDF generation
                         report_data = self._build_cluster_report_data()
                         cluster_name = report_data.cluster_name
-                        cluster_name_safe = re.sub(r'[^\w\-]', '_', cluster_name)
+                        cluster_name_safe = re.sub(r"[^\w\-]", "_", cluster_name)
 
                         # Generate PDF with default name
-                        pdf_timestamp = datetime.now().strftime('%Y%m%d')
-                        pdf_time = datetime.now().strftime('%H%M')
-                        pdf_file = self.config_dir / f"{pdf_timestamp}_health_check_report_{cluster_name_safe}_{pdf_time}.pdf"
+                        pdf_timestamp = datetime.now().strftime("%Y%m%d")
+                        pdf_time = datetime.now().strftime("%H%M")
+                        pdf_file = (
+                            self.config_dir
+                            / f"{pdf_timestamp}_health_check_report_{cluster_name_safe}_{pdf_time}.pdf"
+                        )
 
                         # Use spinner for PDF generation
                         with Spinner("Generating PDF report"):
@@ -2661,7 +2854,7 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                                 report_data.to_cluster_info(),
                                 str(pdf_file),
                                 report_data.get_install_status() or None,
-                                verbose=self.verbose_pdf
+                                verbose=self.verbose_pdf,
                             )
                         self.last_pdf_file = pdf_file  # Track for auto-open
                         print(f"\n  PDF report saved: {pdf_file}")
@@ -2674,25 +2867,25 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
         # Show all steps with status and results (only when there are issues)
         print("\nSteps completed:")
         step_names = {
-            'access': 'Access Discovery',
-            'config': 'Cluster Configuration',
-            'pacemaker': 'Pacemaker/Corosync',
-            'sap': 'SAP HANA',
-            'report': 'Report Generation'
+            "access": "Access Discovery",
+            "config": "Cluster Configuration",
+            "pacemaker": "Pacemaker/Corosync",
+            "sap": "SAP HANA",
+            "report": "Report Generation",
         }
 
         # Map check IDs to steps for counting (from dispatch manifest)
         step_checks = {}
-        for sn in ['config', 'pacemaker', 'sap']:
+        for sn in ["config", "pacemaker", "sap"]:
             step_checks[sn] = self.dispatch.get_all_check_ids(sn)
 
         for step, success in results.items():
             name = step_names.get(step, step)
 
             # Get detailed results for this step
-            if step == 'access':
+            if step == "access":
                 nodes = self.access_config.nodes if self.access_config else {}
-                accessible = sum(1 for n in nodes.values() if n.get('preferred_method'))
+                accessible = sum(1 for n in nodes.values() if n.get("preferred_method"))
                 total = len(nodes)
                 if accessible == total and total > 0:
                     print(f"  [{accessible}/{total}] {name}: PASSED")
@@ -2701,14 +2894,16 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
             elif step in step_checks and self.check_results:
                 check_ids = step_checks[step]
                 step_results = [r for r in self.check_results if r.check_id in check_ids]
-                passed = sum(1 for r in step_results if str(r.status) == 'CheckStatus.PASSED')
-                failed = sum(1 for r in step_results if str(r.status) == 'CheckStatus.FAILED')
-                skipped = sum(1 for r in step_results if str(r.status) == 'CheckStatus.SKIPPED')
-                errors = sum(1 for r in step_results if str(r.status) == 'CheckStatus.ERROR')
+                passed = sum(1 for r in step_results if str(r.status) == "CheckStatus.PASSED")
+                failed = sum(1 for r in step_results if str(r.status) == "CheckStatus.FAILED")
+                skipped = sum(1 for r in step_results if str(r.status) == "CheckStatus.SKIPPED")
+                errors = sum(1 for r in step_results if str(r.status) == "CheckStatus.ERROR")
                 total = len(step_results)
 
                 if self.debug:
-                    print(f"  [DEBUG] {step}: {[(r.check_id, str(r.status), r.node) for r in step_results]}")
+                    print(
+                        f"  [DEBUG] {step}: {[(r.check_id, str(r.status), r.node) for r in step_results]}"
+                    )
 
                 # Show ratio and details
                 if passed == total and total > 0:
@@ -2723,7 +2918,7 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                         details.append(f"{errors} errors")
                     detail_str = f" ({', '.join(details)})" if details else ""
                     print(f"  [{passed}/{total}] {name}{detail_str}")
-            elif step == 'report':
+            elif step == "report":
                 status_icon = "[OK]" if success else "[FAIL]"
                 print(f"  {status_icon} {name}")
             else:
@@ -2737,11 +2932,11 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
         # Save step results for --suggest to use
         status_file = self.config_dir / "last_run_status.yaml"
         status_data = {
-            'timestamp': datetime.now().isoformat(),
-            'steps': {step: 'passed' if success else 'failed' for step, success in results.items()},
-            'failed_steps': failed
+            "timestamp": datetime.now().isoformat(),
+            "steps": {step: "passed" if success else "failed" for step, success in results.items()},
+            "failed_steps": failed,
         }
-        with open(status_file, 'w') as f:
+        with open(status_file, "w", encoding="utf-8") as f:
             yaml.dump(status_data, f, default_flow_style=False)
 
         # Check actual health check results
@@ -2749,17 +2944,20 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
         has_skipped = False
         needs_install = False
         # Essential commands - if these are missing, installation is needed
-        essential_commands = ['pacemaker', 'corosync', 'pcs', 'crm_mon']
+        essential_commands = ["pacemaker", "corosync", "pcs", "crm_mon"]
         if self.check_results:
             for r in self.check_results:
-                status = str(getattr(r, 'status', ''))
-                msg = getattr(r, 'message', '') or ''
-                if status == 'CheckStatus.FAILED':
+                status = str(getattr(r, "status", ""))
+                msg = getattr(r, "message", "") or ""
+                if status == "CheckStatus.FAILED":
                     has_failures = True
-                if status == 'CheckStatus.SKIPPED':
+                if status == "CheckStatus.SKIPPED":
                     has_skipped = True
                 # Only trigger needs_install for essential package/command issues
-                if 'pacemaker package not found' in msg.lower() or 'corosync package not found' in msg.lower():
+                if (
+                    "pacemaker package not found" in msg.lower()
+                    or "corosync package not found" in msg.lower()
+                ):
                     needs_install = True
                 elif "command '" in msg.lower() and "not found" in msg.lower():
                     match = re.search(r"command '(\w+)'", msg.lower())
@@ -2783,7 +2981,9 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
 
             # Show first suggested commands
             print("\n  Quick start (run on cluster nodes):")
-            print("    dnf install -y pacemaker pcs sap-hana-ha  # or resource-agents-sap-hana-scaleout")
+            print(
+                "    dnf install -y pacemaker pcs sap-hana-ha  # or resource-agents-sap-hana-scaleout"
+            )
             print("    systemctl enable --now pcsd")
             print("    ... (more steps required)")
             print("\n  For full guide: ./cluster_health_check.py -i")
@@ -2797,27 +2997,26 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
             try:
                 response = input("\nYour choice: ").strip().lower()
             except (EOFError, KeyboardInterrupt):
-                response = 'q'
+                response = "q"
                 print()
 
             while True:
-                if response == '':
+                if response == "":
                     # Rerun health check
                     print("\n" + "=" * 63)
                     print(" Rerunning health check...")
                     print("=" * 63)
                     return self.run_all_checks(force_rediscover=False, skip_steps=[])
-                elif response == 'i':
+                if response == "i":
                     print()
                     self.print_dynamic_install_guide()
-                elif response == 'd':
-                    from access.discover_access import delete_config
+                elif response == "d":
                     delete_config(self.config_dir / AccessDiscovery.CONFIG_FILE)
                     print("  Restarting health check...\n")
                     # Restart without -D flag
-                    new_argv = [arg for arg in sys.argv if arg not in ['-D', '--delete-reports']]
+                    new_argv = [arg for arg in sys.argv if arg not in ["-D", "--delete-reports"]]
                     os.execv(sys.executable, [sys.executable] + new_argv)
-                elif response == 'q':
+                elif response == "q":
                     break
                 else:
                     print("Invalid option.")
@@ -2846,31 +3045,35 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
         if not needs_install:
             try:
                 install_status = self.check_install_status()
-                steps_done = sum(1 for v in [
-                    install_status.get('subscription_registered'),
-                    install_status.get('repos_enabled'),
-                    install_status.get('packages_installed'),
-                    install_status.get('pcsd_running'),
-                    install_status.get('cluster_configured'),
-                    install_status.get('stonith_configured'),
-                    install_status.get('hana_resources')
-                ] if v)
-                install_complete = (steps_done >= steps_total)
+                steps_done = sum(
+                    1
+                    for v in [
+                        install_status.get("subscription_registered"),
+                        install_status.get("repos_enabled"),
+                        install_status.get("packages_installed"),
+                        install_status.get("pcsd_running"),
+                        install_status.get("cluster_configured"),
+                        install_status.get("stonith_configured"),
+                        install_status.get("hana_resources"),
+                    ]
+                    if v
+                )
+                install_complete = steps_done >= steps_total
 
                 # Build list of missing steps
-                if not install_status.get('subscription_registered'):
+                if not install_status.get("subscription_registered"):
                     missing_steps.append("subscription")
-                if not install_status.get('repos_enabled'):
+                if not install_status.get("repos_enabled"):
                     missing_steps.append("repos")
-                if not install_status.get('packages_installed'):
+                if not install_status.get("packages_installed"):
                     missing_steps.append("packages")
-                if not install_status.get('pcsd_running'):
+                if not install_status.get("pcsd_running"):
                     missing_steps.append("pcsd")
-                if not install_status.get('cluster_configured'):
+                if not install_status.get("cluster_configured"):
                     missing_steps.append("cluster")
-                if not install_status.get('stonith_configured'):
+                if not install_status.get("stonith_configured"):
                     missing_steps.append("stonith")
-                if not install_status.get('hana_resources'):
+                if not install_status.get("hana_resources"):
                     missing_steps.append("hana_resources")
             except Exception:
                 pass
@@ -2878,25 +3081,28 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
         # Determine overall status
         if failed or has_failures:
             if not install_complete:
-                print(f"\n[WARNING] Installation incomplete ({steps_done}/{steps_total} steps) and health checks FAILED.")
+                print(
+                    f"\n[WARNING] Installation incomplete ({steps_done}/{steps_total} steps) and health checks FAILED."
+                )
                 if missing_steps:
                     print(f"          Missing: {', '.join(missing_steps)}")
                 print("          Run ./cluster_health_check.py -i to see remaining steps.")
             else:
                 print("\n[WARNING] Some health checks FAILED. Review report for details.")
             return 1
-        elif not install_complete:
-            print(f"\n[INCOMPLETE] Installation in progress: {steps_done}/{steps_total} steps complete.")
+        if not install_complete:
+            print(
+                f"\n[INCOMPLETE] Installation in progress: {steps_done}/{steps_total} steps complete."
+            )
             if missing_steps:
                 print(f"             Missing: {', '.join(missing_steps)}")
             print("             Run ./cluster_health_check.py -i to see remaining steps.")
             return 2
-        elif has_skipped:
+        if has_skipped:
             print("\n[INFO] Some checks were skipped (commands not available).")
             return 0
-        else:
-            print("\n[OK] All health checks passed! Cluster is fully configured.")
-            return 0
+        print("\n[OK] All health checks passed! Cluster is fully configured.")
+        return 0
 
     def _print_next_steps(self, results: dict):
         """Print suggested next steps based on results."""
@@ -2908,7 +3114,7 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
         print("=" * 63)
 
         # Check what was done and suggest next actions
-        if not results.get('access'):
+        if not results.get("access"):
             print("""
   Access discovery failed. Try:
     ./cluster_health_check.py --debug hana01    # Debug with specific node
@@ -2921,22 +3127,38 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
 
         if all_results:
             # Analyze results
-            critical = [r for r in all_results if hasattr(r, 'status') and
-                       str(r.status) == 'CheckStatus.FAILED' and
-                       hasattr(r, 'severity') and str(r.severity) == 'Severity.CRITICAL']
-            warnings = [r for r in all_results if hasattr(r, 'status') and
-                       str(r.status) == 'CheckStatus.FAILED' and
-                       hasattr(r, 'severity') and str(r.severity) == 'Severity.WARNING']
-            skipped = [r for r in all_results if hasattr(r, 'status') and
-                      str(r.status) == 'CheckStatus.SKIPPED']
+            critical = [
+                r
+                for r in all_results
+                if hasattr(r, "status")
+                and str(r.status) == "CheckStatus.FAILED"
+                and hasattr(r, "severity")
+                and str(r.severity) == "Severity.CRITICAL"
+            ]
+            warnings = [
+                r
+                for r in all_results
+                if hasattr(r, "status")
+                and str(r.status) == "CheckStatus.FAILED"
+                and hasattr(r, "severity")
+                and str(r.severity) == "Severity.WARNING"
+            ]
+            skipped = [
+                r
+                for r in all_results
+                if hasattr(r, "status") and str(r.status) == "CheckStatus.SKIPPED"
+            ]
 
             # Check for essential package/command not found issues
-            essential_commands = ['pacemaker', 'corosync', 'pcs', 'crm_mon']
+            essential_commands = ["pacemaker", "corosync", "pcs", "crm_mon"]
             packages_missing = False
             essential_cmd_missing = False
             for r in all_results:
-                msg = getattr(r, 'message', '') or ''
-                if 'pacemaker package not found' in msg.lower() or 'corosync package not found' in msg.lower():
+                msg = getattr(r, "message", "") or ""
+                if (
+                    "pacemaker package not found" in msg.lower()
+                    or "corosync package not found" in msg.lower()
+                ):
                     packages_missing = True
                 if "command '" in msg.lower() and "not found" in msg.lower():
                     match = re.search(r"command '(\w+)'", msg.lower())
@@ -2944,8 +3166,11 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                         essential_cmd_missing = True
 
             # Check for "cluster not running" scenario - many errors, packages installed
-            errors = [r for r in all_results if hasattr(r, 'status') and
-                     str(r.status) == 'CheckStatus.ERROR']
+            errors = [
+                r
+                for r in all_results
+                if hasattr(r, "status") and str(r.status) == "CheckStatus.ERROR"
+            ]
             cluster_not_running = False
             cluster_not_created = False
             install_status = None
@@ -2953,10 +3178,12 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                 # Many errors with packages installed - check if cluster exists
                 try:
                     install_status = self.check_install_status()
-                    if not install_status.get('corosync_conf_exists') and not install_status.get('cib_exists'):
+                    if not install_status.get("corosync_conf_exists") and not install_status.get(
+                        "cib_exists"
+                    ):
                         # Neither corosync.conf nor cib.xml exist - cluster not created
                         cluster_not_created = True
-                    elif not install_status.get('pacemaker_running'):
+                    elif not install_status.get("pacemaker_running"):
                         # Cluster config exists (corosync.conf or cib.xml) but not running
                         cluster_not_running = True
                 except Exception:
@@ -2977,11 +3204,11 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                 # Build list of missing steps only
                 missing_steps = []
                 if install_status:
-                    if not install_status.get('hacluster_password'):
+                    if not install_status.get("hacluster_password"):
                         missing_steps.append("passwd hacluster")
-                    if not install_status.get('pcsd_running'):
+                    if not install_status.get("pcsd_running"):
                         missing_steps.append("systemctl enable --now pcsd")
-                    if not install_status.get('nodes_authenticated'):
+                    if not install_status.get("nodes_authenticated"):
                         missing_steps.append("pcs host auth <node1> <node2>")
                 # These are always needed if cluster not created
                 missing_steps.append("pcs cluster setup <name> <node1> <node2>")
@@ -3043,7 +3270,9 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
         doc_urls = get_redhat_doc_urls(self._get_rhel_major())
         print("  Documentation:")
         print("    SAP HANA Admin:  https://help.sap.com/docs/SAP_HANA_PLATFORM")
-        print("    SAP HANA SR:     https://help.sap.com/docs/SAP_HANA_PLATFORM/6b94445c94ae495c83a19646e7c3fd56")
+        print(
+            "    SAP HANA SR:     https://help.sap.com/docs/SAP_HANA_PLATFORM/6b94445c94ae495c83a19646e7c3fd56"
+        )
         print(f"    Red Hat HA:      {doc_urls['ha_clusters']}")
         print("    Pacemaker:       https://clusterlabs.org/pacemaker/doc/")
 
@@ -3071,11 +3300,11 @@ def _rhel_major_from_config(config_dir: Path) -> int:
     config_path = config_dir / AccessDiscovery.CONFIG_FILE
     if config_path.exists():
         try:
-            with open(config_path, 'r') as f:
+            with open(config_path, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f) or {}
-            for cinfo in data.get('clusters', {}).values():
-                rv = cinfo.get('rhel_version', '')
-                m = re.search(r'(\d+)', str(rv))
+            for cinfo in data.get("clusters", {}).values():
+                rv = cinfo.get("rhel_version", "")
+                m = re.search(r"(\d+)", str(rv))
                 if m:
                     return int(m.group(1))
         except Exception:
@@ -3085,7 +3314,7 @@ def _rhel_major_from_config(config_dir: Path) -> int:
 
 def main():
     parser = argparse.ArgumentParser(
-        description='SAP Pacemaker Cluster Health Check Tool',
+        description="SAP Pacemaker Cluster Health Check Tool",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -3106,206 +3335,192 @@ Examples:
   %(prog)s --suggest                Show suggestions for first failing step
   %(prog)s --suggest install        Show full installation guide
   %(prog)s --list-steps             List all steps with suggestion commands
-        """
+        """,
     )
 
     # Input sources
+    parser.add_argument("hosts", nargs="*", help="Hostname(s) to check (e.g., hana01 hana02)")
+    parser.add_argument("--hosts-file", "-H", help="File containing list of hosts (one per line)")
     parser.add_argument(
-        'hosts',
-        nargs='*',
-        help='Hostname(s) to check (e.g., hana01 hana02)'
+        "--sosreport-dir",
+        "-s",
+        help="Directory containing SOSreport archives/directories (default: ./sosreports)",
     )
+    parser.add_argument("--group", "-g", help="Only check hosts from this Ansible inventory group")
     parser.add_argument(
-        '--hosts-file', '-H',
-        help='File containing list of hosts (one per line)'
+        "--cluster", "-C", help="Use saved cluster by name (from previous discovery)"
     )
-    parser.add_argument(
-        '--sosreport-dir', '-s',
-        help='Directory containing SOSreport archives/directories (default: ./sosreports)'
-    )
-    parser.add_argument(
-        '--group', '-g',
-        help='Only check hosts from this Ansible inventory group'
-    )
-    parser.add_argument(
-        '--cluster', '-C',
-        help='Use saved cluster by name (from previous discovery)'
-    )
-    parser.add_argument(
-        '--config-dir', '-c',
-        help='Directory to store configuration (default: ./)'
-    )
+    parser.add_argument("--config-dir", "-c", help="Directory to store configuration (default: ./)")
 
     # Actions
     parser.add_argument(
-        '--access-only', '-a',
-        action='store_true',
-        help='Only run access discovery step'
+        "--access-only", "-a", action="store_true", help="Only run access discovery step"
     )
     parser.add_argument(
-        '--show-config', '-S',
-        nargs='?',
+        "--show-config",
+        "-S",
+        nargs="?",
         const=True,
         default=False,
-        metavar='CLUSTER|NODE',
-        help='Display configuration and exit. Optionally specify cluster name or hostname to show only that cluster.'
+        metavar="CLUSTER|NODE",
+        help="Display configuration and exit. Optionally specify cluster name or hostname to show only that cluster.",
     )
     parser.add_argument(
-        '--delete-reports', '-D',
-        action='store_true',
-        help='Delete report files (keeps node access config)'
+        "--delete-reports",
+        "-D",
+        action="store_true",
+        help="Delete report files (keeps node access config)",
     )
     parser.add_argument(
-        '--export-ansible', '-E',
-        nargs='+',
-        metavar=('CLUSTER', 'OUTPUT_FILE'),
-        help='Export cluster config as Ansible group_vars YAML. Usage: --export-ansible CLUSTER [output.yml]'
+        "--export-ansible",
+        "-E",
+        nargs="+",
+        metavar=("CLUSTER", "OUTPUT_FILE"),
+        help="Export cluster config as Ansible group_vars YAML. Usage: --export-ansible CLUSTER [output.yml]",
     )
     parser.add_argument(
-        '--fetch-sosreports', '-F',
-        nargs='*',
-        metavar='CLUSTER_OR_NODE',
-        help='Fetch SOSreports from cluster nodes via SCP. Prompts to create if missing. Usage: -F [CLUSTER|node1 node2...]'
+        "--fetch-sosreports",
+        "-F",
+        nargs="*",
+        metavar="CLUSTER_OR_NODE",
+        help="Fetch SOSreports from cluster nodes via SCP. Prompts to create if missing. Usage: -F [CLUSTER|node1 node2...]",
     )
     parser.add_argument(
-        '--create-sosreports',
-        action='store_true',
-        help='Auto-create SOSreports on nodes where missing (use with -F). Skips confirmation prompt.'
+        "--create-sosreports",
+        action="store_true",
+        help="Auto-create SOSreports on nodes where missing (use with -F). Skips confirmation prompt.",
     )
     parser.add_argument(
-        '--collect-sosreports', '-R',
-        metavar='NODE',
-        help='Collect SOSreports from cluster: discover nodes from NODE, configure SAP extensions, create and fetch SOSreports'
+        "--collect-sosreports",
+        "-R",
+        metavar="NODE",
+        help="Collect SOSreports from cluster: discover nodes from NODE, configure SAP extensions, create and fetch SOSreports",
     )
     parser.add_argument(
-        '--configure-extensions',
-        action='store_true',
+        "--configure-extensions",
+        action="store_true",
         default=None,
-        help='Auto-configure SAP SOSreport extensions without prompting (use with -R)'
+        help="Auto-configure SAP SOSreport extensions without prompting (use with -R)",
     )
     parser.add_argument(
-        '--force', '-f',
-        action='store_true',
-        help='Force rediscovery (ignore existing config)'
+        "--force", "-f", action="store_true", help="Force rediscovery (ignore existing config)"
     )
 
     # Performance
     parser.add_argument(
-        '--workers', '-w',
-        type=int,
-        default=10,
-        help='Number of parallel workers (default: 10)'
+        "--workers", "-w", type=int, default=10, help="Number of parallel workers (default: 10)"
     )
 
     # Rules
     parser.add_argument(
-        '--rules-path', '-r',
-        help='Path to CHK_*.yaml rules directory (default: ./rules/health_checks)'
+        "--rules-path",
+        "-r",
+        help="Path to CHK_*.yaml rules directory (default: ./rules/health_checks)",
     )
     parser.add_argument(
-        '--list-rules', '-L',
-        action='store_true',
-        help='List available health check rules and exit'
+        "--list-rules", "-L", action="store_true", help="List available health check rules and exit"
     )
 
     # Skip options
     parser.add_argument(
-        '--skip',
-        nargs='+',
-        choices=['access', 'config', 'pacemaker', 'sap', 'report'],
-        help='Skip specific steps'
+        "--skip",
+        nargs="+",
+        choices=["access", "config", "pacemaker", "sap", "report"],
+        help="Skip specific steps",
     )
 
     # Debug option
     parser.add_argument(
-        '--debug', '-d',
-        action='store_true',
-        help='Enable debug mode (show config files used and step progress)'
+        "--debug",
+        "-d",
+        action="store_true",
+        help="Enable debug mode (show config files used and step progress)",
     )
 
     # Strict mode option
     parser.add_argument(
-        '--strict',
-        action='store_true',
-        help='Strict mode: all checks required (fencing, alerts). Default: optional checks are warnings only'
+        "--strict",
+        action="store_true",
+        help="Strict mode: all checks required (fencing, alerts). Default: optional checks are warnings only",
     )
 
     # PDF report option (now default, kept for backwards compatibility)
     parser.add_argument(
-        '--pdf',
-        action='store_true',
-        help='Generate PDF report (default: enabled, this flag is kept for compatibility)'
+        "--pdf",
+        action="store_true",
+        help="Generate PDF report (default: enabled, this flag is kept for compatibility)",
     )
 
     # No-PDF option to skip PDF generation
     parser.add_argument(
-        '--no-pdf',
-        action='store_true',
-        help='Skip PDF report generation (useful if fpdf2 is not installed)'
+        "--no-pdf",
+        action="store_true",
+        help="Skip PDF report generation (useful if fpdf2 is not installed)",
     )
 
     # Verbose PDF option to show all checks in detail
     parser.add_argument(
-        '--verbose', '-v',
-        action='store_true',
-        help='Verbose PDF report - show all checks in detail (not just failed/warnings)'
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Verbose PDF report - show all checks in detail (not just failed/warnings)",
     )
 
     # No-update-check option
     parser.add_argument(
-        '--no-update-check',
-        action='store_true',
-        help='Skip checking for software updates'
+        "--no-update-check", action="store_true", help="Skip checking for software updates"
     )
 
     # Local mode option
     parser.add_argument(
-        '--local', '-l',
-        action='store_true',
-        help='Run on cluster node itself (execute commands locally instead of via SSH)'
+        "--local",
+        "-l",
+        action="store_true",
+        help="Run on cluster node itself (execute commands locally instead of via SSH)",
     )
 
     # Guide option
     parser.add_argument(
-        '--guide', '-G',
-        action='store_true',
-        help='Show detailed usage guide with examples and next steps'
+        "--guide",
+        "-G",
+        action="store_true",
+        help="Show detailed usage guide with examples and next steps",
     )
 
     # Install guide shortcut
     parser.add_argument(
-        '--install', '-i',
-        action='store_true',
-        help='Show installation guide (shortcut for --suggest install)'
+        "--install",
+        "-i",
+        action="store_true",
+        help="Show installation guide (shortcut for --suggest install)",
     )
 
     # Suggest option
     parser.add_argument(
-        '--suggest',
-        nargs='?',
-        const='auto',
-        choices=['access', 'config', 'pacemaker', 'sap', 'install', 'all', 'auto'],
-        help='Show suggestions for a step (default: first failing step from last run)'
+        "--suggest",
+        nargs="?",
+        const="auto",
+        choices=["access", "config", "pacemaker", "sap", "install", "all", "auto"],
+        help="Show suggestions for a step (default: first failing step from last run)",
     )
     parser.add_argument(
-        '--suggest-skip',
-        nargs='+',
-        choices=['access', 'config', 'pacemaker', 'sap', 'install'],
-        help='Skip these steps when auto-suggesting (use with --suggest)'
+        "--suggest-skip",
+        nargs="+",
+        choices=["access", "config", "pacemaker", "sap", "install"],
+        help="Skip these steps when auto-suggesting (use with --suggest)",
     )
 
     # List steps option
     parser.add_argument(
-        '--list-steps',
-        action='store_true',
-        help='List all health check steps with descriptions'
+        "--list-steps", action="store_true", help="List all health check steps with descriptions"
     )
 
     # Usage/scan option
     parser.add_argument(
-        '--usage', '-u',
-        action='store_true',
-        help='Scan current directory for sosreports, inventory files, and former results; interactive setup'
+        "--usage",
+        "-u",
+        action="store_true",
+        help="Scan current directory for sosreports, inventory files, and former results; interactive setup",
     )
 
     args = parser.parse_args()
@@ -3318,48 +3533,53 @@ Examples:
 
             # Check if we're in a git repository
             result = subprocess.run(
-                ['git', 'rev-parse', '--git-dir'],
+                ["git", "rev-parse", "--git-dir"],
                 cwd=SCRIPT_DIR,
                 capture_output=True,
                 text=True,
-                timeout=5
+                timeout=5,
+                check=False,
             )
             if result.returncode != 0:
                 return  # Not a git repo
 
             # Fetch latest from remote (quietly)
             subprocess.run(
-                ['git', 'fetch', '--quiet'],
+                ["git", "fetch", "--quiet"],
                 cwd=SCRIPT_DIR,
                 capture_output=True,
-                timeout=30
+                timeout=30,
+                check=False,
             )
 
             # Get local and remote HEAD
             local_head = subprocess.run(
-                ['git', 'rev-parse', 'HEAD'],
+                ["git", "rev-parse", "HEAD"],
                 cwd=SCRIPT_DIR,
                 capture_output=True,
                 text=True,
-                timeout=5
+                timeout=5,
+                check=False,
             ).stdout.strip()
 
             remote_head = subprocess.run(
-                ['git', 'rev-parse', '@{u}'],
+                ["git", "rev-parse", "@{u}"],
                 cwd=SCRIPT_DIR,
                 capture_output=True,
                 text=True,
-                timeout=5
+                timeout=5,
+                check=False,
             ).stdout.strip()
 
             if local_head != remote_head:
                 # Check how many commits behind (remote has that we don't)
                 behind_count = subprocess.run(
-                    ['git', 'rev-list', '--count', f'{local_head}..{remote_head}'],
+                    ["git", "rev-list", "--count", f"{local_head}..{remote_head}"],
                     cwd=SCRIPT_DIR,
                     capture_output=True,
                     text=True,
-                    timeout=5
+                    timeout=5,
+                    check=False,
                 ).stdout.strip()
 
                 # Only show update prompt if actually behind (not if ahead with local commits)
@@ -3369,30 +3589,37 @@ Examples:
                     behind_int = 0
 
                 if behind_int > 0:
-                    print(f"\n[INFO] A newer version is available ({behind_count} commit(s) behind)")
+                    print(
+                        f"\n[INFO] A newer version is available ({behind_count} commit(s) behind)"
+                    )
                     try:
                         import select as _select
+
                         sys.stdout.write("  Update to latest version? [y/N] (auto-skip in 20s): ")
                         sys.stdout.flush()
                         ready, _, _ = _select.select([sys.stdin], [], [], 20)
                         if ready:
                             response = sys.stdin.readline().strip().lower()
                         else:
-                            response = ''
+                            response = ""
                             print("\n  No response, skipping update.")
-                        if response == 'y' or response == 'yes':
+                        if response in ("y", "yes"):
                             print("  Updating...")
                             result = subprocess.run(
-                                ['git', 'pull'],
+                                ["git", "pull"],
                                 cwd=SCRIPT_DIR,
                                 capture_output=True,
                                 text=True,
-                                timeout=60
+                                timeout=60,
+                                check=False,
                             )
                             if result.returncode == 0:
                                 print("  Updated successfully. Restarting health check...\n")
                                 # Restart the script with the same arguments
-                                os.execv(sys.executable, [sys.executable] + sys.argv + ['--no-update-check'])
+                                os.execv(
+                                    sys.executable,
+                                    [sys.executable] + sys.argv + ["--no-update-check"],
+                                )
                             else:
                                 print(f"  [WARN] Update failed: {result.stderr.strip()}")
                     except (EOFError, KeyboardInterrupt):
@@ -3412,34 +3639,32 @@ Examples:
             sys.exit(0)
 
         # Process the result and run health check
-        if result['action'] == 'local':
+        if result["action"] == "local":
             args.local = True
-        elif result['action'] == 'hosts':
+        elif result["action"] == "hosts":
             # Create temp hosts file
             import tempfile
-            temp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False)
-            for host in result['hosts']:
-                temp_file.write(f"{host}\n")
-            temp_file.close()
+
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as temp_file:
+                for host in result["hosts"]:
+                    temp_file.write(f"{host}\n")
             args.hosts_file = temp_file.name
-        elif result['action'] == 'hosts_file':
-            args.hosts_file = result['hosts_file']
-        elif result['action'] == 'sosreport':
-            args.sosreport_dir = result['sosreport_dir']
-        elif result['action'] == 'continue':
-            args.config_dir = result.get('config_dir')
-        elif result['action'] == 'fetch_sosreports':
+        elif result["action"] == "hosts_file":
+            args.hosts_file = result["hosts_file"]
+        elif result["action"] == "sosreport":
+            args.sosreport_dir = result["sosreport_dir"]
+        elif result["action"] == "continue":
+            args.config_dir = result.get("config_dir")
+        elif result["action"] == "fetch_sosreports":
             # Fetch SOSreports from cluster and then analyze them
-            seed_node = result['seed_node']
-            output_dir = result.get('output_dir') or args.sosreport_dir
+            seed_node = result["seed_node"]
+            output_dir = result.get("output_dir") or args.sosreport_dir
             downloaded = create_and_fetch_sosreports(
-                seed_node=seed_node,
-                output_dir=output_dir,
-                interactive=sys.stdin.isatty()
+                seed_node=seed_node, output_dir=output_dir, interactive=sys.stdin.isatty()
             )
             if downloaded:
                 # Set sosreport_dir to where we downloaded them
-                args.sosreport_dir = output_dir or str(Path.cwd() / 'sosreports')
+                args.sosreport_dir = output_dir or str(Path.cwd() / "sosreports")
             else:
                 print("  No SOSreports were collected.")
                 sys.exit(1)
@@ -3458,18 +3683,18 @@ Examples:
         config_path = config_dir / AccessDiscovery.CONFIG_FILE
         if config_path.exists():
             try:
-                with open(config_path, 'r') as f:
+                with open(config_path, "r", encoding="utf-8") as f:
                     access_data = yaml.safe_load(f) or {}
-                if access_data.get('nodes'):
+                if access_data.get("nodes"):
                     # Create minimal health check instance for dynamic guide
                     hc = ClusterHealthCheck(config_dir=str(config_dir), local_mode=args.local)
-                    hc.access_config = type('Config', (), {'nodes': access_data.get('nodes', {})})()
+                    hc.access_config = type("Config", (), {"nodes": access_data.get("nodes", {})})()
                     hc.print_dynamic_install_guide()
                     sys.exit(0)
             except Exception:
                 pass
         # Fall back to static guide
-        print_suggestions('install', _rhel_major_from_config(config_dir))
+        print_suggestions("install", _rhel_major_from_config(config_dir))
         sys.exit(0)
 
     # Handle suggest action
@@ -3478,7 +3703,7 @@ Examples:
         skip_steps = args.suggest_skip or []
         config_dir = Path(args.config_dir) if args.config_dir else SCRIPT_DIR
 
-        if step == 'auto':
+        if step == "auto":
             # Read last run status to find first failing step
             status_file = config_dir / "last_run_status.yaml"
 
@@ -3489,32 +3714,37 @@ Examples:
                 print("  ./cluster_health_check.py --suggest config")
                 sys.exit(1)
 
-            with open(status_file, 'r') as f:
+            with open(status_file, "r", encoding="utf-8") as f:
                 status = yaml.safe_load(f)
 
             # Check for package/command issues in the last report
             packages_missing = False
             # Find most recent report
             import glob
-            reports = sorted(glob.glob(str(config_dir / "health_check_report_*.yaml")), reverse=True)
+
+            reports = sorted(
+                glob.glob(str(config_dir / "health_check_report_*.yaml")), reverse=True
+            )
             if reports:
                 try:
-                    with open(reports[0], 'r') as f:
+                    with open(reports[0], "r", encoding="utf-8") as f:
                         report = yaml.safe_load(f)
-                    for result in report.get('results', []):
-                        msg = result.get('message', '') or ''
-                        if 'package not found' in msg.lower() or ("command '" in msg.lower() and "not found" in msg.lower()):
+                    for result in report.get("results", []):
+                        msg = result.get("message", "") or ""
+                        if "package not found" in msg.lower() or (
+                            "command '" in msg.lower() and "not found" in msg.lower()
+                        ):
                             packages_missing = True
                             break
                 except Exception:
                     pass
 
-            if packages_missing and 'install' not in skip_steps:
+            if packages_missing and "install" not in skip_steps:
                 print("Cluster packages not installed!")
                 print("Showing installation guide...\n")
-                step = 'install'
+                step = "install"
             else:
-                failed_steps = status.get('failed_steps', [])
+                failed_steps = status.get("failed_steps", [])
 
                 # Filter out skipped steps
                 if skip_steps:
@@ -3532,21 +3762,23 @@ Examples:
                 step = failed_steps[0]
                 print(f"First failing step: {step}")
                 if len(failed_steps) > 1:
-                    others = ', '.join(failed_steps[1:])
+                    others = ", ".join(failed_steps[1:])
                     print(f"Other failing steps: {others}")
                     print(f"\nTo skip this and see next: --suggest --suggest-skip {step}")
                 print()
 
         # Use dynamic guide for install step
-        if step == 'install':
+        if step == "install":
             config_path = config_dir / AccessDiscovery.CONFIG_FILE
             if config_path.exists():
                 try:
-                    with open(config_path, 'r') as f:
+                    with open(config_path, "r", encoding="utf-8") as f:
                         access_data = yaml.safe_load(f) or {}
-                    if access_data.get('nodes'):
+                    if access_data.get("nodes"):
                         hc = ClusterHealthCheck(config_dir=str(config_dir), local_mode=args.local)
-                        hc.access_config = type('Config', (), {'nodes': access_data.get('nodes', {})})()
+                        hc.access_config = type(
+                            "Config", (), {"nodes": access_data.get("nodes", {})}
+                        )()
                         hc.print_dynamic_install_guide()
                         sys.exit(0)
                 except Exception:
@@ -3575,13 +3807,14 @@ Examples:
     if args.fetch_sosreports is not None:
         # Check what was provided: cluster name or node names
         fetch_args = args.fetch_sosreports
-        auto_create = getattr(args, 'create_sosreports', False)
+        auto_create = getattr(args, "create_sosreports", False)
 
         if not fetch_args:
             # No arguments - use cluster from -C if provided
             if args.cluster:
-                downloaded = fetch_sosreports(config_path, cluster_name=args.cluster,
-                                              auto_create=auto_create)
+                downloaded = fetch_sosreports(
+                    config_path, cluster_name=args.cluster, auto_create=auto_create
+                )
             else:
                 print("[ERROR] Please specify a cluster name or node names.")
                 print("Usage: --fetch-sosreports CLUSTER")
@@ -3593,37 +3826,35 @@ Examples:
             arg = fetch_args[0]
             # Load config to check if it's a cluster name
             if config_path.exists():
-                with open(config_path, 'r') as f:
+                with open(config_path, "r", encoding="utf-8") as f:
                     config = yaml.safe_load(f)
-                clusters = config.get('clusters', {})
+                clusters = config.get("clusters", {})
                 if arg in clusters:
-                    downloaded = fetch_sosreports(config_path, cluster_name=arg,
-                                                  auto_create=auto_create)
+                    downloaded = fetch_sosreports(
+                        config_path, cluster_name=arg, auto_create=auto_create
+                    )
                 else:
                     # Treat as node name
-                    downloaded = fetch_sosreports(config_path, nodes=[arg],
-                                                  auto_create=auto_create)
+                    downloaded = fetch_sosreports(config_path, nodes=[arg], auto_create=auto_create)
             else:
                 # No config, treat as node name
-                downloaded = fetch_sosreports(config_path, nodes=[arg],
-                                              auto_create=auto_create)
+                downloaded = fetch_sosreports(config_path, nodes=[arg], auto_create=auto_create)
         else:
             # Multiple arguments - treat as node names
-            downloaded = fetch_sosreports(config_path, nodes=fetch_args,
-                                          auto_create=auto_create)
+            downloaded = fetch_sosreports(config_path, nodes=fetch_args, auto_create=auto_create)
 
         sys.exit(0 if downloaded else 1)
 
     # Handle collect-sosreports action (new comprehensive workflow)
     if args.collect_sosreports:
         seed_node = args.collect_sosreports
-        configure_ext = getattr(args, 'configure_extensions', None)
+        configure_ext = getattr(args, "configure_extensions", None)
 
         downloaded = create_and_fetch_sosreports(
             seed_node=seed_node,
             output_dir=args.sosreport_dir,
             configure_extensions=configure_ext,
-            interactive=sys.stdin.isatty()
+            interactive=sys.stdin.isatty(),
         )
         sys.exit(0 if downloaded else 1)
 
@@ -3631,13 +3862,20 @@ Examples:
     local_mode = args.local
     interactive_hosts = None
 
-    no_input_specified = (not args.hosts and not args.hosts_file and
-                          not args.sosreport_dir and not args.cluster and
-                          not args.local and not args.access_only and
-                          not args.show_config and not args.delete_reports and
-                          not args.list_rules and not args.force and
-                          not args.export_ansible and
-                          args.fetch_sosreports is None)
+    no_input_specified = (
+        not args.hosts
+        and not args.hosts_file
+        and not args.sosreport_dir
+        and not args.cluster
+        and not args.local
+        and not args.access_only
+        and not args.show_config
+        and not args.delete_reports
+        and not args.list_rules
+        and not args.force
+        and not args.export_ansible
+        and args.fetch_sosreports is None
+    )
 
     if no_input_specified:
         # Run interactive startup
@@ -3645,7 +3883,7 @@ Examples:
         if not should_continue:
             sys.exit(0)
 
-        if nodes == ['local']:
+        if nodes == ["local"]:
             local_mode = True
         elif nodes:
             interactive_hosts = nodes
@@ -3658,10 +3896,10 @@ Examples:
     if hosts_to_use and not hosts_file:
         # Create temporary hosts file from command line or interactive input
         import tempfile
-        temp_hosts_file = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False)
-        for host in hosts_to_use:
-            temp_hosts_file.write(f"{host}\n")
-        temp_hosts_file.close()
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as temp_hosts_file:
+            for host in hosts_to_use:
+                temp_hosts_file.write(f"{host}\n")
         hosts_file = temp_hosts_file.name
         if args.debug:
             print(f"[DEBUG] Created temp hosts file: {hosts_file}")
@@ -3679,7 +3917,7 @@ Examples:
         delete_config(config_path)
         print("  Restarting health check...\n")
         # Restart without -D flag to prevent loop
-        new_argv = [arg for arg in sys.argv if arg not in ['-D', '--delete-reports']]
+        new_argv = [arg for arg in sys.argv if arg not in ["-D", "--delete-reports"]]
         os.execv(sys.executable, [sys.executable] + new_argv)
 
     # Handle list-rules action
@@ -3706,14 +3944,15 @@ Examples:
     # Check upfront if PDF dependencies are available - inform user of missing packages
     if generate_pdf:
         from report_generator import is_pdf_available
+
         if not is_pdf_available():
             # Check which PDF-related packages are missing
             pdf_packages = {
-                'fpdf2': 'fpdf',       # PDF generation library (import name differs)
+                "fpdf2": "fpdf",  # PDF generation library (import name differs)
             }
             recommended_packages = {
-                'PyYAML': 'yaml',      # YAML report serialization
-                'paramiko': 'paramiko',  # SSH access to cluster nodes
+                "PyYAML": "yaml",  # YAML report serialization
+                "paramiko": "paramiko",  # SSH access to cluster nodes
             }
             missing_required = []
             missing_recommended = []
@@ -3752,7 +3991,7 @@ Examples:
         local_mode=local_mode,
         strict_mode=args.strict,
         generate_pdf=generate_pdf,
-        verbose_pdf=verbose_pdf
+        verbose_pdf=verbose_pdf,
     )
 
     def cleanup_temp_file():
@@ -3785,17 +4024,17 @@ Examples:
         print("-" * 63)
         try:
             import select as _select
+
             sys.stdout.write("  Enter choice [1-7/q] (auto-quit in 20s): ")
             sys.stdout.flush()
             ready, _, _ = _select.select([sys.stdin], [], [], 20)
             if ready:
                 choice = sys.stdin.readline().strip().lower()
-                return choice if choice else '1'  # Default to installation status
-            else:
-                print("\n  No response, saving PDF and exiting.")
-                return 'q'
+                return choice if choice else "1"  # Default to installation status
+            print("\n  No response, saving PDF and exiting.")
+            return "q"
         except (EOFError, KeyboardInterrupt):
-            return 'q'
+            return "q"
 
     try:
         if args.access_only:
@@ -3807,8 +4046,7 @@ Examples:
         else:
             # Run all checks
             exit_code = health_check.run_all_checks(
-                force_rediscover=args.force,
-                skip_steps=args.skip
+                force_rediscover=args.force, skip_steps=args.skip
             )
 
             # If cluster is healthy (exit_code == 0), exit directly
@@ -3817,16 +4055,25 @@ Examples:
                 if generate_pdf and health_check.last_pdf_file:
                     import subprocess
                     import platform
+
                     try:
                         system = platform.system()
-                        if system == 'Linux':
-                            subprocess.Popen(['xdg-open', str(health_check.last_pdf_file)],
-                                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                        elif system == 'Darwin':  # macOS
-                            subprocess.Popen(['open', str(health_check.last_pdf_file)],
-                                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                        elif system == 'Windows':
-                            os.startfile(str(health_check.last_pdf_file))
+                        if system == "Linux":
+                            subprocess.Popen(  # pylint: disable=consider-using-with
+                                ["xdg-open", str(health_check.last_pdf_file)],
+                                stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL,
+                            )
+                        elif system == "Darwin":  # macOS
+                            subprocess.Popen(  # pylint: disable=consider-using-with
+                                ["open", str(health_check.last_pdf_file)],
+                                stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL,
+                            )
+                        elif system == "Windows":
+                            os.startfile(  # pylint: disable=no-member
+                                str(health_check.last_pdf_file)
+                            )
                         print("  Opening PDF...")
                     except Exception:
                         pass  # Silently ignore if can't open
@@ -3838,19 +4085,18 @@ Examples:
             while True:
                 choice = show_interactive_menu()
 
-                if choice == '1' or choice == 'i':
+                if choice in ("1", "i"):
                     # Show installation status
                     health_check.print_dynamic_install_guide()
-                elif choice == '2' or choice == 'r':
+                elif choice in ("2", "r"):
                     # Rerun health check
                     print("\n" + "=" * 63)
                     print(" Rerunning health check...")
                     print("=" * 63)
                     exit_code = health_check.run_all_checks(
-                        force_rediscover=False,
-                        skip_steps=args.skip
+                        force_rediscover=False, skip_steps=args.skip
                     )
-                elif choice == '3' or choice == 'h':
+                elif choice in ("3", "h"):
                     # Run on different hosts
                     try:
                         new_hosts = input("  Enter hostnames (space-separated): ").strip()
@@ -3861,8 +4107,11 @@ Examples:
 
                             # Create temporary hosts file
                             import tempfile
-                            with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as tmp:
-                                tmp.write('\n'.join(host_list))
+
+                            with tempfile.NamedTemporaryFile(
+                                mode="w", suffix=".txt", delete=False
+                            ) as tmp:
+                                tmp.write("\n".join(host_list))
                                 tmp_hosts_path = tmp.name
 
                             try:
@@ -3879,12 +4128,11 @@ Examples:
                                     local_mode=False,
                                     strict_mode=args.strict,
                                     generate_pdf=not args.no_pdf,
-                                    verbose_pdf=verbose_pdf
+                                    verbose_pdf=verbose_pdf,
                                 )
                                 # Run health check with force rediscovery
                                 exit_code = new_health_check.run_all_checks(
-                                    force_rediscover=True,
-                                    skip_steps=args.skip
+                                    force_rediscover=True, skip_steps=args.skip
                                 )
                                 # Update reference for subsequent menu options
                                 health_check = new_health_check
@@ -3896,39 +4144,43 @@ Examples:
                                     pass
                     except (EOFError, KeyboardInterrupt):
                         print("\n  Cancelled.")
-                elif choice == '4' or choice == 'c':
+                elif choice in ("4", "c"):
                     # Show configuration (show_config imported at module level)
-                    show_config(health_check.config_dir / 'cluster_access_config.yaml')
-                elif choice == '5' or choice == 'p':
+                    show_config(health_check.config_dir / "cluster_access_config.yaml")
+                elif choice in ("5", "p"):
                     # Save PDF report with custom filename
                     if not generate_pdf:
                         print("\n  [INFO] PDF reports not available (fpdf2 not installed)")
                         continue
                     if not health_check.check_results:
-                        print("\n  [WARN] No health check results available. Run a health check first.")
+                        print(
+                            "\n  [WARN] No health check results available. Run a health check first."
+                        )
                         continue
                     try:
                         # Get cluster name for default filename
-                        cluster_name = '(unknown)'
+                        cluster_name = "(unknown)"
                         if health_check.access_config and health_check.access_config.clusters:
                             for cname in health_check.access_config.clusters.keys():
-                                if cname != '(unknown)':
+                                if cname != "(unknown)":
                                     cluster_name = cname
                                     break
-                        cluster_name_safe = re.sub(r'[^\w\-]', '_', cluster_name)
+                        cluster_name_safe = re.sub(r"[^\w\-]", "_", cluster_name)
 
                         # Default filename
-                        pdf_timestamp = datetime.now().strftime('%Y%m%d')
-                        pdf_time = datetime.now().strftime('%H%M')
+                        pdf_timestamp = datetime.now().strftime("%Y%m%d")
+                        pdf_time = datetime.now().strftime("%H%M")
                         default_name = f"{pdf_timestamp}_health_check_report_{cluster_name_safe}_{pdf_time}.pdf"
 
                         print(f"\n  Default filename: {default_name}")
-                        custom_name = input("  Enter filename (or press Enter for default): ").strip()
+                        custom_name = input(
+                            "  Enter filename (or press Enter for default): "
+                        ).strip()
 
                         if custom_name:
                             # Ensure .pdf extension
-                            if not custom_name.lower().endswith('.pdf'):
-                                custom_name += '.pdf'
+                            if not custom_name.lower().endswith(".pdf"):
+                                custom_name += ".pdf"
                             pdf_file = health_check.config_dir / custom_name
                         else:
                             pdf_file = health_check.config_dir / default_name
@@ -3937,6 +4189,7 @@ Examples:
                         from report_generator import generate_health_check_report
 
                         # Use unified data model for PDF generation
+                        # pylint: disable-next=protected-access
                         report_data = health_check._build_cluster_report_data()
 
                         generate_health_check_report(
@@ -3945,7 +4198,7 @@ Examples:
                             report_data.to_cluster_info(),
                             str(pdf_file),
                             report_data.get_install_status() or None,
-                            verbose=verbose_pdf
+                            verbose=verbose_pdf,
                         )
                         print(f"\n  PDF report saved: {pdf_file}")
                         print("  Goodbye!")
@@ -3959,7 +4212,7 @@ Examples:
                         print("\n  Cancelled.")
                     except Exception as e:
                         print(f"\n  [ERROR] PDF generation failed: {e}")
-                elif choice == '6' or choice == 's':
+                elif choice in ("6", "s"):
                     # Show suggestions
                     print("\n  Available suggestion topics:")
                     print("    [1] install   - Full installation guide")
@@ -3971,28 +4224,40 @@ Examples:
                     print("    [q] back      - Return to main menu")
                     try:
                         topic = input("\n  Select topic: ").strip().lower()
-                        topic_map = {'1': 'install', '2': 'access', '3': 'config', '4': 'pacemaker', '5': 'sap'}
-                        _rhel = health_check._get_rhel_major()
+                        topic_map = {
+                            "1": "install",
+                            "2": "access",
+                            "3": "config",
+                            "4": "pacemaker",
+                            "5": "sap",
+                        }
+                        _rhel = health_check._get_rhel_major()  # pylint: disable=protected-access
                         if topic in topic_map:
                             print_suggestions(topic_map[topic], _rhel)
-                        elif topic in ['install', 'access', 'config', 'pacemaker', 'sap']:
+                        elif topic in ["install", "access", "config", "pacemaker", "sap"]:
                             print_suggestions(topic, _rhel)
-                        elif topic == 'a' or topic == 'all':
-                            for t in ['install', 'access', 'config', 'pacemaker', 'sap']:
+                        elif topic in ("a", "all"):
+                            for t in ["install", "access", "config", "pacemaker", "sap"]:
                                 print_suggestions(t, _rhel)
-                        elif topic == 'q' or topic == 'back' or topic == '':
+                        elif topic in ("q", "back", ""):
                             pass  # Return to main menu
                         else:
                             print(f"  Unknown topic: {topic}")
                     except (EOFError, KeyboardInterrupt):
                         pass
-                elif choice == '7' or choice == 'd':
+                elif choice in ("7", "d"):
                     # Reset/delete configuration
-                    config_file = health_check.config_dir / 'cluster_access_config.yaml'
+                    config_file = health_check.config_dir / "cluster_access_config.yaml"
                     if config_file.exists():
                         try:
-                            confirm = input("  Delete saved configuration? This will force fresh discovery. [y/N]: ").strip().lower()
-                            if confirm == 'y' or confirm == 'yes':
+                            confirm = (
+                                input(
+                                    "  Delete saved configuration? This will force fresh discovery. [y/N]: "
+                                )
+                                .strip()
+                                .lower()
+                            )
+                            if confirm in ("y", "yes"):
                                 config_file.unlink()
                                 print("  Configuration deleted.")
                                 print("\n  To rediscover, run:")
@@ -4004,26 +4269,31 @@ Examples:
                             print("\n  Cancelled.")
                     else:
                         print("  No configuration file found.")
-                elif choice == 'q' or choice == 'quit' or choice == 'exit':
+                elif choice in ("q", "quit", "exit"):
                     # Save PDF before quitting (if available)
                     if generate_pdf and health_check.check_results:
                         try:
                             # Get cluster name for filename
-                            cluster_name = '(unknown)'
+                            cluster_name = "(unknown)"
                             if health_check.access_config and health_check.access_config.clusters:
                                 for cname in health_check.access_config.clusters.keys():
-                                    if cname != '(unknown)':
+                                    if cname != "(unknown)":
                                         cluster_name = cname
                                         break
-                            cluster_name_safe = re.sub(r'[^\w\-]', '_', cluster_name)
+                            cluster_name_safe = re.sub(r"[^\w\-]", "_", cluster_name)
 
                             # Generate filename
-                            pdf_timestamp = datetime.now().strftime('%Y%m%d')
-                            pdf_time = datetime.now().strftime('%H%M')
-                            pdf_file = health_check.config_dir / f"{pdf_timestamp}_health_check_report_{cluster_name_safe}_{pdf_time}.pdf"
+                            pdf_timestamp = datetime.now().strftime("%Y%m%d")
+                            pdf_time = datetime.now().strftime("%H%M")
+                            pdf_file = (
+                                health_check.config_dir
+                                / f"{pdf_timestamp}_health_check_report_{cluster_name_safe}_{pdf_time}.pdf"
+                            )
 
                             # Generate PDF
                             from report_generator import generate_health_check_report
+
+                            # pylint: disable-next=protected-access
                             report_data = health_check._build_cluster_report_data()
                             generate_health_check_report(
                                 report_data.get_results_list(),
@@ -4031,23 +4301,30 @@ Examples:
                                 report_data.to_cluster_info(),
                                 str(pdf_file),
                                 report_data.get_install_status() or None,
-                                verbose=verbose_pdf
+                                verbose=verbose_pdf,
                             )
                             print(f"\n  PDF report saved: {pdf_file}")
 
                             # Open PDF with default viewer
                             import subprocess
                             import platform
+
                             try:
                                 system = platform.system()
-                                if system == 'Linux':
-                                    subprocess.Popen(['xdg-open', str(pdf_file)],
-                                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                                elif system == 'Darwin':  # macOS
-                                    subprocess.Popen(['open', str(pdf_file)],
-                                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                                elif system == 'Windows':
-                                    os.startfile(str(pdf_file))
+                                if system == "Linux":
+                                    subprocess.Popen(  # pylint: disable=consider-using-with
+                                        ["xdg-open", str(pdf_file)],
+                                        stdout=subprocess.DEVNULL,
+                                        stderr=subprocess.DEVNULL,
+                                    )
+                                elif system == "Darwin":  # macOS
+                                    subprocess.Popen(  # pylint: disable=consider-using-with
+                                        ["open", str(pdf_file)],
+                                        stdout=subprocess.DEVNULL,
+                                        stderr=subprocess.DEVNULL,
+                                    )
+                                elif system == "Windows":
+                                    os.startfile(str(pdf_file))  # pylint: disable=no-member
                                 print("  Opening PDF...")
                             except Exception:
                                 pass  # Silently ignore if can't open
@@ -4067,5 +4344,5 @@ Examples:
         sys.exit(130)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

@@ -24,54 +24,65 @@ def scan_for_resources(base_dir: str = ".") -> dict:
     """
     base_path = Path(base_dir).resolve()
     results = {
-        'sosreports_compressed': [],  # .tar.xz, .tar.gz files
-        'sosreports_extracted': [],   # sosreport-* directories
-        'inventory_files': [],        # ansible inventory files (hosts, inventory.*)
-        'hosts_files': [],            # hosts.txt, *_hosts.txt
-        'former_results': [],         # health_check_report_*.yaml
-        'config_files': [],           # cluster_access_config.yaml
-        'pdf_reports': [],            # *.pdf reports
+        "sosreports_compressed": [],  # .tar.xz, .tar.gz files
+        "sosreports_extracted": [],  # sosreport-* directories
+        "inventory_files": [],  # ansible inventory files (hosts, inventory.*)
+        "hosts_files": [],  # hosts.txt, *_hosts.txt
+        "former_results": [],  # health_check_report_*.yaml
+        "config_files": [],  # cluster_access_config.yaml
+        "pdf_reports": [],  # *.pdf reports
     }
 
     # Scan for sosreports (compressed)
-    archive_patterns = ['**/sosreport-*.tar.xz', '**/sosreport-*.tar.gz',
-                        '**/sosreport-*.tar.bz2', '**/sosreport-*.tgz', '**/sosreport-*.txz']
+    archive_patterns = [
+        "**/sosreport-*.tar.xz",
+        "**/sosreport-*.tar.gz",
+        "**/sosreport-*.tar.bz2",
+        "**/sosreport-*.tgz",
+        "**/sosreport-*.txz",
+    ]
     for pattern in archive_patterns:
         for f in base_path.glob(pattern):
-            results['sosreports_compressed'].append(str(f))
+            results["sosreports_compressed"].append(str(f))
 
     # Scan for sosreports (extracted directories)
-    for d in base_path.glob('**/sosreport-*'):
-        if d.is_dir() and (d / 'etc').exists():
-            results['sosreports_extracted'].append(str(d))
+    for d in base_path.glob("**/sosreport-*"):
+        if d.is_dir() and (d / "etc").exists():
+            results["sosreports_extracted"].append(str(d))
 
     # Scan for inventory files
-    inventory_patterns = ['**/inventory', '**/inventory.ini', '**/inventory.yaml',
-                          '**/inventory.yml', '**/ansible/hosts', '**/hosts.ini']
+    inventory_patterns = [
+        "**/inventory",
+        "**/inventory.ini",
+        "**/inventory.yaml",
+        "**/inventory.yml",
+        "**/ansible/hosts",
+        "**/hosts.ini",
+    ]
     for pattern in inventory_patterns:
         for f in base_path.glob(pattern):
             if f.is_file():
-                results['inventory_files'].append(str(f))
+                results["inventory_files"].append(str(f))
 
     # Scan for hosts files
-    for f in base_path.glob('**/hosts.txt'):
-        results['hosts_files'].append(str(f))
-    for f in base_path.glob('**/*_hosts.txt'):
-        results['hosts_files'].append(str(f))
+    for f in base_path.glob("**/hosts.txt"):
+        results["hosts_files"].append(str(f))
+    for f in base_path.glob("**/*_hosts.txt"):
+        results["hosts_files"].append(str(f))
 
     # Scan for former results
-    for f in base_path.glob('**/health_check_report_*.yaml'):
-        results['former_results'].append(str(f))
-    for f in base_path.glob('**/health_check_report_*.pdf'):
-        results['pdf_reports'].append(str(f))
-    for f in base_path.glob('**/*_health_check_report_*.pdf'):
-        results['pdf_reports'].append(str(f))
+    for f in base_path.glob("**/health_check_report_*.yaml"):
+        results["former_results"].append(str(f))
+    for f in base_path.glob("**/health_check_report_*.pdf"):
+        results["pdf_reports"].append(str(f))
+    for f in base_path.glob("**/*_health_check_report_*.pdf"):
+        results["pdf_reports"].append(str(f))
 
     # Scan for config files
-    for f in base_path.glob('**/cluster_access_config.yaml'):
-        results['config_files'].append(str(f))
-    for f in base_path.glob('**/last_run_status.yaml'):
-        results['former_results'].append(str(f))
+    for f in base_path.glob("**/cluster_access_config.yaml"):
+        results["config_files"].append(str(f))
+    for f in base_path.glob("**/last_run_status.yaml"):
+        results["former_results"].append(str(f))
 
     # Remove duplicates and sort
     for key in results:
@@ -94,9 +105,9 @@ def extract_sosreports_parallel(archives: list, max_workers: int = 4) -> list:
 
         # Determine expected directory name
         dir_name = archive_name
-        for ext in ['.tar.xz', '.tar.gz', '.tar.bz2', '.tgz', '.txz']:
+        for ext in [".tar.xz", ".tar.gz", ".tar.bz2", ".tgz", ".txz"]:
             if dir_name.endswith(ext):
-                dir_name = dir_name[:-len(ext)]
+                dir_name = dir_name[: -len(ext)]
                 break
 
         expected_dir = os.path.join(base_dir, dir_name)
@@ -106,12 +117,12 @@ def extract_sosreports_parallel(archives: list, max_workers: int = 4) -> list:
             return (True, expected_dir, "already extracted")
 
         # Determine extraction command
-        if archive_path.endswith(('.tar.xz', '.txz')):
-            cmd = ['tar', 'xJf', archive_path, '-C', base_dir]
-        elif archive_path.endswith(('.tar.gz', '.tgz')):
-            cmd = ['tar', 'xzf', archive_path, '-C', base_dir]
-        elif archive_path.endswith('.tar.bz2'):
-            cmd = ['tar', 'xjf', archive_path, '-C', base_dir]
+        if archive_path.endswith((".tar.xz", ".txz")):
+            cmd = ["tar", "xJf", archive_path, "-C", base_dir]
+        elif archive_path.endswith((".tar.gz", ".tgz")):
+            cmd = ["tar", "xzf", archive_path, "-C", base_dir]
+        elif archive_path.endswith(".tar.bz2"):
+            cmd = ["tar", "xjf", archive_path, "-C", base_dir]
         else:
             return (False, archive_path, "unknown format")
 
@@ -121,7 +132,11 @@ def extract_sosreports_parallel(archives: list, max_workers: int = 4) -> list:
         except subprocess.TimeoutExpired:
             return (False, archive_path, "timeout")
         except subprocess.CalledProcessError as e:
-            return (False, archive_path, e.stderr.decode()[:100] if e.stderr else "extraction failed")
+            return (
+                False,
+                archive_path,
+                e.stderr.decode()[:100] if e.stderr else "extraction failed",
+            )
         except Exception as e:
             return (False, archive_path, str(e))
 
@@ -156,80 +171,77 @@ def check_for_updates(script_dir: Path = None):
     try:
         # Check if we're in a git repository
         result = subprocess.run(
-            ['git', 'rev-parse', '--git-dir'],
+            ["git", "rev-parse", "--git-dir"],
             cwd=script_dir,
             capture_output=True,
             text=True,
-            timeout=5
+            timeout=5,
+            check=False,
         )
         if result.returncode != 0:
             return  # Not a git repo
 
         # Fetch latest from remote (quietly)
         subprocess.run(
-            ['git', 'fetch', '--quiet'],
+            ["git", "fetch", "--quiet"],
             cwd=script_dir,
             capture_output=True,
-            timeout=30
+            timeout=30,
+            check=False,
         )
 
         # Get local and remote HEAD
         local_head = subprocess.run(
-            ['git', 'rev-parse', 'HEAD'],
+            ["git", "rev-parse", "HEAD"],
             cwd=script_dir,
             capture_output=True,
             text=True,
-            timeout=5
+            timeout=5,
+            check=False,
         ).stdout.strip()
 
         remote_head = subprocess.run(
-            ['git', 'rev-parse', '@{u}'],
+            ["git", "rev-parse", "@{u}"],
             cwd=script_dir,
             capture_output=True,
             text=True,
-            timeout=5
+            timeout=5,
+            check=False,
         ).stdout.strip()
 
         if local_head != remote_head:
             # Check how many commits behind
             behind_count = subprocess.run(
-                ['git', 'rev-list', '--count', f'{local_head}..{remote_head}'],
+                ["git", "rev-list", "--count", f"{local_head}..{remote_head}"],
                 cwd=script_dir,
                 capture_output=True,
                 text=True,
-                timeout=5
+                timeout=5,
+                check=False,
             ).stdout.strip()
 
             print(f"\n[INFO] A newer version is available ({behind_count} commit(s) behind)")
             try:
                 response = input("  Update to latest version? [y/N]: ").strip().lower()
-                if response == 'y' or response == 'yes':
+                if response in ("y", "yes"):
                     print("  Updating...")
                     result = subprocess.run(
-                        ['git', 'pull'],
+                        ["git", "pull"],
                         cwd=script_dir,
                         capture_output=True,
                         text=True,
-                        timeout=60
+                        timeout=60,
+                        check=False,
                     )
                     if result.returncode == 0:
                         print("  Updated successfully. Restarting health check...\n")
                         # Restart the script with the same arguments
-                        os.execv(sys.executable, [sys.executable] + sys.argv + ['--no-update-check'])
+                        os.execv(
+                            sys.executable, [sys.executable] + sys.argv + ["--no-update-check"]
+                        )
                     else:
                         print(f"  [WARN] Update failed: {result.stderr.strip()}")
             except (EOFError, KeyboardInterrupt):
                 print("\n  Skipping update.")
     except Exception:
         pass  # Silently ignore any errors in update check
-
-
-# Python < 3.7 fallback for dataclasses.asdict
-try:
-    from dataclasses import asdict
-except ImportError:
-    def asdict(obj):
-        """Simple fallback for dataclasses.asdict"""
-        if hasattr(obj, '__dict__'):
-            return {k: v for k, v in obj.__dict__.items() if not k.startswith('_')}
-        return obj

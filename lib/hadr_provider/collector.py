@@ -10,15 +10,14 @@ from typing import Dict, List
 
 from .models import ActualConfig
 
-
 # ---------------------------------------------------------------------------
 # Section markers emitted by the live_cmd
 # ---------------------------------------------------------------------------
-_MARKER_GLOBAL_INI = '=== GLOBAL_INI ==='
-_MARKER_SUDOERS = '=== SUDOERS ==='
-_MARKER_PROVIDER_FILES = '=== PROVIDER_FILES ==='
-_MARKER_PACKAGES = '=== PACKAGES ==='
-_MARKER_RHEL = '=== RHEL ==='
+_MARKER_GLOBAL_INI = "=== GLOBAL_INI ==="
+_MARKER_SUDOERS = "=== SUDOERS ==="
+_MARKER_PROVIDER_FILES = "=== PROVIDER_FILES ==="
+_MARKER_PACKAGES = "=== PACKAGES ==="
+_MARKER_RHEL = "=== RHEL ==="
 
 _ALL_MARKERS = [
     _MARKER_GLOBAL_INI,
@@ -39,14 +38,14 @@ def _split_sections(raw: str) -> Dict[str, str]:
         stripped = line.strip()
         if stripped in _ALL_MARKERS:
             if current_marker is not None:
-                sections[current_marker] = '\n'.join(current_lines)
+                sections[current_marker] = "\n".join(current_lines)
             current_marker = stripped
             current_lines = []
         else:
             current_lines.append(line)
 
     if current_marker is not None:
-        sections[current_marker] = '\n'.join(current_lines)
+        sections[current_marker] = "\n".join(current_lines)
 
     return sections
 
@@ -62,13 +61,13 @@ def _parse_ini_sections(text: str) -> Dict[str, Dict[str, str]]:
 
     for line in text.splitlines():
         line = line.strip()
-        if not line or line.startswith('#'):
+        if not line or line.startswith("#"):
             continue
 
-        section_match = re.match(r'^\[(.+)\]$', line)
+        section_match = re.match(r"^\[(.+)\]$", line)
         if section_match:
             name = section_match.group(1).strip()
-            if name.startswith('ha_dr_provider_') or name.lower() == 'trace':
+            if name.startswith("ha_dr_provider_") or name.lower() == "trace":
                 current_section = name
                 sections.setdefault(current_section, {})
             else:
@@ -76,7 +75,7 @@ def _parse_ini_sections(text: str) -> Dict[str, Dict[str, str]]:
             continue
 
         if current_section is not None:
-            kv_match = re.match(r'^(\S+)\s*=\s*(.*)$', line)
+            kv_match = re.match(r"^(\S+)\s*=\s*(.*)$", line)
             if kv_match:
                 sections[current_section][kv_match.group(1).strip()] = kv_match.group(2).strip()
 
@@ -87,9 +86,9 @@ def _extract_trace(ini_sections: Dict[str, Dict[str, str]]) -> Dict[str, str]:
     """Pull trace entries relevant to HA/DR from parsed INI sections."""
     trace_section = {}
     for name, entries in ini_sections.items():
-        if name.lower() == 'trace':
+        if name.lower() == "trace":
             for key, val in entries.items():
-                if key.startswith('ha_dr_'):
+                if key.startswith("ha_dr_"):
                     trace_section[key] = val
     return trace_section
 
@@ -99,7 +98,7 @@ def _parse_sudoers(text: str) -> List[str]:
     lines = []
     for line in text.splitlines():
         stripped = line.strip()
-        if stripped and not stripped.startswith('#'):
+        if stripped and not stripped.startswith("#"):
             lines.append(stripped)
     return lines
 
@@ -110,13 +109,13 @@ def _parse_provider_files(text: str) -> List[str]:
     for line in text.splitlines():
         line = line.strip()
         # Skip "No such file" errors from ls
-        if not line or 'No such file' in line or 'cannot access' in line:
+        if not line or "No such file" in line or "cannot access" in line:
             continue
         # ls -la output: permissions ... path  or just the path
         parts = line.split()
         if parts:
             path = parts[-1]
-            if path.startswith('/'):
+            if path.startswith("/"):
                 found.append(path)
     return found
 
@@ -126,7 +125,7 @@ def _parse_packages(text: str) -> List[str]:
     pkgs = []
     for line in text.splitlines():
         line = line.strip()
-        if line and 'not installed' not in line:
+        if line and "not installed" not in line:
             pkgs.append(line)
     return pkgs
 
@@ -159,14 +158,14 @@ def parse_collected_output(raw_output: str, node: str, sid: str) -> ActualConfig
     """
     sections = _split_sections(raw_output)
 
-    global_ini_raw = sections.get(_MARKER_GLOBAL_INI, '')
+    global_ini_raw = sections.get(_MARKER_GLOBAL_INI, "")
     ini_sections = _parse_ini_sections(global_ini_raw)
     trace_settings = _extract_trace(ini_sections)
-    sudoers_raw = sections.get(_MARKER_SUDOERS, '')
+    sudoers_raw = sections.get(_MARKER_SUDOERS, "")
     sudoers_lines = _parse_sudoers(sudoers_raw)
-    provider_files = _parse_provider_files(sections.get(_MARKER_PROVIDER_FILES, ''))
-    packages = _parse_packages(sections.get(_MARKER_PACKAGES, ''))
-    rhel_version = _parse_rhel_version(sections.get(_MARKER_RHEL, ''))
+    provider_files = _parse_provider_files(sections.get(_MARKER_PROVIDER_FILES, ""))
+    packages = _parse_packages(sections.get(_MARKER_PACKAGES, ""))
+    rhel_version = _parse_rhel_version(sections.get(_MARKER_RHEL, ""))
 
     return ActualConfig(
         node=node,

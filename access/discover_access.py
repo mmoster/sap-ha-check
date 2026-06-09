@@ -10,22 +10,23 @@ Discovers available access methods to cluster nodes:
 Results are stored in a YAML config file for incremental investigation.
 """
 
+import argparse
 import os
-import sys
+import re
 import select
 import socket
 import subprocess
-import yaml
-import argparse
-import re
-from pathlib import Path
+import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import List, Dict, Optional, Any
 from datetime import datetime
+from pathlib import Path
+from typing import List, Dict, Optional, Any
+
+import yaml
 
 # Python 3.6 compatibility for dataclasses
 try:
-    from dataclasses import dataclass, field, asdict
+    from dataclasses import dataclass, asdict
 except ImportError:
     # Fallback for Python < 3.7
     def field(default=None, default_factory=None):
@@ -33,9 +34,10 @@ except ImportError:
 
     def dataclass(cls):
         """Simple dataclass decorator fallback"""
+
         def __init__(self, **kwargs):
             # Set defaults from class annotations first
-            if hasattr(cls, '__annotations__'):
+            if hasattr(cls, "__annotations__"):
                 for name in cls.__annotations__:
                     default = getattr(cls, name, None)
                     setattr(self, name, default)
@@ -43,21 +45,23 @@ except ImportError:
             for key, value in kwargs.items():
                 setattr(self, key, value)
             # Call __post_init__ if defined
-            if hasattr(self, '__post_init__'):
+            if hasattr(self, "__post_init__"):
                 self.__post_init__()
+
         cls.__init__ = __init__
         return cls
 
     def asdict(obj):
         """Simple asdict fallback"""
-        if hasattr(obj, '__dict__'):
-            return {k: v for k, v in obj.__dict__.items() if not k.startswith('_')}
+        if hasattr(obj, "__dict__"):
+            return {k: v for k, v in obj.__dict__.items() if not k.startswith("_")}
         return obj
 
 
 @dataclass
 class NodeAccess:
     """Represents access information for a single node."""
+
     hostname: str = None
     ssh_reachable: bool = False
     ssh_user: Optional[str] = None
@@ -73,6 +77,7 @@ class NodeAccess:
 @dataclass
 class AccessConfig:
     """Configuration for cluster access discovery."""
+
     ansible_inventory_source: Optional[str] = None
     ansible_inventory_path: Optional[str] = None
     sosreport_directory: Optional[str] = None
@@ -96,17 +101,24 @@ class AccessDiscovery:
     ANSIBLE_CFG_LOCATIONS = [
         "./ansible.cfg",
         os.path.expanduser("~/.ansible.cfg"),
-        "/etc/ansible/ansible.cfg"
+        "/etc/ansible/ansible.cfg",
     ]
     DEFAULT_ANSIBLE_INVENTORY = "/etc/ansible/hosts"
     SSH_TIMEOUT = 5
     MAX_WORKERS = 10
 
-    def __init__(self, config_dir: str = ".", sosreport_dir: Optional[str] = None,
-                 hosts_file: Optional[str] = None, force_rediscover: bool = False,
-                 debug: bool = False, ansible_group: Optional[str] = None,
-                 skip_ansible: bool = False, cluster_name: Optional[str] = None,
-                 local_mode: bool = False):
+    def __init__(  # pylint: disable=too-many-positional-arguments
+        self,
+        config_dir: str = ".",
+        sosreport_dir: Optional[str] = None,
+        hosts_file: Optional[str] = None,
+        force_rediscover: bool = False,
+        debug: bool = False,
+        ansible_group: Optional[str] = None,
+        skip_ansible: bool = False,
+        cluster_name: Optional[str] = None,
+        local_mode: bool = False,
+    ):
         self.config_dir = Path(config_dir)
         self.config_path = self.config_dir / self.CONFIG_FILE
         self.sosreport_dir = sosreport_dir
@@ -124,7 +136,7 @@ class AccessDiscovery:
         """Load existing config or create new one."""
         if self.config_path.exists() and not self.force_rediscover:
             print(f"Loading existing config from {self.config_path}")
-            with open(self.config_path, 'r') as f:
+            with open(self.config_path, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f) or {}
                 config = AccessConfig(**data)
                 # Clear old nodes if hosts file specified (fresh discovery for those hosts)
@@ -141,7 +153,7 @@ class AccessDiscovery:
         """Save current configuration to YAML file."""
         self.config.discovery_timestamp = datetime.now().isoformat()
         self.config_dir.mkdir(parents=True, exist_ok=True)
-        with open(self.config_path, 'w') as f:
+        with open(self.config_path, "w", encoding="utf-8") as f:
             yaml.dump(asdict(self.config), f, default_flow_style=False)
         print(f"Configuration saved to {self.config_path}")
 
@@ -156,7 +168,7 @@ class AccessDiscovery:
         print("\n=== Discovering Ansible Inventory ===")
 
         # Check environment variable
-        env_inventory = os.environ.get('ANSIBLE_INVENTORY')
+        env_inventory = os.environ.get("ANSIBLE_INVENTORY")
         if env_inventory and os.path.exists(env_inventory):
             print(f"Found via $ANSIBLE_INVENTORY: {env_inventory}")
             self.config.ansible_inventory_source = "environment"
@@ -169,10 +181,10 @@ class AccessDiscovery:
             if os.path.exists(cfg_path):
                 print(f"Checking {cfg_path}...")
                 try:
-                    with open(cfg_path, 'r') as f:
+                    with open(cfg_path, "r", encoding="utf-8") as f:
                         content = f.read()
                     # Look for inventory = <path> in [defaults] section
-                    match = re.search(r'^\s*inventory\s*=\s*(.+?)\s*$', content, re.MULTILINE)
+                    match = re.search(r"^\s*inventory\s*=\s*(.+?)\s*$", content, re.MULTILINE)
                     if match:
                         inv_path = os.path.expanduser(match.group(1).strip())
                         if os.path.exists(inv_path):
@@ -203,7 +215,15 @@ class AccessDiscovery:
             if self.config.ansible_inventory_path:
                 cmd.extend(["-i", self.config.ansible_inventory_path])
 
-            result = subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, timeout=30)
+            result = subprocess.run(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True,
+                timeout=30,
+                check=False,
+            )
 
             if result.returncode == 0:
                 inventory = yaml.safe_load(result.stdout)
@@ -220,7 +240,9 @@ class AccessDiscovery:
 
         return hosts
 
-    def _parse_ansible_inventory(self, inventory: dict, hosts: dict = None) -> Dict[str, Dict[str, Any]]:
+    def _parse_ansible_inventory(
+        self, inventory: dict, hosts: dict = None
+    ) -> Dict[str, Dict[str, Any]]:
         """Recursively parse Ansible inventory structure."""
         if hosts is None:
             hosts = {}
@@ -229,20 +251,22 @@ class AccessDiscovery:
             return hosts
 
         # Parse 'all' group structure
-        if 'all' in inventory:
-            return self._parse_ansible_inventory(inventory['all'], hosts)
+        if "all" in inventory:
+            return self._parse_ansible_inventory(inventory["all"], hosts)
 
         # Parse hosts at current level
-        if 'hosts' in inventory and isinstance(inventory['hosts'], dict):
-            for hostname, hostvars in inventory['hosts'].items():
+        if "hosts" in inventory and isinstance(inventory["hosts"], dict):
+            for hostname, hostvars in inventory["hosts"].items():
                 hosts[hostname] = {
-                    'ansible_host': hostvars.get('ansible_host', hostname) if hostvars else hostname,
-                    'ansible_user': hostvars.get('ansible_user') if hostvars else None,
+                    "ansible_host": (
+                        hostvars.get("ansible_host", hostname) if hostvars else hostname
+                    ),
+                    "ansible_user": hostvars.get("ansible_user") if hostvars else None,
                 }
 
         # Recursively parse children groups
-        if 'children' in inventory and isinstance(inventory['children'], dict):
-            for group_name, group_data in inventory['children'].items():
+        if "children" in inventory and isinstance(inventory["children"], dict):
+            for _group_name, group_data in inventory["children"].items():
                 self._parse_ansible_inventory(group_data, hosts)
 
         return hosts
@@ -252,10 +276,10 @@ class AccessDiscovery:
         hosts = []
         if self.hosts_file and os.path.exists(self.hosts_file):
             print(f"\n=== Reading hosts from {self.hosts_file} ===")
-            with open(self.hosts_file, 'r') as f:
+            with open(self.hosts_file, "r", encoding="utf-8") as f:
                 for line in f:
                     line = line.strip()
-                    if line and not line.startswith('#'):
+                    if line and not line.startswith("#"):
                         hosts.append(line.split()[0])  # Take first column
             print(f"Found {len(hosts)} hosts")
             self.config.hosts_file = self.hosts_file
@@ -271,9 +295,9 @@ class AccessDiscovery:
 
         # Determine the expected directory name (remove .tar.xz, .tar.gz, etc.)
         dir_name = archive_name
-        for ext in ['.tar.xz', '.tar.gz', '.tar.bz2', '.tgz', '.txz', '.tar']:
+        for ext in [".tar.xz", ".tar.gz", ".tar.bz2", ".tgz", ".txz", ".tar"]:
             if dir_name.endswith(ext):
-                dir_name = dir_name[:-len(ext)]
+                dir_name = dir_name[: -len(ext)]
                 break
 
         expected_dir = os.path.join(base_dir, dir_name)
@@ -283,14 +307,14 @@ class AccessDiscovery:
             return (True, expected_dir)
 
         # Determine extraction command based on extension
-        if archive_path.endswith('.tar.xz') or archive_path.endswith('.txz'):
-            cmd = ['tar', 'xJf', archive_path, '-C', base_dir]
-        elif archive_path.endswith('.tar.gz') or archive_path.endswith('.tgz'):
-            cmd = ['tar', 'xzf', archive_path, '-C', base_dir]
-        elif archive_path.endswith('.tar.bz2'):
-            cmd = ['tar', 'xjf', archive_path, '-C', base_dir]
-        elif archive_path.endswith('.tar'):
-            cmd = ['tar', 'xf', archive_path, '-C', base_dir]
+        if archive_path.endswith(".tar.xz") or archive_path.endswith(".txz"):
+            cmd = ["tar", "xJf", archive_path, "-C", base_dir]
+        elif archive_path.endswith(".tar.gz") or archive_path.endswith(".tgz"):
+            cmd = ["tar", "xzf", archive_path, "-C", base_dir]
+        elif archive_path.endswith(".tar.bz2"):
+            cmd = ["tar", "xjf", archive_path, "-C", base_dir]
+        elif archive_path.endswith(".tar"):
+            cmd = ["tar", "xf", archive_path, "-C", base_dir]
         else:
             return (False, f"Unknown archive format: {archive_name}")
 
@@ -301,7 +325,8 @@ class AccessDiscovery:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 universal_newlines=True,
-                timeout=300  # 5 minute timeout for large archives
+                timeout=300,  # 5 minute timeout for large archives
+                check=False,
             )
             if result.returncode == 0:
                 # Find the extracted directory
@@ -310,11 +335,14 @@ class AccessDiscovery:
                 # Sometimes the directory name differs slightly, look for it
                 for item in os.listdir(base_dir):
                     item_path = os.path.join(base_dir, item)
-                    if os.path.isdir(item_path) and item.startswith('sosreport-') and dir_name.startswith(item[:20]):
+                    if (
+                        os.path.isdir(item_path)
+                        and item.startswith("sosreport-")
+                        and dir_name.startswith(item[:20])
+                    ):
                         return (True, item_path)
                 return (True, expected_dir)  # Assume it worked
-            else:
-                return (False, f"Extract failed: {result.stderr[:100]}")
+            return (False, f"Extract failed: {result.stderr[:100]}")
         except subprocess.TimeoutExpired:
             return (False, "Extract timed out (>5 min)")
         except Exception as e:
@@ -331,16 +359,18 @@ class AccessDiscovery:
 
         # First, find and extract any compressed SOSreports (multithreaded)
         archives = []
-        archive_extensions = ('.tar.xz', '.tar.gz', '.tar.bz2', '.tgz', '.txz', '.tar')
+        archive_extensions = (".tar.xz", ".tar.gz", ".tar.bz2", ".tgz", ".txz", ".tar")
         for item in os.listdir(self.sosreport_dir):
-            if item.startswith('sosreport-') and item.endswith(archive_extensions):
+            if item.startswith("sosreport-") and item.endswith(archive_extensions):
                 archive_path = os.path.join(self.sosreport_dir, item)
                 archives.append(archive_path)
 
         if archives:
             print(f"  Found {len(archives)} compressed SOSreport(s), checking/extracting...")
             with ThreadPoolExecutor(max_workers=min(len(archives), 4)) as executor:
-                futures = {executor.submit(self._extract_sosreport, arch): arch for arch in archives}
+                futures = {
+                    executor.submit(self._extract_sosreport, arch): arch for arch in archives
+                }
                 for future in as_completed(futures):
                     archive = futures[future]
                     archive_name = os.path.basename(archive)
@@ -356,9 +386,9 @@ class AccessDiscovery:
         # Look for sosreport directories (pattern: sosreport-<hostname>-<id>)
         for item in os.listdir(self.sosreport_dir):
             item_path = os.path.join(self.sosreport_dir, item)
-            if os.path.isdir(item_path) and item.startswith('sosreport-'):
+            if os.path.isdir(item_path) and item.startswith("sosreport-"):
                 # Extract hostname from sosreport directory name
-                parts = item.split('-')
+                parts = item.split("-")
                 if len(parts) >= 2:
                     hostname = parts[1]
                     sosreports[hostname] = item_path
@@ -367,10 +397,10 @@ class AccessDiscovery:
         # Also check for extracted sosreports by reading etc/hostname
         for item in os.listdir(self.sosreport_dir):
             item_path = os.path.join(self.sosreport_dir, item)
-            hostname_file = os.path.join(item_path, 'etc/hostname')
+            hostname_file = os.path.join(item_path, "etc/hostname")
             if os.path.isdir(item_path) and os.path.exists(hostname_file):
-                with open(hostname_file, 'r') as f:
-                    hostname = f.read().strip().split('.')[0]  # Get short hostname
+                with open(hostname_file, "r", encoding="utf-8") as f:
+                    hostname = f.read().strip().split(".")[0]  # Get short hostname
                 if hostname and hostname not in sosreports:
                     sosreports[hostname] = item_path
                     print(f"  Found: {hostname} -> {item}")
@@ -393,11 +423,17 @@ class AccessDiscovery:
 
         for hostname, sos_path in sosreports.items():
             extras_path = Path(sos_path) / "sos_commands/sos_extras/sap_hana_ha"
-            saphana_path = Path(sos_path) / "sos_commands/saphana"  # noqa: F841
+            _saphana_path = Path(sos_path) / "sos_commands/saphana"  # noqa: F841
 
             # Check for extended data: SAPHanaSR-showAttr or HADR collect script output
-            has_sr_attr = (extras_path / "SAPHanaSR-showAttr").exists() if extras_path.exists() else False
-            has_hadr = (extras_path / "usr.local.sbin.sap-ha-collect-hadr").exists() if extras_path.exists() else False
+            has_sr_attr = (
+                (extras_path / "SAPHanaSR-showAttr").exists() if extras_path.exists() else False
+            )
+            has_hadr = (
+                (extras_path / "usr.local.sbin.sap-ha-collect-hadr").exists()
+                if extras_path.exists()
+                else False
+            )
 
             if has_sr_attr or has_hadr:
                 has_extended.append(hostname)
@@ -433,26 +469,30 @@ class AccessDiscovery:
         base_path = Path(base_dir).resolve()
 
         # Walk through all subdirectories
-        for root, dirs, files in os.walk(base_path):
+        for root, dirs, _files in os.walk(base_path):
             # Skip hidden directories and common non-sosreport dirs
-            dirs[:] = [d for d in dirs if not d.startswith('.') and d not in ['__pycache__', 'venv', '.git']]
+            dirs[:] = [
+                d
+                for d in dirs
+                if not d.startswith(".") and d not in ["__pycache__", "venv", ".git"]
+            ]
 
             for d in dirs:
-                if d.startswith('sosreport-'):
+                if d.startswith("sosreport-"):
                     dir_path = os.path.join(root, d)
                     # Extract hostname from directory name
-                    parts = d.split('-')
+                    parts = d.split("-")
                     if len(parts) >= 2:
                         hostname = parts[1]
                         if hostname not in sosreports:
                             sosreports[hostname] = dir_path
 
                     # Also try reading etc/hostname for accurate hostname
-                    hostname_file = os.path.join(dir_path, 'etc/hostname')
+                    hostname_file = os.path.join(dir_path, "etc/hostname")
                     if os.path.exists(hostname_file):
                         try:
-                            with open(hostname_file, 'r') as f:
-                                hostname = f.read().strip().split('.')[0]
+                            with open(hostname_file, "r", encoding="utf-8") as f:
+                                hostname = f.read().strip().split(".")[0]
                             if hostname and hostname not in sosreports:
                                 sosreports[hostname] = dir_path
                         except Exception:
@@ -468,13 +508,19 @@ class AccessDiscovery:
         sos_path = Path(sosreport_path)
 
         # Check pcs status output for connection errors
-        for pcs_file in ["sos_commands/pacemaker/pcs_status", "sos_commands/pacemaker/pcs_status_--full"]:
+        for pcs_file in [
+            "sos_commands/pacemaker/pcs_status",
+            "sos_commands/pacemaker/pcs_status_--full",
+        ]:
             pcs_status = sos_path / pcs_file
             if pcs_status.exists():
                 try:
                     content = pcs_status.read_text()
                     # Check for connection failure messages
-                    if "Connection to cluster failed" in content or "Error: cluster is not currently running" in content:
+                    if (
+                        "Connection to cluster failed" in content
+                        or "Error: cluster is not currently running" in content
+                    ):
                         return (False, "pcs status shows cluster connection failed")
                     if "error:" in content.lower() and "cluster" in content.lower():
                         return (False, "pcs status shows cluster error")
@@ -525,7 +571,7 @@ class AccessDiscovery:
             try:
                 content = corosync_conf.read_text()
                 # Look for cluster_name: <name> in totem section
-                match = re.search(r'cluster_name:\s*(\S+)', content)
+                match = re.search(r"cluster_name:\s*(\S+)", content)
                 if match:
                     return match.group(1)
             except Exception:
@@ -536,7 +582,7 @@ class AccessDiscovery:
         if pcs_status.exists():
             try:
                 content = pcs_status.read_text()
-                match = re.search(r'Cluster name:\s*(\S+)', content)
+                match = re.search(r"Cluster name:\s*(\S+)", content)
                 if match:
                     return match.group(1)
             except Exception:
@@ -548,7 +594,7 @@ class AccessDiscovery:
             try:
                 content = crm_mon.read_text()
                 # Some versions show cluster name in the header
-                match = re.search(r'Cluster\s+(\S+)\s+status', content, re.IGNORECASE)
+                match = re.search(r"Cluster\s+(\S+)\s+status", content, re.IGNORECASE)
                 if match:
                     return match.group(1)
             except Exception:
@@ -568,8 +614,8 @@ class AccessDiscovery:
                 content = corosync_conf.read_text()
                 # Look for ring0_addr or name in nodelist section
                 # Pattern: ring0_addr: <hostname/ip> or name: <hostname>
-                ring_matches = re.findall(r'ring0_addr:\s*(\S+)', content)
-                name_matches = re.findall(r'^\s*name:\s*(\S+)', content, re.MULTILINE)
+                ring_matches = re.findall(r"ring0_addr:\s*(\S+)", content)
+                name_matches = re.findall(r"^\s*name:\s*(\S+)", content, re.MULTILINE)
 
                 # Prefer name matches as they're usually hostnames
                 if name_matches:
@@ -596,7 +642,7 @@ class AccessDiscovery:
         hostname_file = sos_path / "etc/hostname"
         if hostname_file.exists():
             try:
-                primary = hostname_file.read_text().strip().split('.')[0]
+                primary = hostname_file.read_text().strip().split(".")[0]
                 if primary:
                     aliases.add(primary)
             except Exception:
@@ -613,8 +659,8 @@ class AccessDiscovery:
                 try:
                     content = ip_file.read_text()
                     # Match inet <ip>/prefix patterns
-                    for match in re.findall(r'inet\s+(\d+\.\d+\.\d+\.\d+)/', content):
-                        if not match.startswith('127.'):
+                    for match in re.findall(r"inet\s+(\d+\.\d+\.\d+\.\d+)/", content):
+                        if not match.startswith("127."):
                             node_ips.add(match)
                     break  # Use first available file
                 except Exception:
@@ -629,13 +675,13 @@ class AccessDiscovery:
             try:
                 for line in hosts_file.read_text().splitlines():
                     line = line.strip()
-                    if not line or line.startswith('#'):
+                    if not line or line.startswith("#"):
                         continue
                     parts = line.split()
                     if len(parts) >= 2 and parts[0] in node_ips:
                         # Add all hostnames for this IP (short names only)
                         for name in parts[1:]:
-                            short = name.split('.')[0]
+                            short = name.split(".")[0]
                             if short:
                                 aliases.add(short)
             except Exception:
@@ -643,8 +689,9 @@ class AccessDiscovery:
 
         return aliases
 
-    def _resolve_sosreport_aliases(self, sosreports: Dict[str, str],
-                                   missing_nodes: set) -> Dict[str, str]:
+    def _resolve_sosreport_aliases(
+        self, sosreports: Dict[str, str], missing_nodes: set
+    ) -> Dict[str, str]:
         """
         Resolve missing corosync node names to existing sosreports by hostname alias.
 
@@ -667,7 +714,7 @@ class AccessDiscovery:
 
         # Try to resolve each missing node
         for node_name in list(missing_nodes):
-            short_name = node_name.split('.')[0]
+            short_name = node_name.split(".")[0]
             if short_name in sos_alias_map:
                 primary_hostname, sos_path = sos_alias_map[short_name]
                 resolved[node_name] = sos_path
@@ -710,33 +757,41 @@ class AccessDiscovery:
 
             if parser and parser.is_available():
                 cib_config = parser.get_resource_config()
-                if cib_config.get('success'):
-                    hana_config = cib_config.get('sap_hana', {})
+                if cib_config.get("success"):
+                    hana_config = cib_config.get("sap_hana", {})
                     if hana_config:
-                        config['sid'] = hana_config.get('sid')
-                        config['instance_number'] = hana_config.get('instance_number')
-                        config['resource_name'] = hana_config.get('resource_name')
-                        config['resource_type'] = hana_config.get('resource_type')
-                        config['clone_max'] = hana_config.get('clone_max')
+                        config["sid"] = hana_config.get("sid")
+                        config["instance_number"] = hana_config.get("instance_number")
+                        config["resource_name"] = hana_config.get("resource_name")
+                        config["resource_type"] = hana_config.get("resource_type")
+                        config["clone_max"] = hana_config.get("clone_max")
 
                         # Extract HA parameters from resource attributes
-                        attrs = hana_config.get('attributes', {})
-                        if attrs.get('AUTOMATED_REGISTER'):
-                            config['automated_register'] = attrs['AUTOMATED_REGISTER'].lower() == 'true'
-                        if attrs.get('PREFER_SITE_TAKEOVER'):
-                            config['prefer_site_takeover'] = attrs['PREFER_SITE_TAKEOVER'].lower() == 'true'
-                        if attrs.get('DUPLICATE_PRIMARY_TIMEOUT'):
+                        attrs = hana_config.get("attributes", {})
+                        if attrs.get("AUTOMATED_REGISTER"):
+                            config["automated_register"] = (
+                                attrs["AUTOMATED_REGISTER"].lower() == "true"
+                            )
+                        if attrs.get("PREFER_SITE_TAKEOVER"):
+                            config["prefer_site_takeover"] = (
+                                attrs["PREFER_SITE_TAKEOVER"].lower() == "true"
+                            )
+                        if attrs.get("DUPLICATE_PRIMARY_TIMEOUT"):
                             try:
-                                config['duplicate_primary_timeout'] = int(attrs['DUPLICATE_PRIMARY_TIMEOUT'])
+                                config["duplicate_primary_timeout"] = int(
+                                    attrs["DUPLICATE_PRIMARY_TIMEOUT"]
+                                )
                             except ValueError:
                                 pass
 
                 # Get STONITH config
                 stonith_config = parser.get_stonith()
-                if stonith_config.get('enabled') is not None:
-                    config['stonith_enabled'] = stonith_config['enabled']
-                if stonith_config.get('devices'):
-                    config['stonith_device'] = stonith_config['devices'][0] if stonith_config['devices'] else None
+                if stonith_config.get("enabled") is not None:
+                    config["stonith_enabled"] = stonith_config["enabled"]
+                if stonith_config.get("devices"):
+                    config["stonith_device"] = (
+                        stonith_config["devices"][0] if stonith_config["devices"] else None
+                    )
         except Exception:
             pass
 
@@ -756,50 +811,54 @@ class AccessDiscovery:
                     content = pcs_config_path.read_text()
 
                     # Extract VIP resources
-                    vip_pattern = r'Resource:\s*(vip\S*)\s+.*?type=IPaddr2\).*?ip=(\d+\.\d+\.\d+\.\d+)'
+                    vip_pattern = (
+                        r"Resource:\s*(vip\S*)\s+.*?type=IPaddr2\).*?ip=(\d+\.\d+\.\d+\.\d+)"
+                    )
                     vip_matches = re.findall(vip_pattern, content, re.DOTALL | re.IGNORECASE)
                     if vip_matches:
                         # Primary VIP is usually the first one or one with SID in name
                         for name, ip in vip_matches:
-                            if 'vip_' in name.lower() and not config.get('virtual_ip'):
-                                config['virtual_ip'] = ip
-                                config['vip_resource'] = name
-                            elif 'vip2_' in name.lower() or ('secondary' in name.lower()):
-                                config['secondary_vip'] = ip
-                                config['secondary_vip_resource'] = name
+                            if "vip_" in name.lower() and not config.get("virtual_ip"):
+                                config["virtual_ip"] = ip
+                                config["vip_resource"] = name
+                            elif "vip2_" in name.lower() or ("secondary" in name.lower()):
+                                config["secondary_vip"] = ip
+                                config["secondary_vip_resource"] = name
 
                     # If we found VIPs but didn't set primary, use first one
-                    if vip_matches and not config.get('virtual_ip'):
-                        config['virtual_ip'] = vip_matches[0][1]
-                        config['vip_resource'] = vip_matches[0][0]
+                    if vip_matches and not config.get("virtual_ip"):
+                        config["virtual_ip"] = vip_matches[0][1]
+                        config["vip_resource"] = vip_matches[0][0]
                         if len(vip_matches) > 1:
-                            config['secondary_vip'] = vip_matches[1][1]
-                            config['secondary_vip_resource'] = vip_matches[1][0]
+                            config["secondary_vip"] = vip_matches[1][1]
+                            config["secondary_vip_resource"] = vip_matches[1][0]
 
                     # Extract SID/instance if not already found
-                    if not config.get('sid'):
-                        sid_match = re.search(r'SID=([A-Z0-9]{3})', content)
+                    if not config.get("sid"):
+                        sid_match = re.search(r"SID=([A-Z0-9]{3})", content)
                         if sid_match:
-                            config['sid'] = sid_match.group(1)
+                            config["sid"] = sid_match.group(1)
 
-                    if not config.get('instance_number'):
-                        inst_match = re.search(r'InstanceNumber=(\d{2})', content)
+                    if not config.get("instance_number"):
+                        inst_match = re.search(r"InstanceNumber=(\d{2})", content)
                         if inst_match:
-                            config['instance_number'] = inst_match.group(1)
+                            config["instance_number"] = inst_match.group(1)
 
                     # Extract STONITH device if not found
-                    if not config.get('stonith_device'):
-                        stonith_match = re.search(r'Resource:\s*(\S+)\s+\(class=stonith', content)
+                    if not config.get("stonith_device"):
+                        stonith_match = re.search(r"Resource:\s*(\S+)\s+\(class=stonith", content)
                         if stonith_match:
-                            config['stonith_device'] = stonith_match.group(1)
+                            config["stonith_device"] = stonith_match.group(1)
 
                     # Extract STONITH params (pcmk_host_map, etc.)
-                    if config.get('stonith_device'):
-                        host_map_match = re.search(r'pcmk_host_map=([^\n]+)', content)
+                    if config.get("stonith_device"):
+                        host_map_match = re.search(r"pcmk_host_map=([^\n]+)", content)
                         if host_map_match:
-                            if 'stonith_params' not in config:
-                                config['stonith_params'] = {}
-                            config['stonith_params']['pcmk_host_map'] = host_map_match.group(1).strip()
+                            if "stonith_params" not in config:
+                                config["stonith_params"] = {}
+                            config["stonith_params"]["pcmk_host_map"] = host_map_match.group(
+                                1
+                            ).strip()
 
                     break  # Found config, stop looking
                 except Exception:
@@ -817,23 +876,23 @@ class AccessDiscovery:
                     content = sr_attr_path.read_text()
 
                     # Extract replication mode (sync, syncmem, async)
-                    mode_match = re.search(r'sync_state\s*:\s*(\w+)', content, re.IGNORECASE)
+                    mode_match = re.search(r"sync_state\s*:\s*(\w+)", content, re.IGNORECASE)
                     if not mode_match:
-                        mode_match = re.search(r'srmode\s*[=:]\s*(\w+)', content, re.IGNORECASE)
+                        mode_match = re.search(r"srmode\s*[=:]\s*(\w+)", content, re.IGNORECASE)
                     if mode_match:
                         mode = mode_match.group(1).lower()
-                        if mode in ('sync', 'syncmem', 'async'):
-                            config['replication_mode'] = mode
+                        if mode in ("sync", "syncmem", "async"):
+                            config["replication_mode"] = mode
 
                     # Extract operation mode (logreplay, delta_datashipping)
-                    op_match = re.search(r'op_mode\s*[=:]\s*(\w+)', content, re.IGNORECASE)
+                    op_match = re.search(r"op_mode\s*[=:]\s*(\w+)", content, re.IGNORECASE)
                     if op_match:
-                        config['operation_mode'] = op_match.group(1)
+                        config["operation_mode"] = op_match.group(1)
 
                     # Extract sites
-                    site_matches = re.findall(r'site\s*[=:]\s*(\w+)', content, re.IGNORECASE)
+                    site_matches = re.findall(r"site\s*[=:]\s*(\w+)", content, re.IGNORECASE)
                     if site_matches:
-                        config['sites'] = list(set(site_matches))
+                        config["sites"] = list(set(site_matches))
 
                     break  # Found SR attr, stop looking
                 except Exception:
@@ -846,19 +905,19 @@ class AccessDiscovery:
                 content = corosync_conf.read_text()
 
                 # Extract node hostnames and IPs
-                node_blocks = re.findall(r'node\s*\{([^}]+)\}', content, re.DOTALL)
+                node_blocks = re.findall(r"node\s*\{([^}]+)\}", content, re.DOTALL)
                 nodes = []
                 for i, block in enumerate(node_blocks):
-                    name_match = re.search(r'name:\s*(\S+)', block)
-                    ring_match = re.search(r'ring0_addr:\s*(\S+)', block)
+                    name_match = re.search(r"name:\s*(\S+)", block)
+                    ring_match = re.search(r"ring0_addr:\s*(\S+)", block)
                     if name_match:
                         node_name = name_match.group(1)
                         nodes.append(node_name)
                         # Store node info
-                        node_key = f'node{i+1}_hostname'
+                        node_key = f"node{i+1}_hostname"
                         config[node_key] = node_name
                         if ring_match:
-                            config[f'node{i+1}_ip'] = ring_match.group(1)
+                            config[f"node{i+1}_ip"] = ring_match.group(1)
             except Exception:
                 pass
 
@@ -867,9 +926,9 @@ class AccessDiscovery:
         if redhat_release.exists():
             try:
                 content = redhat_release.read_text().strip()
-                match = re.search(r'release\s+(\d+\.?\d*)', content)
+                match = re.search(r"release\s+(\d+\.?\d*)", content)
                 if match:
-                    config['rhel_version'] = f"RHEL {match.group(1)}"
+                    config["rhel_version"] = f"RHEL {match.group(1)}"
             except Exception:
                 pass
 
@@ -878,15 +937,17 @@ class AccessDiscovery:
         if installed_rpms.exists():
             try:
                 content = installed_rpms.read_text()
-                match = re.search(r'pacemaker-(\d+\.\d+\.\d+)', content)
+                match = re.search(r"pacemaker-(\d+\.\d+\.\d+)", content)
                 if match:
-                    config['pacemaker_version'] = match.group(1)
+                    config["pacemaker_version"] = match.group(1)
             except Exception:
                 pass
 
         return config
 
-    def _discover_cluster_from_sosreports(self, available_sosreports: Dict[str, str]) -> Dict[str, str]:
+    def _discover_cluster_from_sosreports(
+        self, available_sosreports: Dict[str, str]
+    ) -> Dict[str, str]:
         """
         From the SOSreports of nodes we already have, discover other cluster nodes
         and find their matching SOSreports. Also extracts cluster name.
@@ -902,7 +963,7 @@ class AccessDiscovery:
 
         # Get cluster nodes from existing node's sosreport
         for hostname, node_info in self.config.nodes.items():
-            sos_path = node_info.get('sosreport_path')
+            sos_path = node_info.get("sosreport_path")
             if not sos_path:
                 continue
 
@@ -913,13 +974,13 @@ class AccessDiscovery:
                     # Add cluster to config
                     if cluster_name not in self.config.clusters:
                         self.config.clusters[cluster_name] = {
-                            'nodes': [hostname],
-                            'discovered_from': f'sosreport:{hostname}'
+                            "nodes": [hostname],
+                            "discovered_from": f"sosreport:{hostname}",
                         }
                         print(f"  [CLUSTER] Detected cluster name: {cluster_name}")
                     # Add existing node to cluster
-                    if hostname not in self.config.clusters[cluster_name].get('nodes', []):
-                        self.config.clusters[cluster_name].setdefault('nodes', []).append(hostname)
+                    if hostname not in self.config.clusters[cluster_name].get("nodes", []):
+                        self.config.clusters[cluster_name].setdefault("nodes", []).append(hostname)
 
             # Get cluster nodes from this sosreport
             cluster_nodes = self.get_cluster_nodes_from_sosreport(sos_path)
@@ -938,8 +999,10 @@ class AccessDiscovery:
                     discovered[cluster_node] = available_sosreports[cluster_node]
                     # Add to cluster nodes list
                     if cluster_name and cluster_name in self.config.clusters:
-                        if cluster_node not in self.config.clusters[cluster_name].get('nodes', []):
-                            self.config.clusters[cluster_name].setdefault('nodes', []).append(cluster_node)
+                        if cluster_node not in self.config.clusters[cluster_name].get("nodes", []):
+                            self.config.clusters[cluster_name].setdefault("nodes", []).append(
+                                cluster_node
+                            )
                 else:
                     # Try partial match (hostname might be short vs FQDN)
                     for sos_hostname, sos_path_match in available_sosreports.items():
@@ -947,8 +1010,12 @@ class AccessDiscovery:
                             discovered[cluster_node] = sos_path_match
                             # Add to cluster nodes list
                             if cluster_name and cluster_name in self.config.clusters:
-                                if cluster_node not in self.config.clusters[cluster_name].get('nodes', []):
-                                    self.config.clusters[cluster_name].setdefault('nodes', []).append(cluster_node)
+                                if cluster_node not in self.config.clusters[cluster_name].get(
+                                    "nodes", []
+                                ):
+                                    self.config.clusters[cluster_name].setdefault(
+                                        "nodes", []
+                                    ).append(cluster_node)
                             break
 
         return discovered
@@ -974,8 +1041,8 @@ class AccessDiscovery:
 
             if cluster_name:
                 if cluster_name not in clusters:
-                    clusters[cluster_name] = {'nodes': {}}
-                clusters[cluster_name]['nodes'][hostname] = sos_path
+                    clusters[cluster_name] = {"nodes": {}}
+                clusters[cluster_name]["nodes"][hostname] = sos_path
                 print(f"  {hostname}: cluster '{cluster_name}'")
             else:
                 unassigned[hostname] = sos_path
@@ -987,36 +1054,38 @@ class AccessDiscovery:
             for cluster_name, cluster_info in clusters.items():
                 # Get expected nodes from first sosreport in this cluster
                 # Use CIBParser for accurate node list from cib.xml
-                first_sos_path = list(cluster_info['nodes'].values())[0]
+                first_sos_path = list(cluster_info["nodes"].values())[0]
                 expected_nodes = self.get_cluster_nodes_from_sosreport(first_sos_path)
 
                 # Also try to get nodes from cib.xml for more accurate matching
                 try:
                     from lib.cib_parser import CIBParser
+
                     parser = CIBParser.from_sosreport(first_sos_path)
                     if parser and parser.is_available():
                         cib_nodes = parser.get_nodes()
-                        if cib_nodes.get('success') and cib_nodes.get('nodes'):
-                            expected_nodes = cib_nodes['nodes']
+                        if cib_nodes.get("success") and cib_nodes.get("nodes"):
+                            expected_nodes = cib_nodes["nodes"]
                 except Exception:
                     pass  # Fall back to corosync.conf nodes
 
                 for hostname, sos_path in list(unassigned.items()):
                     # Check if hostname exactly matches any expected node
                     if hostname in expected_nodes:
-                        clusters[cluster_name]['nodes'][hostname] = sos_path
+                        clusters[cluster_name]["nodes"][hostname] = sos_path
                         del unassigned[hostname]
                         print(f"  {hostname}: matched to cluster '{cluster_name}' (from nodelist)")
                         continue
 
         # Put remaining unassigned in 'unknown' cluster
         if unassigned:
-            clusters['(unknown)'] = {'nodes': unassigned}
+            clusters["(unknown)"] = {"nodes": unassigned}
 
         return clusters
 
-    def prompt_cluster_selection(self, clusters: Dict[str, Dict[str, Any]],
-                                default_cluster: str = None) -> Optional[str]:
+    def prompt_cluster_selection(
+        self, clusters: Dict[str, Dict[str, Any]], default_cluster: str = None
+    ) -> Optional[str]:
         """
         Prompt user to select which cluster to analyze when multiple clusters are found.
         If default_cluster is set, pressing Enter selects that cluster.
@@ -1028,7 +1097,7 @@ class AccessDiscovery:
         cluster_list = list(clusters.keys())
         default_idx = None
         for i, cluster_name in enumerate(cluster_list, 1):
-            nodes = list(clusters[cluster_name]['nodes'].keys())
+            nodes = list(clusters[cluster_name]["nodes"].keys())
             marker = " (default)" if cluster_name == default_cluster else ""
             print(f"\n  [{i}] Cluster: {cluster_name}{marker}")
             print(f"      Nodes ({len(nodes)}): {', '.join(sorted(nodes))}")
@@ -1065,15 +1134,15 @@ class AccessDiscovery:
             except (EOFError, KeyboardInterrupt):
                 return None
 
-            if choice == '' and default_idx:
+            if choice == "" and default_idx:
                 selected = cluster_list[default_idx - 1]
                 print(f"\n  Selected: {selected}")
                 return selected
-            elif choice == 'q':
+            if choice == "q":
                 return None
-            elif choice == 'a':
-                return '__all__'  # Special value to indicate all clusters
-            elif choice.isdigit():
+            if choice == "a":
+                return "__all__"  # Special value to indicate all clusters
+            if choice.isdigit():
                 idx = int(choice)
                 if 1 <= idx <= len(cluster_list):
                     selected = cluster_list[idx - 1]
@@ -1084,9 +1153,9 @@ class AccessDiscovery:
 
     def discover_cluster_name(self, host: str, user: str = None) -> Optional[str]:
         """Discover cluster name from a node."""
-        ssh_user = user or 'root'
+        ssh_user = user or "root"
         # Use sudo for non-root users (cluster commands need root)
-        sudo_prefix = "sudo " if ssh_user != 'root' else ""
+        sudo_prefix = "sudo " if ssh_user != "root" else ""
 
         # Commands to try for getting cluster name
         name_commands = [
@@ -1099,18 +1168,29 @@ class AccessDiscovery:
         for cmd in name_commands:
             try:
                 ssh_cmd = [
-                    "ssh", "-o", "BatchMode=yes",
-                    "-o", f"ConnectTimeout={self.SSH_TIMEOUT}",
-                    "-o", "StrictHostKeyChecking=no",
+                    "ssh",
+                    "-o",
+                    "BatchMode=yes",
+                    "-o",
+                    f"ConnectTimeout={self.SSH_TIMEOUT}",
+                    "-o",
+                    "StrictHostKeyChecking=no",
                     f"{ssh_user}@{host}",
-                    f"{sudo_prefix}{cmd}"
+                    f"{sudo_prefix}{cmd}",
                 ]
-                result = subprocess.run(ssh_cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                        universal_newlines=True, timeout=self.SSH_TIMEOUT + 2)
+                result = subprocess.run(
+                    ssh_cmd,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    universal_newlines=True,
+                    timeout=self.SSH_TIMEOUT + 2,
+                    check=False,
+                )
 
                 if result.returncode == 0 and result.stdout.strip():
                     cluster_name = result.stdout.strip()
-                    if cluster_name and cluster_name != '(null)':
+                    if cluster_name and cluster_name != "(null)":
                         return cluster_name
             except Exception:
                 continue
@@ -1130,8 +1210,8 @@ class AccessDiscovery:
         - STONITH: stonith_device, stonith_type
         - Replication: replication_mode, operation_mode, sites
         """
-        ssh_user = user or 'root'
-        sudo_prefix = "sudo " if ssh_user != 'root' else ""
+        ssh_user = user or "root"
+        sudo_prefix = "sudo " if ssh_user != "root" else ""
         hana_info = {}
 
         def run_ssh_cmd(cmd: str, target_host: str = None) -> str:
@@ -1139,22 +1219,30 @@ class AccessDiscovery:
             target = target_host or host
             try:
                 ssh_cmd = [
-                    "ssh", "-o", "BatchMode=yes",
-                    "-o", f"ConnectTimeout={self.SSH_TIMEOUT}",
-                    "-o", "StrictHostKeyChecking=no",
+                    "ssh",
+                    "-o",
+                    "BatchMode=yes",
+                    "-o",
+                    f"ConnectTimeout={self.SSH_TIMEOUT}",
+                    "-o",
+                    "StrictHostKeyChecking=no",
                     f"{ssh_user}@{target}",
-                    f"{sudo_prefix}{cmd}"
+                    f"{sudo_prefix}{cmd}",
                 ]
-                result = subprocess.run(ssh_cmd, stdin=subprocess.DEVNULL,
-                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                       universal_newlines=True, timeout=self.SSH_TIMEOUT + 2)
+                result = subprocess.run(
+                    ssh_cmd,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    universal_newlines=True,
+                    timeout=self.SSH_TIMEOUT + 2,
+                    check=False,
+                )
                 if result.returncode == 0:
                     return result.stdout.strip()
             except Exception:
                 pass
             return ""
-
-        import re
 
         # === Core SAP HANA Parameters ===
         # Discover SID and instance from resource names
@@ -1167,18 +1255,20 @@ class AccessDiscovery:
         for cmd in resource_commands:
             output = run_ssh_cmd(cmd)
             if output:
-                match = re.match(r'(SAPHana(?:Controller)?)_([A-Z0-9]+)_(\d+)', output)
+                match = re.match(r"(SAPHana(?:Controller)?)_([A-Z0-9]+)_(\d+)", output)
                 if match:
-                    hana_info['resource_type'] = match.group(1)
-                    hana_info['sid'] = match.group(2)
-                    hana_info['instance_number'] = match.group(3)
-                    hana_info['resource_name'] = output
+                    hana_info["resource_type"] = match.group(1)
+                    hana_info["sid"] = match.group(2)
+                    hana_info["instance_number"] = match.group(3)
+                    hana_info["resource_name"] = output
                     break
 
         # Get topology resource
-        topo_output = run_ssh_cmd("pcs resource status 2>/dev/null | grep -oE 'SAPHanaTopology_[A-Z0-9]+_[0-9]+' | head -1")
+        topo_output = run_ssh_cmd(
+            "pcs resource status 2>/dev/null | grep -oE 'SAPHanaTopology_[A-Z0-9]+_[0-9]+' | head -1"
+        )
         if topo_output:
-            hana_info['topology_resource'] = topo_output
+            hana_info["topology_resource"] = topo_output
 
         # === Cluster Node Information ===
         nodes = cluster_nodes or []
@@ -1186,139 +1276,169 @@ class AccessDiscovery:
             # Get FQDN for node1
             node1_fqdn = run_ssh_cmd("hostname -f 2>/dev/null || hostname", nodes[0])
             if node1_fqdn:
-                hana_info['node1_fqdn'] = node1_fqdn
-            hana_info['node1_hostname'] = nodes[0]
+                hana_info["node1_fqdn"] = node1_fqdn
+            hana_info["node1_hostname"] = nodes[0]
 
             # Get IP for node1
             node1_ip = run_ssh_cmd("hostname -i 2>/dev/null | awk '{print $1}'", nodes[0])
             if node1_ip:
-                hana_info['node1_ip'] = node1_ip
+                hana_info["node1_ip"] = node1_ip
 
             # Get FQDN for node2
             node2_fqdn = run_ssh_cmd("hostname -f 2>/dev/null || hostname", nodes[1])
             if node2_fqdn:
-                hana_info['node2_fqdn'] = node2_fqdn
-            hana_info['node2_hostname'] = nodes[1]
+                hana_info["node2_fqdn"] = node2_fqdn
+            hana_info["node2_hostname"] = nodes[1]
 
             # Get IP for node2
             node2_ip = run_ssh_cmd("hostname -i 2>/dev/null | awk '{print $1}'", nodes[1])
             if node2_ip:
-                hana_info['node2_ip'] = node2_ip
+                hana_info["node2_ip"] = node2_ip
 
         # === Virtual IP Configuration ===
         # Get all VIP resources and addresses
-        vip_output = run_ssh_cmd("pcs resource config 2>/dev/null | grep -B2 -A5 'IPaddr2' | grep -oE 'ip=[0-9.]+' | cut -d= -f2")
+        vip_output = run_ssh_cmd(
+            "pcs resource config 2>/dev/null | grep -B2 -A5 'IPaddr2' | grep -oE 'ip=[0-9.]+' | cut -d= -f2"
+        )
         if vip_output:
-            vips = [v.strip() for v in vip_output.split('\n') if v.strip()]
+            vips = [v.strip() for v in vip_output.split("\n") if v.strip()]
             if vips:
-                hana_info['virtual_ip'] = vips[0]
+                hana_info["virtual_ip"] = vips[0]
                 if len(vips) > 1:
-                    hana_info['secondary_vip'] = vips[1]
+                    hana_info["secondary_vip"] = vips[1]
 
         # Get VIP resource names
-        vip_names = run_ssh_cmd("pcs resource status 2>/dev/null | grep -oE 'vip[-_][A-Za-z0-9_]+|rsc_ip_[A-Za-z0-9_]+|ip[-_][A-Za-z0-9_]+'")
+        vip_names = run_ssh_cmd(
+            "pcs resource status 2>/dev/null | grep -oE 'vip[-_][A-Za-z0-9_]+|rsc_ip_[A-Za-z0-9_]+|ip[-_][A-Za-z0-9_]+'"
+        )
         if vip_names:
-            vip_list = [v.strip() for v in vip_names.split('\n') if v.strip()]
+            vip_list = [v.strip() for v in vip_names.split("\n") if v.strip()]
             if vip_list:
-                hana_info['vip_resource'] = vip_list[0]
+                hana_info["vip_resource"] = vip_list[0]
                 if len(vip_list) > 1:
-                    hana_info['secondary_vip_resource'] = vip_list[1]
+                    hana_info["secondary_vip_resource"] = vip_list[1]
 
         # Check if secondary read is enabled (look for second VIP or AUTOMATED_REGISTER)
-        auto_reg = run_ssh_cmd("pcs resource config 2>/dev/null | grep -i 'AUTOMATED_REGISTER' | grep -oE 'true|false' | head -1")
+        auto_reg = run_ssh_cmd(
+            "pcs resource config 2>/dev/null | grep -i 'AUTOMATED_REGISTER' | grep -oE 'true|false' | head -1"
+        )
         if auto_reg:
-            hana_info['automated_register'] = auto_reg.lower() == 'true'
+            hana_info["automated_register"] = auto_reg.lower() == "true"
 
         # Check for secondary read (multiple VIPs or specific config)
-        hana_info['secondary_read'] = 'secondary_vip' in hana_info
+        hana_info["secondary_read"] = "secondary_vip" in hana_info
 
         # === STONITH/Fencing Configuration ===
         # Get STONITH device name and type
-        stonith_name = run_ssh_cmd("pcs stonith status 2>/dev/null | grep -oE '^[[:space:]]*\\*[[:space:]]+[A-Za-z0-9_-]+' | awk '{print $2}' | head -1")
+        stonith_name = run_ssh_cmd(
+            "pcs stonith status 2>/dev/null | grep -oE '^[[:space:]]*\\*[[:space:]]+[A-Za-z0-9_-]+' | awk '{print $2}' | head -1"
+        )
         if stonith_name:
-            hana_info['stonith_device'] = stonith_name
+            hana_info["stonith_device"] = stonith_name
 
         # Get STONITH device type (agent)
-        stonith_type = run_ssh_cmd(f"pcs stonith config {stonith_name} 2>/dev/null | grep -oE 'stonith:[a-z_]+' | head -1" if stonith_name else "echo ''")
+        stonith_type = run_ssh_cmd(
+            f"pcs stonith config {stonith_name} 2>/dev/null | grep -oE 'stonith:[a-z_]+' | head -1"
+            if stonith_name
+            else "echo ''"
+        )
         if stonith_type:
-            hana_info['stonith_type'] = stonith_type.replace('stonith:', '')
+            hana_info["stonith_type"] = stonith_type.replace("stonith:", "")
 
         # Get fence device parameters (for VMware, Azure, etc.)
         if stonith_name:
-            fence_params = run_ssh_cmd(f"pcs stonith config {stonith_name} 2>/dev/null | grep -E 'ipaddr|login|passwd|ssl|pcmk_host' | head -5")
+            fence_params = run_ssh_cmd(
+                f"pcs stonith config {stonith_name} 2>/dev/null | grep -E 'ipaddr|login|passwd|ssl|pcmk_host' | head -5"
+            )
             if fence_params:
                 params = {}
-                for line in fence_params.split('\n'):
-                    if '=' in line or ':' in line:
+                for line in fence_params.split("\n"):
+                    if "=" in line or ":" in line:
                         # Parse key=value or key: value
-                        parts = re.split(r'[=:]', line.strip(), 1)
+                        parts = re.split(r"[=:]", line.strip(), 1)
                         if len(parts) == 2:
                             key = parts[0].strip()
                             val = parts[1].strip()
                             # Don't store passwords
-                            if 'pass' not in key.lower():
+                            if "pass" not in key.lower():
                                 params[key] = val
                 if params:
-                    hana_info['stonith_params'] = params
+                    hana_info["stonith_params"] = params
 
         # === Cluster Properties ===
         # Get resource-stickiness
-        stickiness = run_ssh_cmd("pcs property show 2>/dev/null | grep -i 'resource-stickiness' | grep -oE '[0-9]+' | head -1")
+        stickiness = run_ssh_cmd(
+            "pcs property show 2>/dev/null | grep -i 'resource-stickiness' | grep -oE '[0-9]+' | head -1"
+        )
         if stickiness:
-            hana_info['resource_stickiness'] = int(stickiness)
+            hana_info["resource_stickiness"] = int(stickiness)
 
         # Get migration-threshold
-        migration = run_ssh_cmd("pcs resource config 2>/dev/null | grep -i 'migration-threshold' | grep -oE '[0-9]+' | head -1")
+        migration = run_ssh_cmd(
+            "pcs resource config 2>/dev/null | grep -i 'migration-threshold' | grep -oE '[0-9]+' | head -1"
+        )
         if migration:
-            hana_info['migration_threshold'] = int(migration)
+            hana_info["migration_threshold"] = int(migration)
 
         # === SAP HANA System Replication ===
         # Get replication mode from SAPHanaSR
-        repl_mode = run_ssh_cmd("SAPHanaSR-showAttr 2>/dev/null | grep -oE 'sync|syncmem|async' | head -1")
+        repl_mode = run_ssh_cmd(
+            "SAPHanaSR-showAttr 2>/dev/null | grep -oE 'sync|syncmem|async' | head -1"
+        )
         if repl_mode:
-            hana_info['replication_mode'] = repl_mode
+            hana_info["replication_mode"] = repl_mode
 
         # Get operation mode
-        op_mode = run_ssh_cmd("SAPHanaSR-showAttr 2>/dev/null | grep -oE 'logreplay|delta_datashipping' | head -1")
+        op_mode = run_ssh_cmd(
+            "SAPHanaSR-showAttr 2>/dev/null | grep -oE 'logreplay|delta_datashipping' | head -1"
+        )
         if op_mode:
-            hana_info['operation_mode'] = op_mode
+            hana_info["operation_mode"] = op_mode
 
         # Get site names from SAPHanaSR or crm_attribute
-        sites_output = run_ssh_cmd("SAPHanaSR-showAttr 2>/dev/null | awk '/^Host/ {next} /^-/ {next} {print $4}' | sort -u | head -2")
+        sites_output = run_ssh_cmd(
+            "SAPHanaSR-showAttr 2>/dev/null | awk '/^Host/ {next} /^-/ {next} {print $4}' | sort -u | head -2"
+        )
         if not sites_output:
             # Try alternative: get from pcs resource config
-            sid = hana_info.get('sid', '')
+            sid = hana_info.get("sid", "")
             if sid:
-                sites_output = run_ssh_cmd("pcs resource config 2>/dev/null | grep -oE 'PREFER_SITE_TAKEOVER|site=[A-Za-z0-9]+' | grep -oE '[A-Z][A-Z0-9]+' | sort -u | head -2")
+                sites_output = run_ssh_cmd(
+                    "pcs resource config 2>/dev/null | grep -oE 'PREFER_SITE_TAKEOVER|site=[A-Za-z0-9]+' | grep -oE '[A-Z][A-Z0-9]+' | sort -u | head -2"
+                )
         if sites_output:
             # Filter out non-site values and extract clean site names
             sites = []
-            for s in sites_output.split('\n'):
+            for s in sites_output.split("\n"):
                 s = s.strip()
                 # Extract just the site name (e.g., DC1, DC2, SITE1, etc.)
-                if s and s not in ['', '-', 'true', 'false', 'PREFER', 'SITE', 'TAKEOVER']:
+                if s and s not in ["", "-", "true", "false", "PREFER", "SITE", "TAKEOVER"]:
                     # If it contains 'value=', extract just the value
-                    if 'value=' in s:
-                        s = s.split('value=')[-1].strip()
+                    if "value=" in s:
+                        s = s.split("value=")[-1].strip()
                     if s and len(s) <= 20:  # Reasonable site name length
                         sites.append(s)
             sites = list(dict.fromkeys(sites))  # Remove duplicates while preserving order
             if sites:
-                hana_info['sites'] = sites
+                hana_info["sites"] = sites
                 if len(sites) >= 1:
-                    hana_info['site1_name'] = sites[0]
+                    hana_info["site1_name"] = sites[0]
                 if len(sites) >= 2:
-                    hana_info['site2_name'] = sites[1]
+                    hana_info["site2_name"] = sites[1]
 
         # Get PREFER_SITE_TAKEOVER
-        prefer_takeover = run_ssh_cmd("pcs resource config 2>/dev/null | grep -i 'PREFER_SITE_TAKEOVER' | grep -oE 'true|false' | head -1")
+        prefer_takeover = run_ssh_cmd(
+            "pcs resource config 2>/dev/null | grep -i 'PREFER_SITE_TAKEOVER' | grep -oE 'true|false' | head -1"
+        )
         if prefer_takeover:
-            hana_info['prefer_site_takeover'] = prefer_takeover.lower() == 'true'
+            hana_info["prefer_site_takeover"] = prefer_takeover.lower() == "true"
 
         # Get DUPLICATE_PRIMARY_TIMEOUT
-        dup_timeout = run_ssh_cmd("pcs resource config 2>/dev/null | grep -i 'DUPLICATE_PRIMARY_TIMEOUT' | grep -oE '[0-9]+' | head -1")
+        dup_timeout = run_ssh_cmd(
+            "pcs resource config 2>/dev/null | grep -i 'DUPLICATE_PRIMARY_TIMEOUT' | grep -oE '[0-9]+' | head -1"
+        )
         if dup_timeout:
-            hana_info['duplicate_primary_timeout'] = int(dup_timeout)
+            hana_info["duplicate_primary_timeout"] = int(dup_timeout)
 
         return hana_info
 
@@ -1326,10 +1446,13 @@ class AccessDiscovery:
         """Get the local hostname (short form)."""
         try:
             result = subprocess.run(
-                ['hostname', '-s'],
+                ["hostname", "-s"],
                 stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                universal_newlines=True, timeout=5
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True,
+                timeout=5,
+                check=False,
             )
             if result.returncode == 0:
                 return result.stdout.strip()
@@ -1337,7 +1460,7 @@ class AccessDiscovery:
             pass
 
         # Fallback to socket
-        return socket.gethostname().split('.')[0]
+        return socket.gethostname().split(".")[0]
 
     def check_cluster_services_running(self, host: str = None, user: str = None) -> tuple:
         """
@@ -1346,22 +1469,33 @@ class AccessDiscovery:
         """
         if host:
             # Remote check via SSH
-            ssh_user = user or 'root'
-            sudo_prefix = "sudo " if ssh_user != 'root' else ""
+            ssh_user = user or "root"
+            sudo_prefix = "sudo " if ssh_user != "root" else ""
             cmd = f"{sudo_prefix}systemctl is-active pacemaker corosync 2>/dev/null"
             try:
                 ssh_cmd = [
-                    "ssh", "-o", "BatchMode=yes",
-                    "-o", f"ConnectTimeout={self.SSH_TIMEOUT}",
-                    "-o", "StrictHostKeyChecking=no",
+                    "ssh",
+                    "-o",
+                    "BatchMode=yes",
+                    "-o",
+                    f"ConnectTimeout={self.SSH_TIMEOUT}",
+                    "-o",
+                    "StrictHostKeyChecking=no",
                     f"{ssh_user}@{host}",
-                    cmd
+                    cmd,
                 ]
-                result = subprocess.run(ssh_cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                        universal_newlines=True, timeout=self.SSH_TIMEOUT + 2)
-                lines = result.stdout.strip().split('\n')
-                pacemaker_active = len(lines) > 0 and lines[0].strip() == 'active'
-                corosync_active = len(lines) > 1 and lines[1].strip() == 'active'
+                result = subprocess.run(
+                    ssh_cmd,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    universal_newlines=True,
+                    timeout=self.SSH_TIMEOUT + 2,
+                    check=False,
+                )
+                lines = result.stdout.strip().split("\n")
+                pacemaker_active = len(lines) > 0 and lines[0].strip() == "active"
+                corosync_active = len(lines) > 1 and lines[1].strip() == "active"
             except Exception:
                 return (False, False, "Could not check service status")
         else:
@@ -1369,23 +1503,26 @@ class AccessDiscovery:
             try:
                 result = subprocess.run(
                     "systemctl is-active pacemaker corosync 2>/dev/null",
-                    shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                    universal_newlines=True, timeout=5
+                    shell=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    universal_newlines=True,
+                    timeout=5,
+                    check=False,
                 )
-                lines = result.stdout.strip().split('\n')
-                pacemaker_active = len(lines) > 0 and lines[0].strip() == 'active'
-                corosync_active = len(lines) > 1 and lines[1].strip() == 'active'
+                lines = result.stdout.strip().split("\n")
+                pacemaker_active = len(lines) > 0 and lines[0].strip() == "active"
+                corosync_active = len(lines) > 1 and lines[1].strip() == "active"
             except Exception:
                 return (False, False, "Could not check service status")
 
         if pacemaker_active and corosync_active:
             return (True, True, "Cluster services running")
-        elif not pacemaker_active and not corosync_active:
+        if not pacemaker_active and not corosync_active:
             return (False, False, "Cluster is NOT running (pacemaker and corosync are stopped)")
-        elif not pacemaker_active:
+        if not pacemaker_active:
             return (False, corosync_active, "Pacemaker is NOT running")
-        else:
-            return (pacemaker_active, False, "Corosync is NOT running")
+        return (pacemaker_active, False, "Corosync is NOT running")
 
     def get_nodes_from_corosync_conf(self, host: str = None, user: str = None) -> List[str]:
         """
@@ -1395,19 +1532,30 @@ class AccessDiscovery:
         nodes = []
         if host:
             # Remote read via SSH
-            ssh_user = user or 'root'
-            sudo_prefix = "sudo " if ssh_user != 'root' else ""
+            ssh_user = user or "root"
+            sudo_prefix = "sudo " if ssh_user != "root" else ""
             cmd = f"{sudo_prefix}cat /etc/corosync/corosync.conf 2>/dev/null"
             try:
                 ssh_cmd = [
-                    "ssh", "-o", "BatchMode=yes",
-                    "-o", f"ConnectTimeout={self.SSH_TIMEOUT}",
-                    "-o", "StrictHostKeyChecking=no",
+                    "ssh",
+                    "-o",
+                    "BatchMode=yes",
+                    "-o",
+                    f"ConnectTimeout={self.SSH_TIMEOUT}",
+                    "-o",
+                    "StrictHostKeyChecking=no",
                     f"{ssh_user}@{host}",
-                    cmd
+                    cmd,
                 ]
-                result = subprocess.run(ssh_cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                        universal_newlines=True, timeout=self.SSH_TIMEOUT + 2)
+                result = subprocess.run(
+                    ssh_cmd,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    universal_newlines=True,
+                    timeout=self.SSH_TIMEOUT + 2,
+                    check=False,
+                )
                 if result.returncode == 0:
                     content = result.stdout
                 else:
@@ -1419,7 +1567,7 @@ class AccessDiscovery:
             try:
                 corosync_conf = Path("/etc/corosync/corosync.conf")
                 if corosync_conf.exists():
-                    content = corosync_conf.read_text()
+                    content = corosync_conf.read_text(encoding="utf-8")
                 else:
                     return nodes
             except Exception:
@@ -1427,11 +1575,11 @@ class AccessDiscovery:
 
         # Parse corosync.conf for node names
         # Look for ring0_addr or name in nodelist section
-        name_matches = re.findall(r'^\s*name:\s*(\S+)', content, re.MULTILINE)
+        name_matches = re.findall(r"^\s*name:\s*(\S+)", content, re.MULTILINE)
         if name_matches:
             nodes = name_matches
         else:
-            ring_matches = re.findall(r'ring0_addr:\s*(\S+)', content)
+            ring_matches = re.findall(r"ring0_addr:\s*(\S+)", content)
             if ring_matches:
                 nodes = ring_matches
 
@@ -1471,13 +1619,17 @@ class AccessDiscovery:
         for cmd in name_commands:
             try:
                 result = subprocess.run(
-                    cmd, shell=True,
-                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                    universal_newlines=True, timeout=self.SSH_TIMEOUT
+                    cmd,
+                    shell=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    universal_newlines=True,
+                    timeout=self.SSH_TIMEOUT,
+                    check=False,
                 )
                 if result.returncode == 0 and result.stdout.strip():
                     name = result.stdout.strip()
-                    if name and name != '(null)':
+                    if name and name != "(null)":
                         cluster_name = name
                         print(f"  Cluster name: {cluster_name}")
                         break
@@ -1495,17 +1647,23 @@ class AccessDiscovery:
         for cmd in discovery_commands:
             try:
                 result = subprocess.run(
-                    cmd, shell=True,
-                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                    universal_newlines=True, timeout=self.SSH_TIMEOUT
+                    cmd,
+                    shell=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    universal_newlines=True,
+                    timeout=self.SSH_TIMEOUT,
+                    check=False,
                 )
                 if result.returncode == 0 and result.stdout.strip():
-                    nodes = [n.strip() for n in result.stdout.strip().split('\n') if n.strip()]
+                    nodes = [n.strip() for n in result.stdout.strip().split("\n") if n.strip()]
                     if nodes:
                         cluster_nodes = nodes
                         if self.debug:
                             print(f"  [DEBUG] Found cluster nodes via: {cmd[:40]}...")
-                        print(f"  Found {len(cluster_nodes)} cluster node(s): {', '.join(cluster_nodes)}")
+                        print(
+                            f"  Found {len(cluster_nodes)} cluster node(s): {', '.join(cluster_nodes)}"
+                        )
                         break
             except Exception as e:
                 if self.debug:
@@ -1518,12 +1676,18 @@ class AccessDiscovery:
             if static_nodes:
                 cluster_nodes = static_nodes
                 if not cluster_running:
-                    print(f"  Found {len(cluster_nodes)} node(s) from corosync.conf: {', '.join(cluster_nodes)}")
+                    print(
+                        f"  Found {len(cluster_nodes)} node(s) from corosync.conf: {', '.join(cluster_nodes)}"
+                    )
                 else:
-                    print(f"  Found {len(cluster_nodes)} cluster node(s) (static): {', '.join(cluster_nodes)}")
+                    print(
+                        f"  Found {len(cluster_nodes)} cluster node(s) (static): {', '.join(cluster_nodes)}"
+                    )
             else:
                 if not cluster_running:
-                    print("  Could not discover cluster nodes (cluster not running, no corosync.conf)")
+                    print(
+                        "  Could not discover cluster nodes (cluster not running, no corosync.conf)"
+                    )
                 else:
                     print("  Could not discover cluster nodes locally")
                 print(f"  Using {self.local_hostname} as only node")
@@ -1536,22 +1700,24 @@ class AccessDiscovery:
             print("  Extracting configuration from cib.xml (cluster stopped)...")
             cluster_config = self.extract_cluster_config_from_cib(None)
             if cluster_config:
-                sid = cluster_config.get('sid', '')
-                vip = cluster_config.get('virtual_ip', '')
+                sid = cluster_config.get("sid", "")
+                vip = cluster_config.get("virtual_ip", "")
                 if sid:
-                    print(f"  SAP HANA SID: {sid}, Instance: {cluster_config.get('instance_number', 'N/A')}")
+                    print(
+                        f"  SAP HANA SID: {sid}, Instance: {cluster_config.get('instance_number', 'N/A')}"
+                    )
                 if vip:
                     print(f"  Virtual IP: {vip}")
-                if cluster_config.get('stonith_device'):
+                if cluster_config.get("stonith_device"):
                     print(f"  STONITH Device: {cluster_config.get('stonith_device')}")
 
         # Store cluster info
         if cluster_name:
             cluster_data = {
-                'nodes': cluster_nodes,
-                'cluster_running': cluster_running,
-                'discovered_from': self.local_hostname,
-                'discovered_at': datetime.now().isoformat()
+                "nodes": cluster_nodes,
+                "cluster_running": cluster_running,
+                "discovered_from": self.local_hostname,
+                "discovered_at": datetime.now().isoformat(),
             }
             # Add config from cib.xml if available
             if cluster_config:
@@ -1566,9 +1732,9 @@ class AccessDiscovery:
         Tries multiple methods: crm_node, pcs status, corosync-cmapctl.
         Returns tuple: (cluster_name, list of cluster node hostnames)
         """
-        ssh_user = user or 'root'
+        ssh_user = user or "root"
         # Use sudo for non-root users (cluster commands need root)
-        sudo_prefix = "sudo " if ssh_user != 'root' else ""
+        sudo_prefix = "sudo " if ssh_user != "root" else ""
         cluster_nodes = []
         cluster_name = None
         cluster_running = True
@@ -1576,7 +1742,9 @@ class AccessDiscovery:
         print(f"\n=== Discovering Cluster from {seed_host} ===")
 
         # Check if cluster services are running on the seed host
-        pacemaker_up, corosync_up, status_msg = self.check_cluster_services_running(seed_host, ssh_user)
+        pacemaker_up, corosync_up, status_msg = self.check_cluster_services_running(
+            seed_host, ssh_user
+        )
         if not pacemaker_up or not corosync_up:
             cluster_running = False
             print(f"\n  ⚠️  WARNING: {status_msg}")
@@ -1604,22 +1772,35 @@ class AccessDiscovery:
         for cmd in discovery_commands:
             try:
                 ssh_cmd = [
-                    "ssh", "-o", "BatchMode=yes",
-                    "-o", f"ConnectTimeout={self.SSH_TIMEOUT}",
-                    "-o", "StrictHostKeyChecking=no",
+                    "ssh",
+                    "-o",
+                    "BatchMode=yes",
+                    "-o",
+                    f"ConnectTimeout={self.SSH_TIMEOUT}",
+                    "-o",
+                    "StrictHostKeyChecking=no",
                     f"{ssh_user}@{seed_host}",
-                    f"{sudo_prefix}{cmd}"
+                    f"{sudo_prefix}{cmd}",
                 ]
-                result = subprocess.run(ssh_cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                        universal_newlines=True, timeout=self.SSH_TIMEOUT + 2)
+                result = subprocess.run(
+                    ssh_cmd,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    universal_newlines=True,
+                    timeout=self.SSH_TIMEOUT + 2,
+                    check=False,
+                )
 
                 if result.returncode == 0 and result.stdout.strip():
-                    nodes = [n.strip() for n in result.stdout.strip().split('\n') if n.strip()]
+                    nodes = [n.strip() for n in result.stdout.strip().split("\n") if n.strip()]
                     if nodes:
                         cluster_nodes = nodes
                         if self.debug:
                             print(f"  [DEBUG] Found cluster nodes via: {cmd[:40]}...")
-                        print(f"  Found {len(cluster_nodes)} cluster node(s): {', '.join(cluster_nodes)}")
+                        print(
+                            f"  Found {len(cluster_nodes)} cluster node(s): {', '.join(cluster_nodes)}"
+                        )
                         break
             except subprocess.TimeoutExpired:
                 continue
@@ -1634,12 +1815,18 @@ class AccessDiscovery:
             if static_nodes:
                 cluster_nodes = static_nodes
                 if not cluster_running:
-                    print(f"  Found {len(cluster_nodes)} node(s) from corosync.conf: {', '.join(cluster_nodes)}")
+                    print(
+                        f"  Found {len(cluster_nodes)} node(s) from corosync.conf: {', '.join(cluster_nodes)}"
+                    )
                 else:
-                    print(f"  Found {len(cluster_nodes)} cluster node(s) (static): {', '.join(cluster_nodes)}")
+                    print(
+                        f"  Found {len(cluster_nodes)} cluster node(s) (static): {', '.join(cluster_nodes)}"
+                    )
             else:
                 if not cluster_running:
-                    print("  Could not discover cluster nodes (cluster not running, no corosync.conf)")
+                    print(
+                        "  Could not discover cluster nodes (cluster not running, no corosync.conf)"
+                    )
                 else:
                     print(f"  Could not discover cluster nodes from {seed_host}")
                 print(f"  Using {seed_host} as only node")
@@ -1656,60 +1843,76 @@ class AccessDiscovery:
             print("  Extracting configuration from cib.xml (cluster stopped)...")
             try:
                 import tempfile
-                with tempfile.NamedTemporaryFile(suffix='.xml', delete=False) as tmp:
+
+                with tempfile.NamedTemporaryFile(suffix=".xml", delete=False) as tmp:
                     tmp_path = tmp.name
 
                 # Copy cib.xml from remote node
                 scp_cmd = [
-                    "scp", "-o", "BatchMode=yes",
-                    "-o", "ConnectTimeout=10",
-                    "-o", "StrictHostKeyChecking=no",
+                    "scp",
+                    "-o",
+                    "BatchMode=yes",
+                    "-o",
+                    "ConnectTimeout=10",
+                    "-o",
+                    "StrictHostKeyChecking=no",
                     f"{ssh_user}@{seed_host}:/var/lib/pacemaker/cib/cib.xml",
-                    tmp_path
+                    tmp_path,
                 ]
-                result = subprocess.run(scp_cmd, stdin=subprocess.DEVNULL,
-                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                        timeout=30)
+                result = subprocess.run(
+                    scp_cmd,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    timeout=30,
+                    check=False,
+                )
                 if result.returncode == 0:
                     # Parse the cib.xml
                     from lib.cib_parser import CIBParser
+
                     parser = CIBParser.from_file(tmp_path)
                     if parser and parser.is_available():
                         cib_config = parser.get_resource_config()
-                        if cib_config.get('success'):
-                            hana_cfg = cib_config.get('sap_hana', {})
+                        if cib_config.get("success"):
+                            hana_cfg = cib_config.get("sap_hana", {})
                             if hana_cfg:
-                                hana_info['sid'] = hana_cfg.get('sid')
-                                hana_info['instance_number'] = hana_cfg.get('instance_number')
-                                hana_info['resource_name'] = hana_cfg.get('resource_name')
-                                hana_info['resource_type'] = hana_cfg.get('resource_type')
-                                attrs = hana_cfg.get('attributes', {})
-                                if attrs.get('AUTOMATED_REGISTER'):
-                                    hana_info['automated_register'] = attrs['AUTOMATED_REGISTER'].lower() == 'true'
-                                if attrs.get('PREFER_SITE_TAKEOVER'):
-                                    hana_info['prefer_site_takeover'] = attrs['PREFER_SITE_TAKEOVER'].lower() == 'true'
-                                if attrs.get('DUPLICATE_PRIMARY_TIMEOUT'):
+                                hana_info["sid"] = hana_cfg.get("sid")
+                                hana_info["instance_number"] = hana_cfg.get("instance_number")
+                                hana_info["resource_name"] = hana_cfg.get("resource_name")
+                                hana_info["resource_type"] = hana_cfg.get("resource_type")
+                                attrs = hana_cfg.get("attributes", {})
+                                if attrs.get("AUTOMATED_REGISTER"):
+                                    hana_info["automated_register"] = (
+                                        attrs["AUTOMATED_REGISTER"].lower() == "true"
+                                    )
+                                if attrs.get("PREFER_SITE_TAKEOVER"):
+                                    hana_info["prefer_site_takeover"] = (
+                                        attrs["PREFER_SITE_TAKEOVER"].lower() == "true"
+                                    )
+                                if attrs.get("DUPLICATE_PRIMARY_TIMEOUT"):
                                     try:
-                                        hana_info['duplicate_primary_timeout'] = int(attrs['DUPLICATE_PRIMARY_TIMEOUT'])
+                                        hana_info["duplicate_primary_timeout"] = int(
+                                            attrs["DUPLICATE_PRIMARY_TIMEOUT"]
+                                        )
                                     except ValueError:
                                         pass
 
                         # Get STONITH
                         stonith_config = parser.get_stonith()
-                        if stonith_config.get('devices'):
-                            hana_info['stonith_device'] = stonith_config['devices'][0]
+                        if stonith_config.get("devices"):
+                            hana_info["stonith_device"] = stonith_config["devices"][0]
 
                         # Get VIPs from resource config
-                        if cib_config.get('vips'):
-                            vips = cib_config['vips']
+                        if cib_config.get("vips"):
+                            vips = cib_config["vips"]
                             if vips:
-                                hana_info['virtual_ip'] = vips[0].get('ip')
-                                hana_info['vip_resource'] = vips[0].get('name')
+                                hana_info["virtual_ip"] = vips[0].get("ip")
+                                hana_info["vip_resource"] = vips[0].get("name")
                                 if len(vips) > 1:
-                                    hana_info['secondary_vip'] = vips[1].get('ip')
+                                    hana_info["secondary_vip"] = vips[1].get("ip")
 
                 # Clean up temp file
-                import os
                 os.unlink(tmp_path)
             except Exception as e:
                 if self.debug:
@@ -1718,9 +1921,9 @@ class AccessDiscovery:
                 hana_info = self.discover_hana_info(seed_host, ssh_user, cluster_nodes)
 
         if hana_info:
-            sid = hana_info.get('sid', '')
-            inst = hana_info.get('instance_number', '')
-            vip = hana_info.get('virtual_ip', '')
+            sid = hana_info.get("sid", "")
+            inst = hana_info.get("instance_number", "")
+            vip = hana_info.get("virtual_ip", "")
             if sid:
                 print(f"  SAP HANA SID: {sid}, Instance: {inst}")
             if vip:
@@ -1729,10 +1932,10 @@ class AccessDiscovery:
         # Store cluster info
         if cluster_name:
             cluster_data = {
-                'nodes': cluster_nodes,
-                'cluster_running': cluster_running,
-                'discovered_from': seed_host,
-                'discovered_at': datetime.now().isoformat()
+                "nodes": cluster_nodes,
+                "cluster_running": cluster_running,
+                "discovered_from": seed_host,
+                "discovered_at": datetime.now().isoformat(),
             }
             # Add HANA info if discovered
             if hana_info:
@@ -1759,26 +1962,42 @@ class AccessDiscovery:
         port_open = self._is_port_open(hostname)
         if not port_open:
             if self.debug:
-                print(f"    [DEBUG] {hostname}: port 22 not directly open, trying SSH (may use ssh_config proxy)")
+                print(
+                    f"    [DEBUG] {hostname}: port 22 not directly open, trying SSH (may use ssh_config proxy)"
+                )
 
-        users_to_try = [user] if user else ['root', os.environ.get('USER', 'root')]
+        users_to_try = [user] if user else ["root", os.environ.get("USER", "root")]
 
         for try_user in users_to_try:
             if try_user is None:
                 continue
             try:
                 cmd = [
-                    "ssh", "-o", "BatchMode=yes",
-                    "-o", f"ConnectTimeout={self.SSH_TIMEOUT}",
-                    "-o", "StrictHostKeyChecking=no",
+                    "ssh",
+                    "-o",
+                    "BatchMode=yes",
+                    "-o",
+                    f"ConnectTimeout={self.SSH_TIMEOUT}",
+                    "-o",
+                    "StrictHostKeyChecking=no",
                     f"{try_user}@{hostname}",
-                    "echo ok"
+                    "echo ok",
                 ]
-                result = subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, timeout=self.SSH_TIMEOUT + 2)
+                result = subprocess.run(
+                    cmd,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    universal_newlines=True,
+                    timeout=self.SSH_TIMEOUT + 2,
+                    check=False,
+                )
                 if result.returncode == 0 and "ok" in result.stdout:
                     return True, try_user
-                elif self.debug:
-                    print(f"    [DEBUG] SSH {try_user}@{hostname} failed: {result.stderr.strip()[:60]}")
+                if self.debug:
+                    print(
+                        f"    [DEBUG] SSH {try_user}@{hostname} failed: {result.stderr.strip()[:60]}"
+                    )
             except subprocess.TimeoutExpired:
                 if self.debug:
                     print(f"    [DEBUG] SSH {try_user}@{hostname} timed out")
@@ -1790,19 +2009,27 @@ class AccessDiscovery:
 
     def get_machine_id(self, hostname: str, user: str = None) -> Optional[str]:
         """Get the machine ID from a remote host via SSH."""
-        ssh_user = user or 'root'
+        ssh_user = user or "root"
         try:
             cmd = [
-                "ssh", "-o", "BatchMode=yes",
-                "-o", f"ConnectTimeout={self.SSH_TIMEOUT}",
-                "-o", "StrictHostKeyChecking=no",
+                "ssh",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                f"ConnectTimeout={self.SSH_TIMEOUT}",
+                "-o",
+                "StrictHostKeyChecking=no",
                 f"{ssh_user}@{hostname}",
-                "cat /etc/machine-id 2>/dev/null || hostid"
+                "cat /etc/machine-id 2>/dev/null || hostid",
             ]
             result = subprocess.run(
-                cmd, stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                universal_newlines=True, timeout=self.SSH_TIMEOUT + 2
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True,
+                timeout=self.SSH_TIMEOUT + 2,
+                check=False,
             )
             if result.returncode == 0 and result.stdout.strip():
                 return result.stdout.strip()[:32]  # machine-id is 32 chars
@@ -1815,20 +2042,28 @@ class AccessDiscovery:
         """Get the machine ID from a remote host via Ansible."""
         try:
             cmd = [
-                "ansible", hostname, "-m", "shell",
-                "-a", "cat /etc/machine-id 2>/dev/null || hostid",
-                "--one-line"
+                "ansible",
+                hostname,
+                "-m",
+                "shell",
+                "-a",
+                "cat /etc/machine-id 2>/dev/null || hostid",
+                "--one-line",
             ]
             result = subprocess.run(
-                cmd, stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                universal_newlines=True, timeout=30
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True,
+                timeout=30,
+                check=False,
             )
             if result.returncode == 0 and result.stdout.strip():
                 # Ansible output format: "hostname | SUCCESS | rc=0 >> <output>"
                 output = result.stdout.strip()
-                if '>>' in output:
-                    machine_id = output.split('>>')[-1].strip()
+                if ">>" in output:
+                    machine_id = output.split(">>")[-1].strip()
                     return machine_id[:32]
         except Exception as e:
             if self.debug:
@@ -1847,28 +2082,38 @@ class AccessDiscovery:
                 print(f"    [DEBUG] Failed to get machine-id from SOSreport: {e}")
         return None
 
-    def check_ansible_access(self, hostname: str, ansible_host: str = None,
-                            ansible_user: str = None) -> bool:
+    def check_ansible_access(
+        self, hostname: str, _ansible_host: str = None, _ansible_user: str = None
+    ) -> bool:
         """Check Ansible access to a host using ansible ping."""
         try:
             cmd = ["ansible", hostname, "-m", "ping", "-o"]
             if self.config.ansible_inventory_path:
                 cmd.extend(["-i", self.config.ansible_inventory_path])
 
-            result = subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, timeout=15)
+            result = subprocess.run(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True,
+                timeout=15,
+                check=False,
+            )
             return "SUCCESS" in result.stdout
         except Exception:
             return False
 
-    def check_node_access(self, hostname: str, ansible_info: dict = None,
-                         sosreport_path: str = None) -> NodeAccess:
+    def check_node_access(
+        self, hostname: str, ansible_info: dict = None, sosreport_path: str = None
+    ) -> NodeAccess:
         """Check all access methods for a single node (thread-safe)."""
         node = NodeAccess(hostname=hostname)
         node.last_checked = datetime.now().isoformat()
 
         # Check SSH access (preferred)
-        ssh_user = ansible_info.get('ansible_user') if ansible_info else None
-        ssh_host = ansible_info.get('ansible_host', hostname) if ansible_info else hostname
+        ssh_user = ansible_info.get("ansible_user") if ansible_info else None
+        ssh_host = ansible_info.get("ansible_host", hostname) if ansible_info else hostname
         node.ssh_reachable, node.ssh_user = self.check_ssh_access(ssh_host, ssh_user)
 
         # If SSH is reachable, get the machine ID for verification
@@ -1877,11 +2122,12 @@ class AccessDiscovery:
 
         # Check Ansible access
         if ansible_info:
-            node.ansible_host = ansible_info.get('ansible_host')
-            node.ansible_user = ansible_info.get('ansible_user')
+            node.ansible_host = ansible_info.get("ansible_host")
+            node.ansible_user = ansible_info.get("ansible_user")
             if not node.ssh_reachable:  # Only check Ansible if SSH failed
-                node.ansible_reachable = self.check_ansible_access(hostname,
-                    node.ansible_host, node.ansible_user)
+                node.ansible_reachable = self.check_ansible_access(
+                    hostname, node.ansible_host, node.ansible_user
+                )
                 # Get machine ID via Ansible if SSH failed
                 if node.ansible_reachable:
                     node.machine_id = self.get_machine_id_ansible(hostname)
@@ -1895,11 +2141,11 @@ class AccessDiscovery:
 
         # Determine preferred access method
         if node.ssh_reachable:
-            node.preferred_method = 'ssh'
+            node.preferred_method = "ssh"
         elif node.ansible_reachable:
-            node.preferred_method = 'ansible'
+            node.preferred_method = "ansible"
         elif node.sosreport_path:
-            node.preferred_method = 'sosreport'
+            node.preferred_method = "sosreport"
 
         return node
 
@@ -1936,47 +2182,51 @@ class AccessDiscovery:
                     # Default to the cluster containing CLI-specified nodes
                     default_cluster = None
                     if self.hosts_file and os.path.exists(self.hosts_file):
-                        with open(self.hosts_file, 'r') as f:
-                            cli_hosts = [line.strip().split()[0] for line in f
-                                         if line.strip() and not line.strip().startswith('#')]
+                        with open(self.hosts_file, "r", encoding="utf-8") as f:
+                            cli_hosts = [
+                                line.strip().split()[0]
+                                for line in f
+                                if line.strip() and not line.strip().startswith("#")
+                            ]
                         if cli_hosts:
                             for cname, cinfo in clusters.items():
-                                if set(cli_hosts) & set(cinfo['nodes'].keys()):
+                                if set(cli_hosts) & set(cinfo["nodes"].keys()):
                                     default_cluster = cname
                                     break
                     selected_cluster = self.prompt_cluster_selection(
-                        clusters, default_cluster=default_cluster)
+                        clusters, default_cluster=default_cluster
+                    )
 
                     if selected_cluster is None:
                         print("\n[INFO] Cluster selection cancelled.")
                         sys.exit(0)
-                    elif selected_cluster == '__all__':
+                    elif selected_cluster == "__all__":
                         # Use all sosreports
                         cluster_name = list(clusters.keys())[0]
                         print(f"\n[INFO] Analyzing all {len(clusters)} clusters together")
                         for cluster_info in clusters.values():
-                            sosreports.update(cluster_info['nodes'])
+                            sosreports.update(cluster_info["nodes"])
                     else:
                         # Use only selected cluster's sosreports
                         cluster_name = selected_cluster
-                        sosreports = clusters[selected_cluster]['nodes']
+                        sosreports = clusters[selected_cluster]["nodes"]
                         print(f"\n[INFO] Analyzing cluster '{selected_cluster}' only")
                         # Store cluster info
                         self.config.clusters[selected_cluster] = {
-                            'nodes': list(sosreports.keys()),
-                            'discovered_from': 'sosreport',
-                            'discovered_at': datetime.now().isoformat()
+                            "nodes": list(sosreports.keys()),
+                            "discovered_from": "sosreport",
+                            "discovered_at": datetime.now().isoformat(),
                         }
                 else:
                     # Single cluster - use all sosreports
                     cluster_name = list(clusters.keys())[0]
-                    sosreports = clusters[cluster_name]['nodes']
-                    if cluster_name != '(unknown)':
+                    sosreports = clusters[cluster_name]["nodes"]
+                    if cluster_name != "(unknown)":
                         print(f"\n[INFO] Single cluster detected: {cluster_name}")
                         self.config.clusters[cluster_name] = {
-                            'nodes': list(sosreports.keys()),
-                            'discovered_from': 'sosreport',
-                            'discovered_at': datetime.now().isoformat()
+                            "nodes": list(sosreports.keys()),
+                            "discovered_from": "sosreport",
+                            "discovered_at": datetime.now().isoformat(),
                         }
 
                 if sosreports:
@@ -1990,20 +2240,24 @@ class AccessDiscovery:
                         if cluster_name and cluster_name in self.config.clusters:
                             self.config.clusters[cluster_name].update(cluster_config)
                         # Print what we found
-                        if cluster_config.get('sid'):
-                            print(f"  SAP HANA SID: {cluster_config.get('sid')}, Instance: {cluster_config.get('instance_number', 'N/A')}")
-                        if cluster_config.get('virtual_ip'):
+                        if cluster_config.get("sid"):
+                            print(
+                                f"  SAP HANA SID: {cluster_config.get('sid')}, Instance: {cluster_config.get('instance_number', 'N/A')}"
+                            )
+                        if cluster_config.get("virtual_ip"):
                             print(f"  Virtual IP: {cluster_config.get('virtual_ip')}")
-                        if cluster_config.get('replication_mode'):
+                        if cluster_config.get("replication_mode"):
                             print(f"  Replication Mode: {cluster_config.get('replication_mode')}")
-                        if cluster_config.get('stonith_device'):
+                        if cluster_config.get("stonith_device"):
                             print(f"  STONITH Device: {cluster_config.get('stonith_device')}")
 
                     # Check if cluster was running when SOSreports were captured
                     for hostname, sos_path in sosreports.items():
                         was_running, reason = self.was_cluster_running_in_sosreport(sos_path)
                         if not was_running:
-                            print(f"\n  ⚠️  WARNING: Cluster was NOT running when {hostname}'s SOSreport was captured")
+                            print(
+                                f"\n  ⚠️  WARNING: Cluster was NOT running when {hostname}'s SOSreport was captured"
+                            )
                             print(f"     Reason: {reason}")
                             print("     Some health check results may be incomplete or show errors")
                             print("     Consider creating new SOSreports with cluster running\n")
@@ -2028,12 +2282,16 @@ class AccessDiscovery:
                     # and drop the /etc/hostname duplicate to avoid running checks twice
                     resolved_aliases = {}
                     if missing_sosreports:
-                        resolved_aliases = self._resolve_sosreport_aliases(sosreports, missing_sosreports)
+                        resolved_aliases = self._resolve_sosreport_aliases(
+                            sosreports, missing_sosreports
+                        )
                         if resolved_aliases:
                             for corosync_name, sos_path in resolved_aliases.items():
                                 primary = [h for h, p in sosreports.items() if p == sos_path]
                                 primary_name = primary[0] if primary else "?"
-                                print(f"\n[INFO] Hostname alias resolved: {corosync_name} = {primary_name} (same host)")
+                                print(
+                                    f"\n[INFO] Hostname alias resolved: {corosync_name} = {primary_name} (same host)"
+                                )
                                 # Re-register sosreport under corosync name, remove /etc/hostname entry
                                 sosreports[corosync_name] = sos_path
                                 if primary_name in sosreports and primary_name != corosync_name:
@@ -2042,11 +2300,17 @@ class AccessDiscovery:
                             missing_sosreports -= set(resolved_aliases.keys())
                             # Update cluster nodes list to use corosync names
                             if cluster_name and cluster_name in self.config.clusters:
-                                self.config.clusters[cluster_name]['nodes'] = list(sosreports.keys())
+                                self.config.clusters[cluster_name]["nodes"] = list(
+                                    sosreports.keys()
+                                )
 
                     if missing_sosreports:
-                        print(f"\n[INFO] Cluster has {len(expected_nodes)} nodes, but only {len(sosreports)} SOSreport(s)")
-                        print(f"       Missing SOSreports for: {', '.join(sorted(missing_sosreports))}")
+                        print(
+                            f"\n[INFO] Cluster has {len(expected_nodes)} nodes, but only {len(sosreports)} SOSreport(s)"
+                        )
+                        print(
+                            f"       Missing SOSreports for: {', '.join(sorted(missing_sosreports))}"
+                        )
                         print("       Attempting SSH access to get live data...")
 
                     # Clear old nodes
@@ -2059,7 +2323,7 @@ class AccessDiscovery:
                     # Only nodes WITHOUT SOSreports (missing from cluster) attempt SSH
                     total_nodes = len(sosreports) + len(missing_sosreports)
                     print(f"\n=== Checking access to {total_nodes} cluster node(s) ===")
-                    print(f"  [INFO] SOSreport-only mode: skipping SSH for nodes with SOSreports")
+                    print("  [INFO] SOSreport-only mode: skipping SSH for nodes with SOSreports")
 
                     # Process nodes WITH SOSreports - use sosreport directly
                     for hostname, path in sosreports.items():
@@ -2070,19 +2334,23 @@ class AccessDiscovery:
 
                         # Check if this node is the local machine
                         if hostname == local_hostname:
-                            node.preferred_method = 'local'
+                            node.preferred_method = "local"
                             print(f"  {hostname}: SOSreport + Local (this node) -> local")
                         else:
-                            node.preferred_method = 'sosreport'
+                            node.preferred_method = "sosreport"
                             print(f"  {hostname}: SOSreport -> sosreport")
 
                         self.config.nodes[hostname] = asdict(node)
 
                     # Process nodes WITHOUT SOSreports - try SSH/local
                     if missing_sosreports:
-                        with ThreadPoolExecutor(max_workers=min(len(missing_sosreports), self.MAX_WORKERS)) as executor:
+                        with ThreadPoolExecutor(
+                            max_workers=min(len(missing_sosreports), self.MAX_WORKERS)
+                        ) as executor:
                             futures = {
-                                executor.submit(self.check_node_access, hostname, None, None): hostname
+                                executor.submit(
+                                    self.check_node_access, hostname, None, None
+                                ): hostname
                                 for hostname in missing_sosreports
                             }
                             for future in as_completed(futures):
@@ -2091,10 +2359,14 @@ class AccessDiscovery:
                                     node = future.result()
                                     # Check if this missing node is the local machine
                                     if hostname == local_hostname and not node.ssh_reachable:
-                                        node.preferred_method = 'local'
-                                        print(f"  {hostname}: Local (this node, no SOSreport) -> local")
+                                        node.preferred_method = "local"
+                                        print(
+                                            f"  {hostname}: Local (this node, no SOSreport) -> local"
+                                        )
                                     elif node.ssh_reachable:
-                                        print(f"  {hostname}: SSH({node.ssh_user}) -> ssh (live, no SOSreport)")
+                                        print(
+                                            f"  {hostname}: SSH({node.ssh_user}) -> ssh (live, no SOSreport)"
+                                        )
                                     else:
                                         print(f"  {hostname}: NO ACCESS (missing SOSreport)")
                                     self.config.nodes[hostname] = asdict(node)
@@ -2111,7 +2383,7 @@ class AccessDiscovery:
         if self.cluster_name:
             if self.cluster_name in self.config.clusters:
                 cluster_info = self.config.clusters[self.cluster_name]
-                file_hosts = cluster_info.get('nodes', [])
+                file_hosts = cluster_info.get("nodes", [])
                 print(f"\n=== Using saved cluster: {self.cluster_name} ===")
                 print(f"  Nodes: {', '.join(file_hosts)}")
                 print(f"  Discovered from: {cluster_info.get('discovered_from', 'unknown')}")
@@ -2141,7 +2413,9 @@ class AccessDiscovery:
                 reachable, ssh_user = self.check_ssh_access(seed_host)
                 if reachable:
                     # Discover cluster members (returns cluster_name, nodes)
-                    discovered_name, cluster_nodes = self.discover_cluster_nodes(seed_host, ssh_user)
+                    _discovered_name, cluster_nodes = self.discover_cluster_nodes(
+                        seed_host, ssh_user
+                    )
                     # Only use discovered nodes if we found more than what was specified
                     # or if we successfully discovered the cluster
                     if cluster_nodes and len(cluster_nodes) >= len(file_hosts):
@@ -2151,9 +2425,8 @@ class AccessDiscovery:
                         if self.debug:
                             print("  [DEBUG] Cluster discovery incomplete, keeping specified hosts")
                     break
-                else:
-                    if self.debug:
-                        print(f"  [DEBUG] {seed_host} not reachable, trying next...")
+                if self.debug:
+                    print(f"  [DEBUG] {seed_host} not reachable, trying next...")
 
         # 3. Discover Ansible inventory (skip if hosts provided)
         if not self.skip_ansible and not file_hosts:
@@ -2164,28 +2437,30 @@ class AccessDiscovery:
             if self.ansible_group:
                 filtered_hosts = {}
                 for hostname, info in ansible_hosts.items():
-                    groups = info.get('groups', [])
-                    if self.ansible_group in groups or self.ansible_group == 'all':
+                    groups = info.get("groups", [])
+                    if self.ansible_group in groups or self.ansible_group == "all":
                         filtered_hosts[hostname] = info
                 if self.debug:
-                    print(f"  [DEBUG] Filtered to group '{self.ansible_group}': {len(filtered_hosts)} hosts")
+                    print(
+                        f"  [DEBUG] Filtered to group '{self.ansible_group}': {len(filtered_hosts)} hosts"
+                    )
                 ansible_hosts = filtered_hosts
 
             for hostname, info in ansible_hosts.items():
-                all_hosts[hostname] = {'ansible_info': info, 'sosreport_path': None}
+                all_hosts[hostname] = {"ansible_info": info, "sosreport_path": None}
 
         # 4. Add hosts from file/cluster discovery
         for hostname in file_hosts:
             if hostname not in all_hosts:
-                all_hosts[hostname] = {'ansible_info': None, 'sosreport_path': None}
+                all_hosts[hostname] = {"ansible_info": None, "sosreport_path": None}
 
         # 3. Discover SOSreports
         sosreports = self.discover_sosreports()
         for hostname, path in sosreports.items():
             if hostname in all_hosts:
-                all_hosts[hostname]['sosreport_path'] = path
+                all_hosts[hostname]["sosreport_path"] = path
             else:
-                all_hosts[hostname] = {'ansible_info': None, 'sosreport_path': path}
+                all_hosts[hostname] = {"ansible_info": None, "sosreport_path": path}
 
         if not all_hosts:
             print("\nNo hosts discovered. Please provide:")
@@ -2203,8 +2478,8 @@ class AccessDiscovery:
                 future = executor.submit(
                     self.check_node_access,
                     hostname,
-                    info.get('ansible_info'),
-                    info.get('sosreport_path')
+                    info.get("ansible_info"),
+                    info.get("sosreport_path"),
                 )
                 futures[future] = hostname
 
@@ -2221,8 +2496,10 @@ class AccessDiscovery:
                     if node.sosreport_path:
                         status.append("SOSreport")
                     machine_id_short = f" [{node.machine_id[:8]}]" if node.machine_id else ""
-                    print(f"  {hostname}: {', '.join(status) if status else 'NO ACCESS'}{machine_id_short} "
-                          f"-> {node.preferred_method or 'none'}")
+                    print(
+                        f"  {hostname}: {', '.join(status) if status else 'NO ACCESS'}{machine_id_short} "
+                        f"-> {node.preferred_method or 'none'}"
+                    )
                 except Exception as e:
                     print(f"  {hostname}: Error - {e}")
 
@@ -2231,11 +2508,11 @@ class AccessDiscovery:
         if local_sosreports:
             updated_count = 0
             for hostname, node_info in self.config.nodes.items():
-                if not node_info.get('sosreport_path') and hostname in local_sosreports:
-                    node_info['sosreport_path'] = local_sosreports[hostname]
+                if not node_info.get("sosreport_path") and hostname in local_sosreports:
+                    node_info["sosreport_path"] = local_sosreports[hostname]
                     # Set preferred_method to sosreport if no other access method
-                    if not node_info.get('preferred_method'):
-                        node_info['preferred_method'] = 'sosreport'
+                    if not node_info.get("preferred_method"):
+                        node_info["preferred_method"] = "sosreport"
                     updated_count += 1
             if updated_count > 0:
                 print(f"\n  [INFO] Found {updated_count} matching SOSreport(s) in subdirectories")
@@ -2246,10 +2523,10 @@ class AccessDiscovery:
                 for hostname, sos_path in discovered_nodes.items():
                     if hostname not in self.config.nodes:
                         node_info = {
-                            'hostname': hostname,
-                            'sosreport_path': sos_path,
-                            'preferred_method': 'sosreport',
-                            'last_checked': datetime.now().isoformat()
+                            "hostname": hostname,
+                            "sosreport_path": sos_path,
+                            "preferred_method": "sosreport",
+                            "last_checked": datetime.now().isoformat(),
                         }
                         self.config.nodes[hostname] = node_info
                         print(f"  [CLUSTER] Discovered {hostname} from SOSreport cluster info")
@@ -2259,18 +2536,18 @@ class AccessDiscovery:
             # Build clusters dict in format expected by prompt_cluster_selection
             clusters_for_selection = {}
             for cname, cinfo in self.config.clusters.items():
-                if cname == '(unknown)':
+                if cname == "(unknown)":
                     continue
-                cluster_nodes_list = cinfo.get('nodes', [])
+                cluster_nodes_list = cinfo.get("nodes", [])
                 # Map nodes to their info
                 nodes_dict = {}
                 for node in cluster_nodes_list:
                     if node in self.config.nodes:
-                        nodes_dict[node] = self.config.nodes[node].get('sosreport_path', '')
+                        nodes_dict[node] = self.config.nodes[node].get("sosreport_path", "")
                     else:
-                        nodes_dict[node] = ''
+                        nodes_dict[node] = ""
                 if nodes_dict:
-                    clusters_for_selection[cname] = {'nodes': nodes_dict}
+                    clusters_for_selection[cname] = {"nodes": nodes_dict}
 
             if len(clusters_for_selection) > 1:
                 print("\n" + "=" * 60)
@@ -2280,19 +2557,22 @@ class AccessDiscovery:
                 default_cluster = None
                 if file_hosts:
                     for cname, cinfo in clusters_for_selection.items():
-                        if set(file_hosts) & set(cinfo['nodes'].keys()):
+                        if set(file_hosts) & set(cinfo["nodes"].keys()):
                             default_cluster = cname
                             break
                 selected_cluster = self.prompt_cluster_selection(
-                    clusters_for_selection, default_cluster=default_cluster)
+                    clusters_for_selection, default_cluster=default_cluster
+                )
 
                 if selected_cluster is None:
                     print("\n[INFO] Cluster selection cancelled.")
                     sys.exit(0)
-                elif selected_cluster != '__all__':
+                elif selected_cluster != "__all__":
                     # Filter to only selected cluster's nodes
-                    selected_nodes = self.config.clusters[selected_cluster].get('nodes', [])
-                    filtered_nodes = {n: self.config.nodes[n] for n in selected_nodes if n in self.config.nodes}
+                    selected_nodes = self.config.clusters[selected_cluster].get("nodes", [])
+                    filtered_nodes = {
+                        n: self.config.nodes[n] for n in selected_nodes if n in self.config.nodes
+                    }
 
                     print(f"\n[INFO] Analyzing cluster '{selected_cluster}' only")
                     print(f"       Nodes: {', '.join(sorted(filtered_nodes.keys()))}")
@@ -2300,7 +2580,9 @@ class AccessDiscovery:
                     # Remove nodes not in selected cluster
                     self.config.nodes = filtered_nodes
                     # Keep only selected cluster
-                    self.config.clusters = {selected_cluster: self.config.clusters[selected_cluster]}
+                    self.config.clusters = {
+                        selected_cluster: self.config.clusters[selected_cluster]
+                    }
 
         self.config.discovery_complete = True
         self.save_config()
@@ -2321,7 +2603,7 @@ class AccessDiscovery:
         self.config.nodes = {}
 
         # Discover cluster nodes locally
-        cluster_name, cluster_nodes = self.discover_cluster_nodes_local()
+        _cluster_name, cluster_nodes = self.discover_cluster_nodes_local()
 
         if not cluster_nodes:
             print("[ERROR] Could not discover any cluster nodes")
@@ -2338,7 +2620,7 @@ class AccessDiscovery:
                 # Local node - use local execution
                 node = NodeAccess(hostname=node_name)
                 node.last_checked = datetime.now().isoformat()
-                node.preferred_method = 'local'
+                node.preferred_method = "local"
                 self.config.nodes[node_name] = asdict(node)
                 print(f"  {node_name}: LOCAL (this node)")
             else:
@@ -2349,8 +2631,10 @@ class AccessDiscovery:
                 if node.ssh_reachable:
                     status.append(f"SSH({node.ssh_user})")
                 machine_id_short = f" [{node.machine_id[:8]}]" if node.machine_id else ""
-                print(f"  {node_name}: {', '.join(status) if status else 'NO ACCESS'}{machine_id_short} "
-                      f"-> {node.preferred_method or 'none'}")
+                print(
+                    f"  {node_name}: {', '.join(status) if status else 'NO ACCESS'}{machine_id_short} "
+                    f"-> {node.preferred_method or 'none'}"
+                )
 
         self.config.discovery_complete = True
         self.save_config()
@@ -2367,11 +2651,13 @@ class AccessDiscovery:
         print("=" * 60)
 
         total = len(self.config.nodes)
-        local_count = sum(1 for n in self.config.nodes.values() if n.get('preferred_method') == 'local')
-        ssh_count = sum(1 for n in self.config.nodes.values() if n.get('ssh_reachable'))
-        ansible_count = sum(1 for n in self.config.nodes.values() if n.get('ansible_reachable'))
-        sos_count = sum(1 for n in self.config.nodes.values() if n.get('sosreport_path'))
-        no_access = sum(1 for n in self.config.nodes.values() if not n.get('preferred_method'))
+        local_count = sum(
+            1 for n in self.config.nodes.values() if n.get("preferred_method") == "local"
+        )
+        ssh_count = sum(1 for n in self.config.nodes.values() if n.get("ssh_reachable"))
+        ansible_count = sum(1 for n in self.config.nodes.values() if n.get("ansible_reachable"))
+        sos_count = sum(1 for n in self.config.nodes.values() if n.get("sosreport_path"))
+        no_access = sum(1 for n in self.config.nodes.values() if not n.get("preferred_method"))
 
         print(f"Total nodes:      {total}")
         if local_count > 0:
@@ -2404,11 +2690,11 @@ def show_config(config_path: Path, cluster_or_node: str = None, config_only: boo
         print("  ./cluster_health_check.py hana01")
         return False
 
-    with open(config_path, 'r') as f:
+    with open(config_path, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
 
-    clusters = config.get('clusters', {})
-    all_nodes = config.get('nodes', {})
+    clusters = config.get("clusters", {})
+    all_nodes = config.get("nodes", {})
 
     # Resolve cluster_or_node to a cluster name
     cluster_name = None
@@ -2419,7 +2705,7 @@ def show_config(config_path: Path, cluster_or_node: str = None, config_only: boo
         else:
             # Check if it's a hostname - find which cluster contains it
             for cname, cinfo in clusters.items():
-                if cluster_or_node in cinfo.get('nodes', []):
+                if cluster_or_node in cinfo.get("nodes", []):
                     cluster_name = cname
                     print(f"[INFO] Node '{cluster_or_node}' belongs to cluster '{cluster_name}'")
                     break
@@ -2428,13 +2714,15 @@ def show_config(config_path: Path, cluster_or_node: str = None, config_only: boo
                 # Not found as cluster or node in any cluster
                 if cluster_or_node in all_nodes:
                     # It's a known node but not in any cluster
-                    print(f"\n[INFO] Node '{cluster_or_node}' found but not assigned to any cluster")
+                    print(
+                        f"\n[INFO] Node '{cluster_or_node}' found but not assigned to any cluster"
+                    )
                 else:
                     print(f"\n[ERROR] '{cluster_or_node}' not found as cluster or node")
 
                 if clusters:
                     print(f"\nAvailable clusters: {', '.join(clusters.keys())}")
-                    print(f"Available nodes: {', '.join(list(all_nodes.keys())[:10])}", end='')
+                    print(f"Available nodes: {', '.join(list(all_nodes.keys())[:10])}", end="")
                     if len(all_nodes) > 10:
                         print(f" ... and {len(all_nodes) - 10} more")
                     else:
@@ -2464,18 +2752,18 @@ def show_config(config_path: Path, cluster_or_node: str = None, config_only: boo
             print("\n--- Discovered Clusters ---")
 
         for name, info in clusters_to_show.items():
-            cluster_nodes = info.get('nodes', [])
-            discovered_from = info.get('discovered_from', 'unknown')
+            cluster_nodes = info.get("nodes", [])
+            discovered_from = info.get("discovered_from", "unknown")
             if not cluster_name:
                 print(f"\n  Cluster: {name}")
             print(f"    Nodes: {', '.join(cluster_nodes)}")
             print(f"    Discovered from: {discovered_from}")
 
             # Always show basic cluster info
-            discovered_at = info.get('discovered_at', '')
-            cluster_running = info.get('cluster_running')
-            rhel_version = info.get('rhel_version', '')
-            pacemaker_version = info.get('pacemaker_version', '')
+            discovered_at = info.get("discovered_at", "")
+            cluster_running = info.get("cluster_running")
+            rhel_version = info.get("rhel_version", "")
+            pacemaker_version = info.get("pacemaker_version", "")
 
             if discovered_at:
                 print(f"    Discovered at: {discovered_at[:19]}")  # Trim microseconds
@@ -2488,10 +2776,10 @@ def show_config(config_path: Path, cluster_or_node: str = None, config_only: boo
                 print(f"    Pacemaker version: {pacemaker_version}")
 
             # Show SAP HANA info if available (Ansible-compatible parameters)
-            sid = info.get('sid')
+            sid = info.get("sid")
             if sid:
-                inst = info.get('instance_number', '??')
-                resource_type = info.get('resource_type', 'SAPHana')
+                inst = info.get("instance_number", "??")
+                resource_type = info.get("resource_type", "SAPHana")
 
                 print("\n    SAP HANA HA Configuration (Ansible-compatible):")
                 print("    " + "-" * 40)
@@ -2502,19 +2790,19 @@ def show_config(config_path: Path, cluster_or_node: str = None, config_only: boo
 
                 # Core Parameters
                 print(f"      hana_sid: {sid}")
-                print(f"      hana_instance_number: \"{inst}\"")
+                print(f'      hana_instance_number: "{inst}"')
 
                 # Cluster type
                 cluster_type = "Scale-Up" if resource_type == "SAPHana" else "Scale-Out"
                 print(f"      cluster_type: {cluster_type}")
 
                 # Node Information
-                node1_hostname = info.get('node1_hostname', '')
-                node1_fqdn = info.get('node1_fqdn', '')
-                node1_ip = info.get('node1_ip', '')
-                node2_hostname = info.get('node2_hostname', '')
-                node2_fqdn = info.get('node2_fqdn', '')
-                node2_ip = info.get('node2_ip', '')
+                node1_hostname = info.get("node1_hostname", "")
+                node1_fqdn = info.get("node1_fqdn", "")
+                node1_ip = info.get("node1_ip", "")
+                node2_hostname = info.get("node2_hostname", "")
+                node2_fqdn = info.get("node2_fqdn", "")
+                node2_ip = info.get("node2_ip", "")
                 if node1_hostname or node1_fqdn or node1_ip:
                     print("\n      # Node 1 (Primary Site)")
                     if node1_hostname:
@@ -2533,10 +2821,10 @@ def show_config(config_path: Path, cluster_or_node: str = None, config_only: boo
                         print(f"      node2_ip: {node2_ip}")
 
                 # Virtual IP
-                virtual_ip = info.get('virtual_ip', '')
-                vip_resource = info.get('vip_resource', '')
-                secondary_vip = info.get('secondary_vip', '')
-                secondary_vip_resource = info.get('secondary_vip_resource', '')
+                virtual_ip = info.get("virtual_ip", "")
+                vip_resource = info.get("vip_resource", "")
+                secondary_vip = info.get("secondary_vip", "")
+                secondary_vip_resource = info.get("secondary_vip_resource", "")
                 if virtual_ip or secondary_vip:
                     print("\n      # Virtual IP Configuration")
                     if virtual_ip:
@@ -2549,11 +2837,11 @@ def show_config(config_path: Path, cluster_or_node: str = None, config_only: boo
                             print(f"      secondary_vip_resource: {secondary_vip_resource}")
 
                 # System Replication
-                repl_mode = info.get('replication_mode', '')
-                op_mode = info.get('operation_mode', '')
-                sites = info.get('sites', [])
-                site1 = info.get('site1_name', '')
-                site2 = info.get('site2_name', '')
+                repl_mode = info.get("replication_mode", "")
+                op_mode = info.get("operation_mode", "")
+                sites = info.get("sites", [])
+                site1 = info.get("site1_name", "")
+                site2 = info.get("site2_name", "")
                 if repl_mode or op_mode or sites:
                     print("\n      # System Replication")
                     if repl_mode:
@@ -2568,8 +2856,8 @@ def show_config(config_path: Path, cluster_or_node: str = None, config_only: boo
                         print(f"      sites: {', '.join(sites)}")
 
                 # Resource Names
-                resource_name = info.get('resource_name', '')
-                topology_resource = info.get('topology_resource', '')
+                resource_name = info.get("resource_name", "")
+                topology_resource = info.get("topology_resource", "")
                 if resource_name or topology_resource:
                     print("\n      # Pacemaker Resources")
                     if resource_name:
@@ -2578,9 +2866,9 @@ def show_config(config_path: Path, cluster_or_node: str = None, config_only: boo
                         print(f"      topology_resource: {topology_resource}")
 
                 # STONITH
-                stonith_device = info.get('stonith_device', '')
-                stonith_type = info.get('stonith_type', '')
-                stonith_params = info.get('stonith_params', {})
+                stonith_device = info.get("stonith_device", "")
+                stonith_type = info.get("stonith_type", "")
+                stonith_params = info.get("stonith_params", {})
                 if stonith_device or stonith_params:
                     print("\n      # STONITH/Fencing")
                     if stonith_device:
@@ -2588,24 +2876,29 @@ def show_config(config_path: Path, cluster_or_node: str = None, config_only: boo
                     if stonith_type:
                         print(f"      stonith_type: {stonith_type}")
                     if stonith_params:
-                        pcmk_host_map = stonith_params.get('pcmk_host_map', '')
+                        pcmk_host_map = stonith_params.get("pcmk_host_map", "")
                         if pcmk_host_map:
                             print(f"      pcmk_host_map: {pcmk_host_map}")
                         for key, value in stonith_params.items():
-                            if key != 'pcmk_host_map':
+                            if key != "pcmk_host_map":
                                 print(f"      {key}: {value}")
 
                 # Cluster Properties
-                stickiness = info.get('resource_stickiness')
-                migration = info.get('migration_threshold')
-                auto_reg = info.get('automated_register')
-                prefer_takeover = info.get('prefer_site_takeover')
-                dup_primary_timeout = info.get('duplicate_primary_timeout')
-                secondary_read = info.get('secondary_read')
+                stickiness = info.get("resource_stickiness")
+                migration = info.get("migration_threshold")
+                auto_reg = info.get("automated_register")
+                prefer_takeover = info.get("prefer_site_takeover")
+                dup_primary_timeout = info.get("duplicate_primary_timeout")
+                secondary_read = info.get("secondary_read")
 
-                has_props = (stickiness or migration or auto_reg is not None or
-                            prefer_takeover is not None or dup_primary_timeout or
-                            secondary_read is not None)
+                has_props = (
+                    stickiness
+                    or migration
+                    or auto_reg is not None
+                    or prefer_takeover is not None
+                    or dup_primary_timeout
+                    or secondary_read is not None
+                )
                 if has_props:
                     print("\n      # Cluster Properties")
                     if stickiness:
@@ -2627,19 +2920,19 @@ def show_config(config_path: Path, cluster_or_node: str = None, config_only: boo
                 print("    " + "-" * 44)
 
                 # Resource type and cluster type
-                resource_type = info.get('resource_type', '')
+                resource_type = info.get("resource_type", "")
                 if resource_type:
                     cluster_type = "Scale-Up" if resource_type == "SAPHana" else "Scale-Out"
                     print(f"      cluster_type: {cluster_type}")
                     print(f"      resource_type: {resource_type}")
 
                 # Node Information
-                node1_hostname = info.get('node1_hostname', '')
-                node1_fqdn = info.get('node1_fqdn', '')
-                node1_ip = info.get('node1_ip', '')
-                node2_hostname = info.get('node2_hostname', '')
-                node2_fqdn = info.get('node2_fqdn', '')
-                node2_ip = info.get('node2_ip', '')
+                node1_hostname = info.get("node1_hostname", "")
+                node1_fqdn = info.get("node1_fqdn", "")
+                node1_ip = info.get("node1_ip", "")
+                node2_hostname = info.get("node2_hostname", "")
+                node2_fqdn = info.get("node2_fqdn", "")
+                node2_ip = info.get("node2_ip", "")
                 if node1_hostname or node1_fqdn or node1_ip:
                     print("\n      # Node 1")
                     if node1_hostname:
@@ -2658,10 +2951,10 @@ def show_config(config_path: Path, cluster_or_node: str = None, config_only: boo
                         print(f"      node2_ip: {node2_ip}")
 
                 # Virtual IP
-                virtual_ip = info.get('virtual_ip', '')
-                vip_resource = info.get('vip_resource', '')
-                secondary_vip = info.get('secondary_vip', '')
-                secondary_vip_resource = info.get('secondary_vip_resource', '')
+                virtual_ip = info.get("virtual_ip", "")
+                vip_resource = info.get("vip_resource", "")
+                secondary_vip = info.get("secondary_vip", "")
+                secondary_vip_resource = info.get("secondary_vip_resource", "")
                 if virtual_ip or secondary_vip:
                     print("\n      # Virtual IP Configuration")
                     if virtual_ip:
@@ -2674,11 +2967,11 @@ def show_config(config_path: Path, cluster_or_node: str = None, config_only: boo
                             print(f"      secondary_vip_resource: {secondary_vip_resource}")
 
                 # System Replication
-                repl_mode = info.get('replication_mode', '')
-                op_mode = info.get('operation_mode', '')
-                sites = info.get('sites', [])
-                site1 = info.get('site1_name', '')
-                site2 = info.get('site2_name', '')
+                repl_mode = info.get("replication_mode", "")
+                op_mode = info.get("operation_mode", "")
+                sites = info.get("sites", [])
+                site1 = info.get("site1_name", "")
+                site2 = info.get("site2_name", "")
                 if repl_mode or op_mode or sites or site1:
                     print("\n      # System Replication")
                     if repl_mode:
@@ -2693,27 +2986,31 @@ def show_config(config_path: Path, cluster_or_node: str = None, config_only: boo
                         print(f"      sites: {', '.join(sites)}")
 
                 # STONITH
-                stonith_device = info.get('stonith_device', '')
-                stonith_params = info.get('stonith_params', {})
+                stonith_device = info.get("stonith_device", "")
+                stonith_params = info.get("stonith_params", {})
                 if stonith_device or stonith_params:
                     print("\n      # STONITH/Fencing")
                     if stonith_device:
                         print(f"      stonith_device: {stonith_device}")
                     if stonith_params:
-                        pcmk_host_map = stonith_params.get('pcmk_host_map', '')
+                        pcmk_host_map = stonith_params.get("pcmk_host_map", "")
                         if pcmk_host_map:
                             print(f"      pcmk_host_map: {pcmk_host_map}")
                         for key, value in stonith_params.items():
-                            if key != 'pcmk_host_map':
+                            if key != "pcmk_host_map":
                                 print(f"      {key}: {value}")
 
                 # Cluster Properties
-                auto_reg = info.get('automated_register')
-                prefer_takeover = info.get('prefer_site_takeover')
-                dup_primary_timeout = info.get('duplicate_primary_timeout')
-                secondary_read = info.get('secondary_read')
-                has_props = (auto_reg is not None or prefer_takeover is not None or
-                            dup_primary_timeout or secondary_read is not None)
+                auto_reg = info.get("automated_register")
+                prefer_takeover = info.get("prefer_site_takeover")
+                dup_primary_timeout = info.get("duplicate_primary_timeout")
+                secondary_read = info.get("secondary_read")
+                has_props = (
+                    auto_reg is not None
+                    or prefer_takeover is not None
+                    or dup_primary_timeout
+                    or secondary_read is not None
+                )
                 if has_props:
                     print("\n      # Cluster Properties")
                     if auto_reg is not None:
@@ -2738,7 +3035,7 @@ def show_config(config_path: Path, cluster_or_node: str = None, config_only: boo
 
     # Show node summary (filtered to cluster nodes if cluster_name specified)
     if cluster_name and cluster_name in clusters:
-        cluster_node_names = clusters[cluster_name].get('nodes', [])
+        cluster_node_names = clusters[cluster_name].get("nodes", [])
         nodes = {n: all_nodes[n] for n in cluster_node_names if n in all_nodes}
         node_label = f"Nodes in Cluster '{cluster_name}'"
     else:
@@ -2747,22 +3044,22 @@ def show_config(config_path: Path, cluster_or_node: str = None, config_only: boo
 
     if nodes:
         print(f"\n--- {node_label} ({len(nodes)}) ---")
-        accessible = [n for n, info in nodes.items() if info.get('preferred_method')]
-        no_access = [n for n, info in nodes.items() if not info.get('preferred_method')]
+        accessible = [n for n, info in nodes.items() if info.get("preferred_method")]
+        no_access = [n for n, info in nodes.items() if not info.get("preferred_method")]
 
         if accessible:
             print(f"\n  Accessible ({len(accessible)}):")
             for name in sorted(accessible)[:10]:  # Show first 10
                 info = nodes[name]
-                method = info.get('preferred_method', 'none')
-                machine_id = info.get('machine_id', '')
+                method = info.get("preferred_method", "none")
+                machine_id = info.get("machine_id", "")
                 machine_id_short = f" [{machine_id[:8]}]" if machine_id else ""
                 print(f"    {name}: {method}{machine_id_short}")
             if len(accessible) > 10:
                 print(f"    ... and {len(accessible) - 10} more")
 
         if no_access:
-            print(f"\n  No access ({len(no_access)}): {', '.join(sorted(no_access)[:5])}", end='')
+            print(f"\n  No access ({len(no_access)}): {', '.join(sorted(no_access)[:5])}", end="")
             if len(no_access) > 5:
                 print(f" ... and {len(no_access) - 5} more")
             else:
@@ -2770,11 +3067,11 @@ def show_config(config_path: Path, cluster_or_node: str = None, config_only: boo
 
     # Show other config (only in full view, not cluster-specific)
     if not cluster_name:
-        if config.get('sosreport_directory'):
+        if config.get("sosreport_directory"):
             print("\n--- SOSreport Directory ---")
             print(f"  {config['sosreport_directory']}")
 
-        if config.get('ansible_inventory_path'):
+        if config.get("ansible_inventory_path"):
             print("\n--- Ansible Inventory ---")
             print(f"  Path: {config['ansible_inventory_path']}")
             print(f"  Source: {config.get('ansible_inventory_source', 'unknown')}")
@@ -2807,10 +3104,10 @@ def export_ansible_vars(config_path: Path, cluster_name: str, output_file: str =
         print(f"No configuration file found at {config_path}")
         return False
 
-    with open(config_path, 'r') as f:
+    with open(config_path, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
 
-    clusters = config.get('clusters', {})
+    clusters = config.get("clusters", {})
 
     if cluster_name not in clusters:
         print(f"Cluster '{cluster_name}' not found in configuration.")
@@ -2818,8 +3115,8 @@ def export_ansible_vars(config_path: Path, cluster_name: str, output_file: str =
         return False
 
     info = clusters[cluster_name]
-    cluster_nodes = info.get('nodes', [])
-    sid = info.get('sid', '')
+    cluster_nodes = info.get("nodes", [])
+    sid = info.get("sid", "")
 
     if not sid:
         print(f"No SAP HANA configuration found for cluster '{cluster_name}'.")
@@ -2828,109 +3125,113 @@ def export_ansible_vars(config_path: Path, cluster_name: str, output_file: str =
 
     # Build Ansible vars dictionary
     ansible_vars = {
-        '# SAP HANA HA Pacemaker Configuration': None,
-        f'# Cluster: {cluster_name}': None,
-        f'# Generated from: {config_path}': None,
-        '': None,
-        '# Core SAP HANA Parameters': None,
-        'sap_hana_ha_pacemaker_hana_sid': sid,
-        'sap_hana_ha_pacemaker_hana_instance_number': f'"{info.get("instance_number", "00")}"',
+        "# SAP HANA HA Pacemaker Configuration": None,
+        f"# Cluster: {cluster_name}": None,
+        f"# Generated from: {config_path}": None,
+        "": None,
+        "# Core SAP HANA Parameters": None,
+        "sap_hana_ha_pacemaker_hana_sid": sid,
+        "sap_hana_ha_pacemaker_hana_instance_number": f'"{info.get("instance_number", "00")}"',
     }
 
     # Cluster name
-    ansible_vars['sap_hana_ha_pacemaker_cluster_name'] = cluster_name
+    ansible_vars["sap_hana_ha_pacemaker_cluster_name"] = cluster_name
 
     # Node information
     if len(cluster_nodes) >= 2:
-        ansible_vars['\n# Cluster Node Information'] = None
-        node1_fqdn = info.get('node1_fqdn', cluster_nodes[0])
-        node1_ip = info.get('node1_ip', '')
-        node2_fqdn = info.get('node2_fqdn', cluster_nodes[1])
-        node2_ip = info.get('node2_ip', '')
+        ansible_vars["\n# Cluster Node Information"] = None
+        node1_fqdn = info.get("node1_fqdn", cluster_nodes[0])
+        node1_ip = info.get("node1_ip", "")
+        node2_fqdn = info.get("node2_fqdn", cluster_nodes[1])
+        node2_ip = info.get("node2_ip", "")
 
-        ansible_vars['sap_hana_ha_pacemaker_node1_fqdn'] = node1_fqdn
+        ansible_vars["sap_hana_ha_pacemaker_node1_fqdn"] = node1_fqdn
         if node1_ip:
-            ansible_vars['sap_hana_ha_pacemaker_node1_ip'] = node1_ip
-        ansible_vars['sap_hana_ha_pacemaker_node2_fqdn'] = node2_fqdn
+            ansible_vars["sap_hana_ha_pacemaker_node1_ip"] = node1_ip
+        ansible_vars["sap_hana_ha_pacemaker_node2_fqdn"] = node2_fqdn
         if node2_ip:
-            ansible_vars['sap_hana_ha_pacemaker_node2_ip'] = node2_ip
+            ansible_vars["sap_hana_ha_pacemaker_node2_ip"] = node2_ip
 
     # Virtual IP
-    vip = info.get('virtual_ip', '')
+    vip = info.get("virtual_ip", "")
     if vip:
-        ansible_vars['\n# Virtual IP Configuration'] = None
-        ansible_vars['sap_hana_ha_pacemaker_vip'] = vip
-        secondary_vip = info.get('secondary_vip', '')
+        ansible_vars["\n# Virtual IP Configuration"] = None
+        ansible_vars["sap_hana_ha_pacemaker_vip"] = vip
+        secondary_vip = info.get("secondary_vip", "")
         if secondary_vip:
-            ansible_vars['sap_hana_ha_pacemaker_secondary_vip'] = secondary_vip
-            ansible_vars['sap_hana_ha_pacemaker_secondary_read'] = 'true'
+            ansible_vars["sap_hana_ha_pacemaker_secondary_vip"] = secondary_vip
+            ansible_vars["sap_hana_ha_pacemaker_secondary_read"] = "true"
 
     # Cluster password placeholder
-    ansible_vars['\n# Pacemaker & HA Service Setup'] = None
-    ansible_vars['sap_hana_ha_pacemaker_hacluster_password'] = '"{{ vault_hacluster_password }}"  # Store in Ansible Vault'
+    ansible_vars["\n# Pacemaker & HA Service Setup"] = None
+    ansible_vars["sap_hana_ha_pacemaker_hacluster_password"] = (
+        '"{{ vault_hacluster_password }}"  # Store in Ansible Vault'
+    )
 
     # System Replication
-    repl_mode = info.get('replication_mode', '')
-    op_mode = info.get('operation_mode', '')
-    site1 = info.get('site1_name', '')
-    site2 = info.get('site2_name', '')
+    repl_mode = info.get("replication_mode", "")
+    op_mode = info.get("operation_mode", "")
+    site1 = info.get("site1_name", "")
+    site2 = info.get("site2_name", "")
     if repl_mode or op_mode or site1:
-        ansible_vars['\n# SAP HANA System Replication'] = None
+        ansible_vars["\n# SAP HANA System Replication"] = None
         if repl_mode:
-            ansible_vars['sap_hana_ha_pacemaker_replication_mode'] = repl_mode
+            ansible_vars["sap_hana_ha_pacemaker_replication_mode"] = repl_mode
         if op_mode:
-            ansible_vars['sap_hana_ha_pacemaker_operation_mode'] = op_mode
+            ansible_vars["sap_hana_ha_pacemaker_operation_mode"] = op_mode
         if site1:
-            ansible_vars['sap_hana_ha_pacemaker_site1_name'] = site1
+            ansible_vars["sap_hana_ha_pacemaker_site1_name"] = site1
         if site2:
-            ansible_vars['sap_hana_ha_pacemaker_site2_name'] = site2
+            ansible_vars["sap_hana_ha_pacemaker_site2_name"] = site2
 
     # Cluster Properties
-    auto_reg = info.get('automated_register')
-    prefer_takeover = info.get('prefer_site_takeover')
-    stickiness = info.get('resource_stickiness')
-    migration = info.get('migration_threshold')
+    auto_reg = info.get("automated_register")
+    prefer_takeover = info.get("prefer_site_takeover")
+    stickiness = info.get("resource_stickiness")
+    migration = info.get("migration_threshold")
     if auto_reg is not None or prefer_takeover is not None or stickiness or migration:
-        ansible_vars['\n# Cluster Properties'] = None
+        ansible_vars["\n# Cluster Properties"] = None
         if auto_reg is not None:
-            ansible_vars['sap_hana_ha_pacemaker_automated_register'] = str(auto_reg).lower()
+            ansible_vars["sap_hana_ha_pacemaker_automated_register"] = str(auto_reg).lower()
         if prefer_takeover is not None:
-            ansible_vars['sap_hana_ha_pacemaker_prefer_site_takeover'] = str(prefer_takeover).lower()
+            ansible_vars["sap_hana_ha_pacemaker_prefer_site_takeover"] = str(
+                prefer_takeover
+            ).lower()
         if stickiness:
-            ansible_vars['sap_hana_ha_pacemaker_resource_stickiness'] = stickiness
+            ansible_vars["sap_hana_ha_pacemaker_resource_stickiness"] = stickiness
         if migration:
-            ansible_vars['sap_hana_ha_pacemaker_migration_threshold'] = migration
+            ansible_vars["sap_hana_ha_pacemaker_migration_threshold"] = migration
 
     # STONITH
-    stonith = info.get('stonith_device', '')
-    stonith_type = info.get('stonith_type', '')
+    stonith = info.get("stonith_device", "")
+    stonith_type = info.get("stonith_type", "")
     if stonith:
-        ansible_vars['\n# STONITH/Fencing Configuration'] = None
-        ansible_vars['sap_hana_ha_pacemaker_stonith_device'] = stonith
+        ansible_vars["\n# STONITH/Fencing Configuration"] = None
+        ansible_vars["sap_hana_ha_pacemaker_stonith_device"] = stonith
         if stonith_type:
-            ansible_vars['sap_hana_ha_pacemaker_stonith_type'] = stonith_type
-        ansible_vars['# Add fencing credentials as needed:'] = None
-        ansible_vars['# sap_hana_ha_pacemaker_fence_user'] = '"{{ vault_fence_user }}"'
-        ansible_vars['# sap_hana_ha_pacemaker_fence_password'] = '"{{ vault_fence_password }}"'
+            ansible_vars["sap_hana_ha_pacemaker_stonith_type"] = stonith_type
+        ansible_vars["# Add fencing credentials as needed:"] = None
+        ansible_vars["# sap_hana_ha_pacemaker_fence_user"] = '"{{ vault_fence_user }}"'
+        ansible_vars["# sap_hana_ha_pacemaker_fence_password"] = '"{{ vault_fence_password }}"'
 
     # Format output
-    output_lines = ['---']
+    output_lines = ["---"]
     for key, value in ansible_vars.items():
-        if key.startswith('#') or key.startswith('\n#'):
-            output_lines.append(key.lstrip('\n'))
-        elif key == '':
-            output_lines.append('')
+        if key.startswith("#") or key.startswith("\n#"):
+            output_lines.append(key.lstrip("\n"))
+        elif key == "":
+            output_lines.append("")
         elif value is None:
             continue
         else:
-            output_lines.append(f'{key}: {value}')
+            output_lines.append(f"{key}: {value}")
 
-    yaml_content = '\n'.join(output_lines)
+    yaml_content = "\n".join(output_lines)
 
     if output_file:
         output_path = Path(output_file)
-        with open(output_path, 'w') as f:
-            f.write(yaml_content + '\n')
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(yaml_content + "\n")
         print(f"Ansible vars exported to: {output_path}")
         print("\nUsage:")
         print(f"  1. Move to your Ansible inventory: group_vars/{cluster_name}.yml")
@@ -2973,9 +3274,9 @@ def delete_config(config_path: Path):
         try:
             response = input("\nDelete all health check report files? [y/N]: ").strip().lower()
         except (EOFError, KeyboardInterrupt):
-            response = 'n'
+            response = "n"
 
-        if response == 'y':
+        if response == "y":
             for f in report_files:
                 try:
                     os.remove(f)
@@ -2996,12 +3297,11 @@ def delete_config(config_path: Path):
     if deleted_count > 0:
         print(f"\nTotal files deleted: {deleted_count}")
         return True
-    else:
-        print("\nNo files deleted.")
-        return False
+    print("\nNo files deleted.")
+    return False
 
 
-def check_sosreports_on_nodes(nodes: list, ssh_user: str = 'root') -> dict:
+def check_sosreports_on_nodes(nodes: list, ssh_user: str = "root") -> dict:
     """
     Check which nodes have SOSreports available in /var/tmp.
 
@@ -3012,18 +3312,20 @@ def check_sosreports_on_nodes(nodes: list, ssh_user: str = 'root') -> dict:
     Returns:
         Dict mapping hostname -> sosreport path (or None if not found)
     """
-    import subprocess
-    from concurrent.futures import ThreadPoolExecutor, as_completed
 
     def check_node(hostname: str) -> tuple:
         """Check if a node has a sosreport."""
         try:
             find_cmd = [
-                "ssh", "-o", "BatchMode=yes",
-                "-o", "ConnectTimeout=10",
-                "-o", "StrictHostKeyChecking=no",
+                "ssh",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=10",
+                "-o",
+                "StrictHostKeyChecking=no",
                 f"{ssh_user}@{hostname}",
-                "ls -t /var/tmp/sosreport-*.tar.xz /var/tmp/sosreport-*.tar.gz 2>/dev/null | head -1"
+                "ls -t /var/tmp/sosreport-*.tar.xz /var/tmp/sosreport-*.tar.gz 2>/dev/null | head -1",
             ]
 
             result = subprocess.run(
@@ -3032,7 +3334,8 @@ def check_sosreports_on_nodes(nodes: list, ssh_user: str = 'root') -> dict:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 timeout=30,
-                text=True
+                text=True,
+                check=False,
             )
 
             if result.returncode == 0 and result.stdout.strip():
@@ -3051,8 +3354,9 @@ def check_sosreports_on_nodes(nodes: list, ssh_user: str = 'root') -> dict:
     return results
 
 
-def create_sosreports(nodes: list, ssh_user: str = 'root', sos_options: str = None,
-                      cluster_name: str = None) -> dict:
+def create_sosreports(
+    nodes: list, ssh_user: str = "root", sos_options: str = None, cluster_name: str = None
+) -> dict:
     """
     Create SOSreports on remote cluster nodes.
 
@@ -3065,14 +3369,12 @@ def create_sosreports(nodes: list, ssh_user: str = 'root', sos_options: str = No
     Returns:
         Dict mapping hostname -> (success: bool, message: str)
     """
-    import subprocess
-    from concurrent.futures import ThreadPoolExecutor, as_completed
 
     # Try to discover cluster name if not provided
     if cluster_name is None and nodes:
         discovery = discover_cluster_from_node(nodes[0], ssh_user)
-        if discovery['success'] and discovery['cluster_name']:
-            cluster_name = discovery['cluster_name']
+        if discovery["success"] and discovery["cluster_name"]:
+            cluster_name = discovery["cluster_name"]
             print(f"\n  Discovered cluster: {cluster_name}")
 
     # Default: include cluster-relevant plugins
@@ -3081,7 +3383,7 @@ def create_sosreports(nodes: list, ssh_user: str = 'root', sos_options: str = No
         base_options = "--batch --all-logs -o pacemaker,corosync,sapnw,saphana,systemd,sos_extras"
         if cluster_name:
             # Sanitize cluster name for use as label (remove spaces, special chars)
-            safe_label = re.sub(r'[^a-zA-Z0-9_-]', '', cluster_name)
+            safe_label = re.sub(r"[^a-zA-Z0-9_-]", "", cluster_name)
             sos_options = f"{base_options} --label={safe_label}"
         else:
             sos_options = base_options
@@ -3102,12 +3404,17 @@ def create_sosreports(nodes: list, ssh_user: str = 'root', sos_options: str = No
         try:
             # Run sos report remotely
             sos_cmd = [
-                "ssh", "-o", "BatchMode=yes",
-                "-o", "ConnectTimeout=10",
-                "-o", "StrictHostKeyChecking=no",
-                "-o", "ServerAliveInterval=30",
+                "ssh",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=10",
+                "-o",
+                "StrictHostKeyChecking=no",
+                "-o",
+                "ServerAliveInterval=30",
                 f"{ssh_user}@{hostname}",
-                f"sos report {sos_options}"
+                f"sos report {sos_options}",
             ]
 
             result = subprocess.run(
@@ -3116,23 +3423,21 @@ def create_sosreports(nodes: list, ssh_user: str = 'root', sos_options: str = No
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 timeout=600,  # 10 minutes timeout
-                text=True
+                text=True,
+                check=False,
             )
 
             if result.returncode == 0:
                 # Extract the generated filename from output
                 output = result.stdout
-                for line in output.split('\n'):
-                    if '/var/tmp/sosreport-' in line and ('.tar.xz' in line or '.tar.gz' in line):
-                        # Extract path from line
-                        import re
-                        match = re.search(r'(/var/tmp/sosreport-[^\s]+\.tar\.[xg]z)', line)
+                for line in output.split("\n"):
+                    if "/var/tmp/sosreport-" in line and (".tar.xz" in line or ".tar.gz" in line):
+                        match = re.search(r"(/var/tmp/sosreport-[^\s]+\.tar\.[xg]z)", line)
                         if match:
                             return (hostname, True, f"Created: {match.group(1)}")
                 return (hostname, True, "SOSreport created successfully")
-            else:
-                error_msg = result.stderr.strip() or result.stdout.strip() or "Unknown error"
-                return (hostname, False, f"Failed: {error_msg[:100]}")
+            error_msg = result.stderr.strip() or result.stdout.strip() or "Unknown error"
+            return (hostname, False, f"Failed: {error_msg[:100]}")
 
         except subprocess.TimeoutExpired:
             return (hostname, False, "Timeout (exceeded 10 minutes)")
@@ -3158,7 +3463,7 @@ def create_sosreports(nodes: list, ssh_user: str = 'root', sos_options: str = No
     return results
 
 
-def check_sos_sap_extensions(hostname: str, ssh_user: str = 'root') -> dict:
+def check_sos_sap_extensions(hostname: str, ssh_user: str = "root") -> dict:
     """
     Check if SAP HANA HA SOSreport extensions are configured on a node.
 
@@ -3169,19 +3474,23 @@ def check_sos_sap_extensions(hostname: str, ssh_user: str = 'root') -> dict:
         - sos_extras_installed: True if sos-extras package is installed
     """
     result = {
-        'reachable': False,
-        'sos_conf_ok': False,
-        'extras_ok': False,
-        'hadr_script_ok': False,
-        'sos_extras_installed': False,
+        "reachable": False,
+        "sos_conf_ok": False,
+        "extras_ok": False,
+        "hadr_script_ok": False,
+        "sos_extras_installed": False,
     }
 
     try:
         # Check sos.conf for SAP plugins
         check_cmd = [
-            "ssh", "-o", "BatchMode=yes",
-            "-o", "ConnectTimeout=10",
-            "-o", "StrictHostKeyChecking=no",
+            "ssh",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=10",
+            "-o",
+            "StrictHostKeyChecking=no",
             f"{ssh_user}@{hostname}",
             """
             # Check if sos-extras is installed
@@ -3207,7 +3516,7 @@ def check_sos_sap_extensions(hostname: str, ssh_user: str = 'root') -> dict:
             else
                 echo "HADR_SCRIPT_OK=no"
             fi
-            """
+            """,
         ]
 
         proc = subprocess.run(
@@ -3216,28 +3525,29 @@ def check_sos_sap_extensions(hostname: str, ssh_user: str = 'root') -> dict:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             timeout=30,
-            text=True
+            text=True,
+            check=False,
         )
 
         if proc.returncode == 0:
-            result['reachable'] = True
+            result["reachable"] = True
             output = proc.stdout
-            result['sos_extras_installed'] = 'SOS_INSTALLED=yes' in output
-            result['sos_conf_ok'] = 'SOS_CONF_OK=yes' in output
-            result['extras_ok'] = 'EXTRAS_OK=yes' in output
-            result['hadr_script_ok'] = 'HADR_SCRIPT_OK=yes' in output
+            result["sos_extras_installed"] = "SOS_INSTALLED=yes" in output
+            result["sos_conf_ok"] = "SOS_CONF_OK=yes" in output
+            result["extras_ok"] = "EXTRAS_OK=yes" in output
+            result["hadr_script_ok"] = "HADR_SCRIPT_OK=yes" in output
         else:
-            result['reachable'] = False
+            result["reachable"] = False
 
     except subprocess.TimeoutExpired:
-        result['reachable'] = False
+        result["reachable"] = False
     except Exception:
-        result['reachable'] = False
+        result["reachable"] = False
 
     return result
 
 
-def configure_sos_sap_extensions(hostname: str, ssh_user: str = 'root') -> tuple:
+def configure_sos_sap_extensions(hostname: str, ssh_user: str = "root") -> tuple:
     """
     Configure SAP HANA HA SOSreport extensions on a node.
 
@@ -3247,7 +3557,7 @@ def configure_sos_sap_extensions(hostname: str, ssh_user: str = 'root') -> tuple
     Returns:
         Tuple (success: bool, message: str)
     """
-    sudo_prefix = "sudo " if ssh_user != 'root' else ""
+    sudo_prefix = "sudo " if ssh_user != "root" else ""
 
     extras_content = """# SAP HANA HA/DR data collection for SOSreports
 # Collects System Replication status and cluster state
@@ -3368,11 +3678,15 @@ fi
 
     try:
         deploy_cmd = [
-            "ssh", "-o", "BatchMode=yes",
-            "-o", "ConnectTimeout=10",
-            "-o", "StrictHostKeyChecking=no",
+            "ssh",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=10",
+            "-o",
+            "StrictHostKeyChecking=no",
             f"{ssh_user}@{hostname}",
-            deploy_script
+            deploy_script,
         ]
 
         proc = subprocess.run(
@@ -3381,20 +3695,18 @@ fi
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             timeout=60,
-            text=True
+            text=True,
+            check=False,
         )
 
         if proc.returncode == 0:
             output = proc.stdout
-            if 'EXTRAS_DEPLOYED_OK' in output:
-                if 'SOS_CONF_ALREADY_OK' in output:
+            if "EXTRAS_DEPLOYED_OK" in output:
+                if "SOS_CONF_ALREADY_OK" in output:
                     return (True, "Extensions configured (sos.conf was already OK)")
-                else:
-                    return (True, "Extensions configured successfully")
-            else:
-                return (False, "Deployment verification failed")
-        else:
-            return (False, f"SSH command failed: {proc.stderr.strip()[:80]}")
+                return (True, "Extensions configured successfully")
+            return (False, "Deployment verification failed")
+        return (False, f"SSH command failed: {proc.stderr.strip()[:80]}")
 
     except subprocess.TimeoutExpired:
         return (False, "Timeout")
@@ -3402,7 +3714,7 @@ fi
         return (False, f"Error: {str(e)}")
 
 
-def discover_cluster_from_node(seed_node: str, ssh_user: str = 'root') -> dict:
+def discover_cluster_from_node(seed_node: str, ssh_user: str = "root") -> dict:
     """
     Discover cluster information from a single seed node via SSH.
 
@@ -3415,23 +3727,27 @@ def discover_cluster_from_node(seed_node: str, ssh_user: str = 'root') -> dict:
         - error: str if not successful
     """
     result = {
-        'success': False,
-        'cluster_name': None,
-        'cluster_running': False,
-        'nodes': [],
-        'error': None,
+        "success": False,
+        "cluster_name": None,
+        "cluster_running": False,
+        "nodes": [],
+        "error": None,
     }
 
-    sudo_prefix = "sudo " if ssh_user != 'root' else ""
+    sudo_prefix = "sudo " if ssh_user != "root" else ""
 
     # First check if we can reach the node
     try:
         test_cmd = [
-            "ssh", "-o", "BatchMode=yes",
-            "-o", "ConnectTimeout=10",
-            "-o", "StrictHostKeyChecking=no",
+            "ssh",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=10",
+            "-o",
+            "StrictHostKeyChecking=no",
             f"{ssh_user}@{seed_node}",
-            "echo ok"
+            "echo ok",
         ]
         proc = subprocess.run(
             test_cmd,
@@ -3439,16 +3755,17 @@ def discover_cluster_from_node(seed_node: str, ssh_user: str = 'root') -> dict:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             timeout=15,
-            text=True
+            text=True,
+            check=False,
         )
-        if proc.returncode != 0 or 'ok' not in proc.stdout:
-            result['error'] = f"Cannot connect to {seed_node} via SSH"
+        if proc.returncode != 0 or "ok" not in proc.stdout:
+            result["error"] = f"Cannot connect to {seed_node} via SSH"
             return result
     except subprocess.TimeoutExpired:
-        result['error'] = f"SSH connection to {seed_node} timed out"
+        result["error"] = f"SSH connection to {seed_node} timed out"
         return result
     except Exception as e:
-        result['error'] = f"SSH error: {str(e)}"
+        result["error"] = f"SSH error: {str(e)}"
         return result
 
     # Check if cluster is running
@@ -3479,11 +3796,15 @@ echo "CLUSTER_NODES=$NODES"
 
     try:
         discover_cmd = [
-            "ssh", "-o", "BatchMode=yes",
-            "-o", "ConnectTimeout=10",
-            "-o", "StrictHostKeyChecking=no",
+            "ssh",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=10",
+            "-o",
+            "StrictHostKeyChecking=no",
             f"{ssh_user}@{seed_node}",
-            cluster_check_script
+            cluster_check_script,
         ]
 
         proc = subprocess.run(
@@ -3492,42 +3813,46 @@ echo "CLUSTER_NODES=$NODES"
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             timeout=30,
-            text=True
+            text=True,
+            check=False,
         )
 
         output = proc.stdout
 
         # Parse results
-        result['cluster_running'] = 'CLUSTER_RUNNING=yes' in output
+        result["cluster_running"] = "CLUSTER_RUNNING=yes" in output
 
-        for line in output.split('\n'):
-            if line.startswith('CLUSTER_NAME='):
-                name = line.split('=', 1)[1].strip()
+        for line in output.split("\n"):
+            if line.startswith("CLUSTER_NAME="):
+                name = line.split("=", 1)[1].strip()
                 if name:
-                    result['cluster_name'] = name
-            elif line.startswith('CLUSTER_NODES='):
-                nodes_str = line.split('=', 1)[1].strip()
+                    result["cluster_name"] = name
+            elif line.startswith("CLUSTER_NODES="):
+                nodes_str = line.split("=", 1)[1].strip()
                 if nodes_str:
-                    result['nodes'] = [n.strip() for n in nodes_str.split() if n.strip()]
+                    result["nodes"] = [n.strip() for n in nodes_str.split() if n.strip()]
 
         # If no nodes found, at least include the seed node
-        if not result['nodes']:
-            result['nodes'] = [seed_node]
+        if not result["nodes"]:
+            result["nodes"] = [seed_node]
 
-        result['success'] = True
+        result["success"] = True
 
     except subprocess.TimeoutExpired:
-        result['error'] = "Discovery command timed out"
+        result["error"] = "Discovery command timed out"
     except Exception as e:
-        result['error'] = f"Discovery error: {str(e)}"
+        result["error"] = f"Discovery error: {str(e)}"
 
     return result
 
 
-def create_and_fetch_sosreports(seed_node: str, output_dir: str = None,
-                                 ssh_user: str = 'root',
-                                 configure_extensions: bool = None,
-                                 interactive: bool = True) -> list:
+def create_and_fetch_sosreports(
+    seed_node: str,
+    output_dir: str = None,
+    ssh_user: str = "root",
+    configure_extensions: bool = None,
+    interactive: bool = True,
+) -> list:
     """
     Complete workflow to create SOSreports on a cluster and fetch them locally.
 
@@ -3559,13 +3884,13 @@ def create_and_fetch_sosreports(seed_node: str, output_dir: str = None,
     print("Step 1: Discovering cluster configuration...")
     discovery = discover_cluster_from_node(seed_node, ssh_user)
 
-    if not discovery['success']:
+    if not discovery["success"]:
         print(f"  [ERROR] {discovery['error']}")
         return []
 
-    cluster_name = discovery['cluster_name'] or 'unknown'
-    cluster_nodes = discovery['nodes']
-    cluster_running = discovery['cluster_running']
+    cluster_name = discovery["cluster_name"] or "unknown"
+    cluster_nodes = discovery["nodes"]
+    cluster_running = discovery["cluster_running"]
 
     print(f"  Cluster name: {cluster_name}")
     print(f"  Cluster status: {'Running' if cluster_running else 'Stopped'}")
@@ -3581,11 +3906,15 @@ def create_and_fetch_sosreports(seed_node: str, output_dir: str = None,
         """Check SSH access to a node."""
         try:
             cmd = [
-                "ssh", "-o", "BatchMode=yes",
-                "-o", "ConnectTimeout=10",
-                "-o", "StrictHostKeyChecking=no",
+                "ssh",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=10",
+                "-o",
+                "StrictHostKeyChecking=no",
                 f"{ssh_user}@{hostname}",
-                "echo ok"
+                "echo ok",
             ]
             proc = subprocess.run(
                 cmd,
@@ -3593,9 +3922,10 @@ def create_and_fetch_sosreports(seed_node: str, output_dir: str = None,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 timeout=15,
-                text=True
+                text=True,
+                check=False,
             )
-            return (hostname, proc.returncode == 0 and 'ok' in proc.stdout)
+            return (hostname, proc.returncode == 0 and "ok" in proc.stdout)
         except Exception:
             return (hostname, False)
 
@@ -3623,7 +3953,7 @@ def create_and_fetch_sosreports(seed_node: str, output_dir: str = None,
 
     for node in reachable_nodes:
         ext_status = check_sos_sap_extensions(node, ssh_user)
-        if ext_status['extras_ok']:
+        if ext_status["extras_ok"]:
             nodes_have_config.append(node)
             print(f"  [{node}] ✓ SAP extensions configured")
         else:
@@ -3638,8 +3968,12 @@ def create_and_fetch_sosreports(seed_node: str, output_dir: str = None,
             print("  SAP SOSreport extensions enhance data collection for cluster analysis.")
             print("  They add SAPHanaSR-showAttr and other cluster state commands.")
             print()
-            response = input(f"  Configure SAP extensions on {len(nodes_need_config)} node(s)? [Y/n]: ").strip().lower()
-            do_configure = response not in ('n', 'no')
+            response = (
+                input(f"  Configure SAP extensions on {len(nodes_need_config)} node(s)? [Y/n]: ")
+                .strip()
+                .lower()
+            )
+            do_configure = response not in ("n", "no")
 
         if do_configure:
             print()
@@ -3666,12 +4000,17 @@ def create_and_fetch_sosreports(seed_node: str, output_dir: str = None,
         """Run sos report on a single node."""
         try:
             sos_cmd = [
-                "ssh", "-o", "BatchMode=yes",
-                "-o", "ConnectTimeout=10",
-                "-o", "StrictHostKeyChecking=no",
-                "-o", "ServerAliveInterval=30",
+                "ssh",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=10",
+                "-o",
+                "StrictHostKeyChecking=no",
+                "-o",
+                "ServerAliveInterval=30",
                 f"{ssh_user}@{hostname}",
-                f"sos report {sos_options}"
+                f"sos report {sos_options}",
             ]
 
             result = subprocess.run(
@@ -3680,21 +4019,21 @@ def create_and_fetch_sosreports(seed_node: str, output_dir: str = None,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 timeout=600,  # 10 minutes timeout
-                text=True
+                text=True,
+                check=False,
             )
 
             if result.returncode == 0:
                 # Extract the generated filename from output
                 output = result.stdout
-                for line in output.split('\n'):
-                    if '/var/tmp/sosreport-' in line and ('.tar.xz' in line or '.tar.gz' in line):
-                        match = re.search(r'(/var/tmp/sosreport-[^\s]+\.tar\.[xg]z)', line)
+                for line in output.split("\n"):
+                    if "/var/tmp/sosreport-" in line and (".tar.xz" in line or ".tar.gz" in line):
+                        match = re.search(r"(/var/tmp/sosreport-[^\s]+\.tar\.[xg]z)", line)
                         if match:
                             return (hostname, True, match.group(1))
                 return (hostname, True, "Created successfully (path unknown)")
-            else:
-                error_msg = result.stderr.strip() or result.stdout.strip() or "Unknown error"
-                return (hostname, False, f"Failed: {error_msg[:100]}")
+            error_msg = result.stderr.strip() or result.stdout.strip() or "Unknown error"
+            return (hostname, False, f"Failed: {error_msg[:100]}")
 
         except subprocess.TimeoutExpired:
             return (hostname, False, "Timeout (exceeded 10 minutes)")
@@ -3710,7 +4049,7 @@ def create_and_fetch_sosreports(seed_node: str, output_dir: str = None,
             hostname, success, result = future.result()
             status = "✓" if success else "✗"
             print(f"  [{hostname}] {status} {result}")
-            if success and result.startswith('/var/tmp/'):
+            if success and result.startswith("/var/tmp/"):
                 created_reports[hostname] = result
 
     print()
@@ -3730,7 +4069,7 @@ def create_and_fetch_sosreports(seed_node: str, output_dir: str = None,
     if output_dir:
         sos_dir = Path(output_dir)
     else:
-        sos_dir = Path.cwd() / 'sosreports'
+        sos_dir = Path.cwd() / "sosreports"
 
     sos_dir.mkdir(parents=True, exist_ok=True)
 
@@ -3751,11 +4090,15 @@ def create_and_fetch_sosreports(seed_node: str, output_dir: str = None,
 
             # Download via SCP
             scp_cmd = [
-                "scp", "-o", "BatchMode=yes",
-                "-o", "ConnectTimeout=10",
-                "-o", "StrictHostKeyChecking=no",
+                "scp",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=10",
+                "-o",
+                "StrictHostKeyChecking=no",
                 f"{ssh_user}@{hostname}:{remote_path}",
-                str(local_path)
+                str(local_path),
             ]
 
             proc = subprocess.run(
@@ -3764,14 +4107,14 @@ def create_and_fetch_sosreports(seed_node: str, output_dir: str = None,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 timeout=300,  # 5 minutes for large files
-                text=True
+                text=True,
+                check=False,
             )
 
             if proc.returncode == 0:
                 size_mb = local_path.stat().st_size / (1024 * 1024)
                 return (hostname, str(local_path), f"Downloaded ({size_mb:.1f} MB)")
-            else:
-                return (hostname, None, f"SCP failed: {proc.stderr.strip()[:60]}")
+            return (hostname, None, f"SCP failed: {proc.stderr.strip()[:60]}")
 
         except subprocess.TimeoutExpired:
             return (hostname, None, "Timeout")
@@ -3805,9 +4148,15 @@ def create_and_fetch_sosreports(seed_node: str, output_dir: str = None,
     return downloaded_files
 
 
-def fetch_sosreports(config_path: Path, cluster_name: str = None, nodes: list = None,
-                     output_dir: str = None, ssh_user: str = 'root',
-                     auto_create: bool = False, interactive: bool = True):
+def fetch_sosreports(  # pylint: disable=too-many-positional-arguments
+    config_path: Path,
+    cluster_name: str = None,
+    nodes: list = None,
+    output_dir: str = None,
+    ssh_user: str = "root",
+    auto_create: bool = False,
+    interactive: bool = True,
+):
     """
     Fetch the latest sosreports from cluster nodes via SCP.
 
@@ -3828,14 +4177,12 @@ def fetch_sosreports(config_path: Path, cluster_name: str = None, nodes: list = 
     Returns:
         List of downloaded file paths, or empty list on failure
     """
-    import subprocess
-    from concurrent.futures import ThreadPoolExecutor, as_completed
 
     # Determine output directory
     if output_dir:
         sos_dir = Path(output_dir)
     else:
-        sos_dir = config_path.parent / 'sosreports'
+        sos_dir = config_path.parent / "sosreports"
 
     sos_dir.mkdir(parents=True, exist_ok=True)
 
@@ -3854,9 +4201,9 @@ def fetch_sosreports(config_path: Path, cluster_name: str = None, nodes: list = 
 
             discovery = discover_cluster_from_node(seed_node, ssh_user)
 
-            if discovery['success']:
-                discovered_cluster_name = discovery['cluster_name']
-                cluster_status = "Running" if discovery['cluster_running'] else "Stopped"
+            if discovery["success"]:
+                discovered_cluster_name = discovery["cluster_name"]
+                cluster_status = "Running" if discovery["cluster_running"] else "Stopped"
                 print(f"  Cluster: {discovered_cluster_name or 'unknown'}")
                 print(f"  Status: {cluster_status}")
                 print(f"  Nodes discovered: {', '.join(discovery['nodes'])}")
@@ -3869,17 +4216,32 @@ def fetch_sosreports(config_path: Path, cluster_name: str = None, nodes: list = 
 
                 def check_ssh(hostname):
                     try:
-                        cmd = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
-                               "-o", "StrictHostKeyChecking=no", f"{ssh_user}@{hostname}", "echo ok"]
-                        proc = subprocess.run(cmd, stdin=subprocess.DEVNULL,
-                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                            timeout=15, text=True)
-                        return (hostname, proc.returncode == 0 and 'ok' in proc.stdout)
+                        cmd = [
+                            "ssh",
+                            "-o",
+                            "BatchMode=yes",
+                            "-o",
+                            "ConnectTimeout=10",
+                            "-o",
+                            "StrictHostKeyChecking=no",
+                            f"{ssh_user}@{hostname}",
+                            "echo ok",
+                        ]
+                        proc = subprocess.run(
+                            cmd,
+                            stdin=subprocess.DEVNULL,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            timeout=15,
+                            text=True,
+                            check=False,
+                        )
+                        return (hostname, proc.returncode == 0 and "ok" in proc.stdout)
                     except Exception:
                         return (hostname, False)
 
-                with ThreadPoolExecutor(max_workers=min(len(discovery['nodes']), 5)) as executor:
-                    futures = {executor.submit(check_ssh, n): n for n in discovery['nodes']}
+                with ThreadPoolExecutor(max_workers=min(len(discovery["nodes"]), 5)) as executor:
+                    futures = {executor.submit(check_ssh, n): n for n in discovery["nodes"]}
                     for future in as_completed(futures):
                         hostname, ok = future.result()
                         if ok:
@@ -3905,16 +4267,16 @@ def fetch_sosreports(config_path: Path, cluster_name: str = None, nodes: list = 
             print(f"[ERROR] Configuration file not found: {config_path}")
             return []
 
-        with open(config_path, 'r') as f:
+        with open(config_path, "r", encoding="utf-8") as f:
             config = yaml.safe_load(f)
 
-        clusters = config.get('clusters', {})
+        clusters = config.get("clusters", {})
         if cluster_name not in clusters:
             print(f"[ERROR] Cluster '{cluster_name}' not found in configuration.")
             print(f"Available clusters: {', '.join(clusters.keys())}")
             return []
 
-        target_nodes = clusters[cluster_name].get('nodes', [])
+        target_nodes = clusters[cluster_name].get("nodes", [])
     else:
         print("[ERROR] Either cluster_name or nodes must be specified.")
         return []
@@ -3945,7 +4307,9 @@ def fetch_sosreports(config_path: Path, cluster_name: str = None, nodes: list = 
 
     # Step 2: Handle missing SOSreports
     if nodes_without_sos:
-        print(f"Missing SOSreports on {len(nodes_without_sos)} node(s): {', '.join(nodes_without_sos)}")
+        print(
+            f"Missing SOSreports on {len(nodes_without_sos)} node(s): {', '.join(nodes_without_sos)}"
+        )
 
         create_missing = False
 
@@ -3954,11 +4318,10 @@ def fetch_sosreports(config_path: Path, cluster_name: str = None, nodes: list = 
         elif interactive and sys.stdin.isatty():
             print()
             response = input("Create SOSreports on these nodes? [y/N]: ").strip().lower()
-            create_missing = response in ('y', 'yes')
+            create_missing = response in ("y", "yes")
 
         if create_missing:
-            create_sosreports(nodes_without_sos, ssh_user,
-                             cluster_name=discovered_cluster_name)
+            create_sosreports(nodes_without_sos, ssh_user, cluster_name=discovered_cluster_name)
 
             # Re-check for newly created sosreports
             new_existing = check_sosreports_on_nodes(nodes_without_sos, ssh_user)
@@ -3995,11 +4358,15 @@ def fetch_sosreports(config_path: Path, cluster_name: str = None, nodes: list = 
 
             # Download via SCP
             scp_cmd = [
-                "scp", "-o", "BatchMode=yes",
-                "-o", "ConnectTimeout=10",
-                "-o", "StrictHostKeyChecking=no",
+                "scp",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=10",
+                "-o",
+                "StrictHostKeyChecking=no",
                 f"{ssh_user}@{hostname}:{remote_path}",
-                str(local_path)
+                str(local_path),
             ]
 
             result = subprocess.run(
@@ -4008,15 +4375,15 @@ def fetch_sosreports(config_path: Path, cluster_name: str = None, nodes: list = 
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 timeout=300,  # 5 minutes for large files
-                text=True
+                text=True,
+                check=False,
             )
 
             if result.returncode == 0:
                 # Get file size
                 size_mb = local_path.stat().st_size / (1024 * 1024)
                 return (hostname, str(local_path), f"Downloaded ({size_mb:.1f} MB)")
-            else:
-                return (hostname, None, f"SCP failed: {result.stderr.strip()}")
+            return (hostname, None, f"SCP failed: {result.stderr.strip()}")
 
         except subprocess.TimeoutExpired:
             return (hostname, None, "Timeout")
@@ -4026,8 +4393,7 @@ def fetch_sosreports(config_path: Path, cluster_name: str = None, nodes: list = 
     # Fetch from nodes with sosreports in parallel (using known paths)
     with ThreadPoolExecutor(max_workers=min(len(nodes_with_sos), 5)) as executor:
         futures = {
-            executor.submit(fetch_from_node, node, existing[node]): node
-            for node in nodes_with_sos
+            executor.submit(fetch_from_node, node, existing[node]): node for node in nodes_with_sos
         }
 
         for future in as_completed(futures):
@@ -4051,41 +4417,32 @@ def fetch_sosreports(config_path: Path, cluster_name: str = None, nodes: list = 
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Discover access methods to SAP Pacemaker cluster nodes'
+        description="Discover access methods to SAP Pacemaker cluster nodes"
     )
     parser.add_argument(
-        '--config-dir', '-c',
-        default='.',
-        help='Directory to store configuration (default: current directory)'
+        "--config-dir",
+        "-c",
+        default=".",
+        help="Directory to store configuration (default: current directory)",
+    )
+    parser.add_argument("--hosts-file", "-H", help="File containing list of hosts (one per line)")
+    parser.add_argument(
+        "--sosreport-dir", "-s", help="Directory containing SOSreport archives/directories"
     )
     parser.add_argument(
-        '--hosts-file', '-H',
-        help='File containing list of hosts (one per line)'
+        "--force", "-f", action="store_true", help="Force rediscovery (ignore existing config)"
     )
     parser.add_argument(
-        '--sosreport-dir', '-s',
-        help='Directory containing SOSreport archives/directories'
+        "--workers", "-w", type=int, default=10, help="Number of parallel workers (default: 10)"
     )
     parser.add_argument(
-        '--force', '-f',
-        action='store_true',
-        help='Force rediscovery (ignore existing config)'
+        "--show-config", "-S", action="store_true", help="Display current configuration and exit"
     )
     parser.add_argument(
-        '--workers', '-w',
-        type=int,
-        default=10,
-        help='Number of parallel workers (default: 10)'
-    )
-    parser.add_argument(
-        '--show-config', '-S',
-        action='store_true',
-        help='Display current configuration and exit'
-    )
-    parser.add_argument(
-        '--delete-config', '-D',
-        action='store_true',
-        help='Delete configuration file to restart investigation'
+        "--delete-config",
+        "-D",
+        action="store_true",
+        help="Delete configuration file to restart investigation",
     )
 
     args = parser.parse_args()
@@ -4106,7 +4463,7 @@ def main():
         config_dir=args.config_dir,
         sosreport_dir=args.sosreport_dir,
         hosts_file=args.hosts_file,
-        force_rediscover=args.force
+        force_rediscover=args.force,
     )
     discovery.MAX_WORKERS = args.workers
 
@@ -4123,5 +4480,5 @@ def main():
         sys.exit(1)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

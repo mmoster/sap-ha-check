@@ -14,39 +14,45 @@ Compatibility:
 from typing import List, Optional, Tuple
 
 from .models import (
-    ArchType, Topology, HookConfig, TraceConfig, SudoersEntry,
+    ArchType,
+    Topology,
+    HookConfig,
+    TraceConfig,
+    SudoersEntry,
     ExpectedConfig,
 )
-
 
 # ---------------------------------------------------------------------------
 # ANGI configuration (sap-hana-ha package, RHEL 9+)
 # ---------------------------------------------------------------------------
 
+
 def _angi_hooks() -> List[HookConfig]:
     return [
         HookConfig(
-            section_name='ha_dr_provider_hanasr',
-            provider='HanaSR',
-            path='/usr/share/sap-hana-ha/',
+            section_name="ha_dr_provider_hanasr",
+            provider="HanaSR",
+            path="/usr/share/sap-hana-ha/",
             execution_order=1,
         ),
         HookConfig(
-            section_name='ha_dr_provider_chksrv',
-            provider='ChkSrv',
-            path='/usr/share/sap-hana-ha/',
+            section_name="ha_dr_provider_chksrv",
+            provider="ChkSrv",
+            path="/usr/share/sap-hana-ha/",
             execution_order=2,
-            action_on_lost='stop',
+            action_on_lost="stop",
             is_optional=True,
         ),
     ]
 
 
 def _angi_trace() -> TraceConfig:
-    return TraceConfig(entries={
-        'ha_dr_hanasr': 'info',
-        'ha_dr_chksrv': 'info',   # relevant when ChkSrv is configured
-    })
+    return TraceConfig(
+        entries={
+            "ha_dr_hanasr": "info",
+            "ha_dr_chksrv": "info",  # relevant when ChkSrv is configured
+        }
+    )
 
 
 def _angi_sudoers(sid: str) -> List[SudoersEntry]:
@@ -56,32 +62,32 @@ def _angi_sudoers(sid: str) -> List[SudoersEntry]:
             # Match both styles:
             #   Defaults:rh1adm !requiretty          (direct user style)
             #   Defaults!ALIAS1, ALIAS2 !requiretty  (Cmnd_Alias style)
-            line_pattern=rf'Defaults[:!].*!requiretty',
-            description='Disable requiretty for sidadm',
-            example_line=f'Defaults:{sid_lower}adm !requiretty',
+            line_pattern=r"Defaults[:!].*!requiretty",
+            description="Disable requiretty for sidadm",
+            example_line=f"Defaults:{sid_lower}adm !requiretty",
         ),
         SudoersEntry(
             # Match both styles:
             #   rh1adm ALL=(ALL) NOPASSWD: /usr/sbin/crm_attribute -n hana_*
             #   rh1adm ALL=(ALL) NOPASSWD: ..., /usr/sbin/crm_attribute -n hana_rh1_*
-            line_pattern=rf'{sid_lower}adm\s+ALL=\(ALL\)\s+NOPASSWD:.*(/usr/sbin/crm_attribute\s+-n\s+hana_|Cmnd_Alias.*crm_attribute.*hana_)',
-            description='Allow crm_attribute for hana_* attributes',
-            example_line=f'{sid_lower}adm ALL=(ALL) NOPASSWD: /usr/sbin/crm_attribute -n hana_*',
+            line_pattern=rf"{sid_lower}adm\s+ALL=\(ALL\)\s+NOPASSWD:.*(/usr/sbin/crm_attribute\s+-n\s+hana_|Cmnd_Alias.*crm_attribute.*hana_)",
+            description="Allow crm_attribute for hana_* attributes",
+            example_line=f"{sid_lower}adm ALL=(ALL) NOPASSWD: /usr/sbin/crm_attribute -n hana_*",
         ),
         SudoersEntry(
             # Match both styles:
             #   rh1adm ALL=(ALL) NOPASSWD: /usr/bin/SAPHanaSR-hookHelper
             #   Cmnd_Alias FENCE = /usr/bin/SAPHanaSR-hookHelper --sid=RH1 --case=*
-            line_pattern=rf'({sid_lower}adm\s+ALL=\(ALL\)\s+NOPASSWD:.*SAPHanaSR-hookHelper|Cmnd_Alias\s+\w+\s*=\s*/usr/bin/SAPHanaSR-hookHelper)',
-            description='Allow SAPHanaSR-hookHelper (required when action_on_lost=fence)',
-            example_line=f'{sid_lower}adm ALL=(ALL) NOPASSWD: /usr/bin/SAPHanaSR-hookHelper',
+            line_pattern=rf"({sid_lower}adm\s+ALL=\(ALL\)\s+NOPASSWD:.*SAPHanaSR-hookHelper|Cmnd_Alias\s+\w+\s*=\s*/usr/bin/SAPHanaSR-hookHelper)",
+            description="Allow SAPHanaSR-hookHelper (required when action_on_lost=fence)",
+            example_line=f"{sid_lower}adm ALL=(ALL) NOPASSWD: /usr/bin/SAPHanaSR-hookHelper",
             is_optional=True,
         ),
     ]
 
 
 _ANGI_PROVIDER_FILES = [
-    '/usr/share/sap-hana-ha/HanaSR.py',
+    "/usr/share/sap-hana-ha/HanaSR.py",
 ]
 
 
@@ -89,29 +95,32 @@ _ANGI_PROVIDER_FILES = [
 # Legacy configuration (resource-agents-sap-hana[-scaleout], RHEL 8/9)
 # ---------------------------------------------------------------------------
 
+
 def _legacy_hooks() -> List[HookConfig]:
     return [
         HookConfig(
-            section_name='ha_dr_provider_SAPHanaSR',
-            provider='SAPHanaSR',
-            path='/usr/share/SAPHanaSR',
+            section_name="ha_dr_provider_SAPHanaSR",
+            provider="SAPHanaSR",
+            path="/usr/share/SAPHanaSR",
             execution_order=1,
         ),
         HookConfig(
-            section_name='ha_dr_provider_suschksrv',
-            provider='susChkSrv',
-            path='/usr/share/SAPHanaSR',
+            section_name="ha_dr_provider_suschksrv",
+            provider="susChkSrv",
+            path="/usr/share/SAPHanaSR",
             execution_order=3,
-            action_on_lost='stop',
+            action_on_lost="stop",
             is_optional=True,
         ),
     ]
 
 
 def _legacy_trace() -> TraceConfig:
-    return TraceConfig(entries={
-        'ha_dr_saphanasr': 'info',
-    })
+    return TraceConfig(
+        entries={
+            "ha_dr_saphanasr": "info",
+        }
+    )
 
 
 def _legacy_sudoers(sid: str) -> List[SudoersEntry]:
@@ -121,38 +130,39 @@ def _legacy_sudoers(sid: str) -> List[SudoersEntry]:
             # Match both styles:
             #   Defaults:rh1adm !requiretty          (direct user style)
             #   Defaults!ALIAS1, ALIAS2 !requiretty  (Cmnd_Alias style)
-            line_pattern=rf'Defaults[:!].*!requiretty',
-            description='Disable requiretty for sidadm',
-            example_line=f'Defaults:{sid_lower}adm !requiretty',
+            line_pattern=r"Defaults[:!].*!requiretty",
+            description="Disable requiretty for sidadm",
+            example_line=f"Defaults:{sid_lower}adm !requiretty",
         ),
         SudoersEntry(
             # Match both styles:
             #   rh1adm ALL=(ALL) NOPASSWD: /usr/sbin/crm_attribute -n hana_rh1_*
             #   rh1adm ALL=(ALL) NOPASSWD: ..., /usr/sbin/crm_attribute -n hana_rh1_*
-            line_pattern=rf'{sid_lower}adm\s+ALL=\(ALL\)\s+NOPASSWD:.*(/usr/sbin/crm_attribute\s+-n\s+hana_|Cmnd_Alias.*crm_attribute.*hana_)',
-            description=f'Allow crm_attribute for hana_{sid_lower}_* attributes',
-            example_line=f'{sid_lower}adm ALL=(ALL) NOPASSWD: /usr/sbin/crm_attribute -n hana_{sid_lower}_*',
+            line_pattern=rf"{sid_lower}adm\s+ALL=\(ALL\)\s+NOPASSWD:.*(/usr/sbin/crm_attribute\s+-n\s+hana_|Cmnd_Alias.*crm_attribute.*hana_)",
+            description=f"Allow crm_attribute for hana_{sid_lower}_* attributes",
+            example_line=f"{sid_lower}adm ALL=(ALL) NOPASSWD: /usr/sbin/crm_attribute -n hana_{sid_lower}_*",
         ),
         SudoersEntry(
             # Match both styles:
             #   rh1adm ALL=(ALL) NOPASSWD: /usr/sbin/SAPHanaSR-hookHelper
             #   Cmnd_Alias FENCE = /usr/sbin/SAPHanaSR-hookHelper --sid=RH1 --case=*
-            line_pattern=rf'({sid_lower}adm\s+ALL=\(ALL\)\s+NOPASSWD:.*SAPHanaSR-hookHelper|Cmnd_Alias\s+\w+\s*=\s*/usr/sbin/SAPHanaSR-hookHelper)',
-            description='Allow SAPHanaSR-hookHelper',
-            example_line=f'{sid_lower}adm ALL=(ALL) NOPASSWD: /usr/sbin/SAPHanaSR-hookHelper *',
+            line_pattern=rf"({sid_lower}adm\s+ALL=\(ALL\)\s+NOPASSWD:.*SAPHanaSR-hookHelper|Cmnd_Alias\s+\w+\s*=\s*/usr/sbin/SAPHanaSR-hookHelper)",
+            description="Allow SAPHanaSR-hookHelper",
+            example_line=f"{sid_lower}adm ALL=(ALL) NOPASSWD: /usr/sbin/SAPHanaSR-hookHelper *",
             is_optional=True,
         ),
     ]
 
 
 _LEGACY_PROVIDER_FILES = [
-    '/usr/share/SAPHanaSR/SAPHanaSR.py',
+    "/usr/share/SAPHanaSR/SAPHanaSR.py",
 ]
 
 
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def validate_rhel_arch_compatibility(rhel_major: int, arch_type: ArchType) -> Tuple[bool, str]:
     """Check whether the RHEL version supports the detected resource agent type.
@@ -186,10 +196,10 @@ def detect_arch_type(installed_packages: List[str]) -> Optional[ArchType]:
         None if neither is detected.
     """
     for pkg in installed_packages:
-        if pkg.startswith('sap-hana-ha'):
+        if pkg.startswith("sap-hana-ha"):
             return ArchType.ANGI
     for pkg in installed_packages:
-        if pkg.startswith('resource-agents-sap-hana'):
+        if pkg.startswith("resource-agents-sap-hana"):
             return ArchType.LEGACY
     return None
 

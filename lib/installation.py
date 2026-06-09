@@ -36,12 +36,12 @@ def get_redhat_doc_urls(rhel_major: int = 9) -> dict:
         scale_up = f"{sap_guide_base}/html/deploying_sap_hana_scale-up_system_replication_high_availability/"
         scale_out = f"{sap_guide_base}/html/deploying_sap_hana_scale-out_system_replication_high_availability/"
     return {
-        'ha_clusters': f"{ha}/",
-        'ha_quorum': f"{ha}/assembly_configuring-cluster-quorum-configuring-and-managing-high-availability-clusters",
-        'ha_fencing': f"{ha}/assembly_configuring-fencing-configuring-and-managing-high-availability-clusters",
-        'sap_solutions': f"{sap_base}/",
-        'sap_scale_up': scale_up,
-        'sap_scale_out': scale_out,
+        "ha_clusters": f"{ha}/",
+        "ha_quorum": f"{ha}/assembly_configuring-cluster-quorum-configuring-and-managing-high-availability-clusters",
+        "ha_fencing": f"{ha}/assembly_configuring-fencing-configuring-and-managing-high-availability-clusters",
+        "sap_solutions": f"{sap_base}/",
+        "sap_scale_up": scale_up,
+        "sap_scale_out": scale_out,
     }
 
 
@@ -355,7 +355,7 @@ def print_suggestions(step: str, rhel_major: int = 9):
     """
     urls = get_redhat_doc_urls(rhel_major)
     suggestions = {
-        'access': """
+        "access": """
 ===============================================================================
                          ACCESS DISCOVERY - Suggestions
 ===============================================================================
@@ -401,7 +401,7 @@ DOCUMENTATION
   SSH: https://man.openbsd.org/ssh
   Ansible: https://docs.ansible.com/ansible/latest/inventory_guide/
 """,
-        'config': """
+        "config": """
 ===============================================================================
                       CLUSTER CONFIGURATION - Suggestions
 ===============================================================================
@@ -452,12 +452,14 @@ COMMANDS TO CHECK
 DOCUMENTATION
 -------------
   Red Hat HA Quorum:
-    """ + urls['ha_quorum'] + """
+    """
+        + urls["ha_quorum"]
+        + """
 
   Corosync Configuration:
     https://clusterlabs.org/pacemaker/doc/2.1/Pacemaker_Explained/html/cluster-options.html
 """,
-        'pacemaker': """
+        "pacemaker": """
 ===============================================================================
                        PACEMAKER/COROSYNC - Suggestions
 ===============================================================================
@@ -516,12 +518,14 @@ COMMANDS TO CHECK
 DOCUMENTATION
 -------------
   Red Hat Fencing:
-    """ + urls['ha_fencing'] + """
+    """
+        + urls["ha_fencing"]
+        + """
 
   Pacemaker Resources:
     https://clusterlabs.org/pacemaker/doc/2.1/Pacemaker_Explained/html/resources.html
 """,
-        'sap': """
+        "sap": """
 ===============================================================================
                            SAP HANA - Suggestions
 ===============================================================================
@@ -586,9 +590,11 @@ DOCUMENTATION
     https://help.sap.com/docs/SAP_HANA_PLATFORM/6b94445c94ae495c83a19646e7c3fd56/1367c8fdefaa4808a7485b09f7a62949.html
 
   Red Hat SAP HANA HA:
-    """ + urls['sap_solutions'] + """
+    """
+        + urls["sap_solutions"]
+        + """
 """,
-        'install': """
+        "install": """
 ===============================================================================
                     INSTALLATION GUIDE - SAP HANA HA Cluster
 ===============================================================================
@@ -903,11 +909,17 @@ STEP 13: VERIFY CLUSTER (one node only)
 DOCUMENTATION
 ===============================================================================
 
-  Red Hat SAP HANA Scale-Up HA (RHEL """ + str(rhel_major) + """):
-    """ + urls['sap_scale_up'] + """
+  Red Hat SAP HANA Scale-Up HA (RHEL """
+        + str(rhel_major)
+        + """):
+    """
+        + urls["sap_scale_up"]
+        + """
 
   Red Hat SAP HANA Scale-Out HA:
-    """ + urls['sap_scale_out'] + """
+    """
+        + urls["sap_scale_out"]
+        + """
 
   SAP HANA System Replication:
     https://help.sap.com/docs/SAP_HANA_PLATFORM/6b94445c94ae495c83a19646e7c3fd56
@@ -916,11 +928,11 @@ DOCUMENTATION
     https://clusterlabs.org/pacemaker/doc/
 
 ===============================================================================
-"""
+""",
     }
 
-    if step == 'all':
-        for s in ['install', 'access', 'config', 'pacemaker', 'sap']:
+    if step == "all":
+        for s in ["install", "access", "config", "pacemaker", "sap"]:
             print(suggestions.get(s, f"No suggestions available for '{s}'"))
     else:
         print(suggestions.get(step, f"No suggestions available for '{step}'"))

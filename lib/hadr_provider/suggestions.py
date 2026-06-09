@@ -8,13 +8,15 @@ from typing import Tuple
 
 from .models import ArchType, HookConfig, SudoersEntry
 
-
 # ---------------------------------------------------------------------------
 # global.ini fixes
 # ---------------------------------------------------------------------------
 
+
 def generate_fix_for_missing_section(
-    hook: HookConfig, sid: str, arch_type: ArchType,
+    hook: HookConfig,
+    sid: str,
+    _arch_type: ArchType,
 ) -> Tuple[str, str]:
     """Fix for a missing [ha_dr_provider_*] section in global.ini."""
     sid_upper = sid.upper()
@@ -43,13 +45,15 @@ def generate_fix_for_missing_section(
 
 
 def generate_fix_for_wrong_value(
-    section_name: str, key: str, expected: str, actual: str, sid: str,
+    section_name: str,
+    key: str,
+    expected: str,
+    actual: str,
+    sid: str,
 ) -> Tuple[str, str]:
     """Fix for an incorrect value in a global.ini section."""
     sid_upper = sid.upper()
-    desc = (
-        f"Change '{key}' in [{section_name}] from '{actual}' to '{expected}'."
-    )
+    desc = f"Change '{key}' in [{section_name}] from '{actual}' to '{expected}'."
     cmd = (
         f"# In /hana/shared/{sid_upper}/global/hdb/custom/config/global.ini\n"
         f"# section [{section_name}], set:\n"
@@ -64,8 +68,10 @@ def generate_fix_for_wrong_value(
 # sudoers fixes
 # ---------------------------------------------------------------------------
 
+
 def generate_fix_for_missing_sudoers(
-    entry: SudoersEntry, sid: str,
+    entry: SudoersEntry,
+    _sid: str,
 ) -> Tuple[str, str]:
     """Fix for a missing sudoers entry."""
     desc = f"Add sudoers entry: {entry.description}"
@@ -82,8 +88,11 @@ def generate_fix_for_missing_sudoers(
 # trace fixes
 # ---------------------------------------------------------------------------
 
+
 def generate_fix_for_missing_trace(
-    key: str, value: str, sid: str,
+    key: str,
+    value: str,
+    sid: str,
 ) -> Tuple[str, str]:
     """Fix for a missing [trace] entry."""
     sid_upper = sid.upper()
@@ -101,14 +110,16 @@ def generate_fix_for_missing_trace(
 # provider file fixes
 # ---------------------------------------------------------------------------
 
+
 def generate_fix_for_missing_provider_file(
-    path: str, arch_type: ArchType,
+    path: str,
+    arch_type: ArchType,
 ) -> Tuple[str, str]:
     """Fix for a missing provider Python file (package not installed)."""
     if arch_type == ArchType.ANGI:
-        pkg = 'sap-hana-ha'
+        pkg = "sap-hana-ha"
     else:
-        pkg = 'resource-agents-sap-hana'
+        pkg = "resource-agents-sap-hana"
 
     desc = (
         f"Provider file {path} not found. "
@@ -127,8 +138,11 @@ def generate_fix_for_missing_provider_file(
 # wrong architecture fixes
 # ---------------------------------------------------------------------------
 
+
 def generate_fix_for_wrong_arch_hooks(
-    expected_arch: ArchType, found_section: str, sid: str,
+    expected_arch: ArchType,
+    found_section: str,
+    sid: str,
 ) -> Tuple[str, str]:
     """Fix for hooks from the wrong resource agent generation."""
     sid_upper = sid.upper()
@@ -188,6 +202,7 @@ def generate_fix_for_wrong_arch_hooks(
 # migration hint
 # ---------------------------------------------------------------------------
 
+
 def generate_migration_hint() -> Tuple[str, str]:
     """Informational hint about migrating from Legacy to ANGI on RHEL 9."""
     desc = (
@@ -215,6 +230,7 @@ def generate_migration_hint() -> Tuple[str, str]:
 # ---------------------------------------------------------------------------
 # message formatter
 # ---------------------------------------------------------------------------
+
 
 def format_finding_message(finding) -> str:
     """Format a Finding into a concise one-line message for CheckResult.message."""

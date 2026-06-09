@@ -8,13 +8,14 @@ Supports both live command execution and SOSreport parsing.
 
 import os
 import re
-import sys
-import yaml
 import subprocess
-from pathlib import Path
-from typing import List, Dict, Optional, Any, Tuple
+import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from enum import Enum
+from pathlib import Path
+from typing import List, Dict, Optional, Any, Tuple
+
+import yaml
 
 # Add parent directory to path for lib imports
 SCRIPT_DIR = Path(__file__).parent.parent.resolve()
@@ -22,15 +23,15 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 # Add lib/ to path for hadr_provider imports
-_LIB_DIR = str(Path(__file__).parent.parent / 'lib')
+_LIB_DIR = str(Path(__file__).parent.parent / "lib")
 if _LIB_DIR not in sys.path:
     sys.path.insert(0, _LIB_DIR)
 
-from lib import CIBParser  # noqa: E402
+from lib import CIBParser  # noqa: E402  # pylint: disable=wrong-import-position
 
 # Python 3.6 compatibility for dataclasses
 try:
-    from dataclasses import dataclass, field
+    from dataclasses import dataclass
 except ImportError:
     # Fallback for Python < 3.7
     def field(default=None, default_factory=None):
@@ -38,9 +39,10 @@ except ImportError:
 
     def dataclass(cls):
         """Simple dataclass decorator fallback"""
+
         def __init__(self, **kwargs):
             # Set defaults from class annotations first
-            if hasattr(cls, '__annotations__'):
+            if hasattr(cls, "__annotations__"):
                 for name in cls.__annotations__:
                     default = getattr(cls, name, None)
                     setattr(self, name, default)
@@ -48,14 +50,16 @@ except ImportError:
             for key, value in kwargs.items():
                 setattr(self, key, value)
             # Call __post_init__ if defined
-            if hasattr(self, '__post_init__'):
+            if hasattr(self, "__post_init__"):
                 self.__post_init__()
+
         cls.__init__ = __init__
         return cls
 
 
 class Severity(Enum):
     """Check severity levels."""
+
     INFO = "INFO"
     WARNING = "WARNING"
     CRITICAL = "CRITICAL"
@@ -63,6 +67,7 @@ class Severity(Enum):
 
 class CheckStatus(Enum):
     """Check result status."""
+
     PASSED = "PASSED"
     FAILED = "FAILED"
     SKIPPED = "SKIPPED"
@@ -72,6 +77,7 @@ class CheckStatus(Enum):
 @dataclass
 class CheckResult:
     """Result of a single health check."""
+
     check_id: str = None
     description: str = None
     status: CheckStatus = None
@@ -88,6 +94,7 @@ class CheckResult:
 @dataclass
 class RuleDefinition:
     """Parsed rule definition from YAML."""
+
     check_id: str = None
     version: str = None
     severity: str = None
@@ -111,17 +118,19 @@ class RuleDefinition:
 # Dispatch manifest dataclasses and loader
 # ------------------------------------------------------------------
 
+
 @dataclass
 class DispatchCheckEntry:
     """A single check entry in a dispatch phase."""
+
     check_id: str = None
-    topology: Any = 'all'       # 'all', str, or list of str
+    topology: Any = "all"  # 'all', str, or list of str
     gate: Optional[str] = None
 
     def __post_init__(self):
         # Normalize topology to a list or 'all'
-        if self.topology is None or self.topology == 'all':
-            self.topology = 'all'
+        if self.topology is None or self.topology == "all":
+            self.topology = "all"
         elif isinstance(self.topology, str):
             self.topology = [self.topology]
 
@@ -129,6 +138,7 @@ class DispatchCheckEntry:
 @dataclass
 class DispatchPhase:
     """A sequential phase within a dispatch step."""
+
     phase: int = 1
     parallel: bool = True
     gate: Optional[str] = None
@@ -142,6 +152,7 @@ class DispatchPhase:
 @dataclass
 class DispatchStep:
     """A top-level dispatch step (config, pacemaker, sap)."""
+
     name: str = None
     step_number: int = 0
     phases: List[DispatchPhase] = None
@@ -177,7 +188,7 @@ class CheckDispatch:
             return False
 
         try:
-            with open(path, 'r') as f:
+            with open(path, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f)
         except Exception:
             return False
@@ -185,27 +196,31 @@ class CheckDispatch:
         if not data or not isinstance(data, dict):
             return False
 
-        self._topologies = data.get('topologies', [])
+        self._topologies = data.get("topologies", [])
 
-        for step_name, step_data in data.get('steps', {}).items():
+        for step_name, step_data in data.get("steps", {}).items():
             phases = []
-            for phase_data in step_data.get('phases', []):
+            for phase_data in step_data.get("phases", []):
                 checks = []
-                for chk in phase_data.get('checks', []):
-                    checks.append(DispatchCheckEntry(
-                        check_id=chk.get('check_id'),
-                        topology=chk.get('topology', 'all'),
-                        gate=chk.get('gate'),
-                    ))
-                phases.append(DispatchPhase(
-                    phase=phase_data.get('phase', 1),
-                    parallel=phase_data.get('parallel', True),
-                    gate=phase_data.get('gate'),
-                    checks=checks,
-                ))
+                for chk in phase_data.get("checks", []):
+                    checks.append(
+                        DispatchCheckEntry(
+                            check_id=chk.get("check_id"),
+                            topology=chk.get("topology", "all"),
+                            gate=chk.get("gate"),
+                        )
+                    )
+                phases.append(
+                    DispatchPhase(
+                        phase=phase_data.get("phase", 1),
+                        parallel=phase_data.get("parallel", True),
+                        gate=phase_data.get("gate"),
+                        checks=checks,
+                    )
+                )
             self._steps[step_name] = DispatchStep(
-                name=step_data.get('name', step_name),
-                step_number=step_data.get('step_number', 0),
+                name=step_data.get("name", step_name),
+                step_number=step_data.get("step_number", 0),
                 phases=phases,
             )
 
@@ -234,15 +249,17 @@ class CheckDispatch:
         for phase in step.phases:
             filtered_checks = []
             for chk in phase.checks:
-                if chk.topology == 'all' or detected_topology in chk.topology:
+                if chk.topology == "all" or detected_topology in chk.topology:
                     filtered_checks.append(chk)
             # Keep the phase even if empty (gate may still matter)
-            filtered_phases.append(DispatchPhase(
-                phase=phase.phase,
-                parallel=phase.parallel,
-                gate=phase.gate,
-                checks=filtered_checks,
-            ))
+            filtered_phases.append(
+                DispatchPhase(
+                    phase=phase.phase,
+                    parallel=phase.parallel,
+                    gate=phase.gate,
+                    checks=filtered_checks,
+                )
+            )
         return filtered_phases
 
     def get_all_check_ids(self, step_name: str) -> List[str]:
@@ -280,10 +297,14 @@ class CheckDispatch:
                     manifest_ids.add(chk.check_id)
 
         for cid in sorted(manifest_ids - loaded_ids):
-            warnings.append(f"Dispatch manifest references '{cid}' but no matching YAML rule file was loaded")
+            warnings.append(
+                f"Dispatch manifest references '{cid}' but no matching YAML rule file was loaded"
+            )
 
         for cid in sorted(loaded_ids - manifest_ids):
-            warnings.append(f"Rule file '{cid}' exists but is not referenced in the dispatch manifest")
+            warnings.append(
+                f"Rule file '{cid}' exists but is not referenced in the dispatch manifest"
+            )
 
         return warnings
 
@@ -297,7 +318,9 @@ class RulesEngine:
     MAX_WORKERS = 5
     CIB_PATH = "/var/lib/pacemaker/cib/cib.xml"
 
-    def __init__(self, rules_path: str = None, access_config: dict = None, strict_mode: bool = False):
+    def __init__(
+        self, rules_path: str = None, access_config: dict = None, strict_mode: bool = False
+    ):
         self.rules_path = Path(rules_path) if rules_path else Path(self.DEFAULT_RULES_PATH)
         self.access_config = access_config or {}
         self.rules: List[RuleDefinition] = []
@@ -307,10 +330,12 @@ class RulesEngine:
         self._cluster_running: Dict[str, bool] = {}
         self._cib_available: Dict[str, bool] = {}
         # Track data source information
-        self._access_methods_used: Dict[str, str] = {}  # node -> method (ssh, sosreport, local, ansible)
+        self._access_methods_used: Dict[str, str] = (
+            {}
+        )  # node -> method (ssh, sosreport, local, ansible)
         self._used_cib_xml: bool = False  # True if sos_cmd with cib.xml was used
         # Track HANA resource state (running/stopped/disabled/unmanaged/absent/unknown)
-        self._hana_resource_state: str = 'unknown'
+        self._hana_resource_state: str = "unknown"
         # Detected cluster topology (Scale-Up / Scale-Out)
         self._detected_topology: Optional[str] = None
         # Nodes confirmed to not have HANA (from CHK_HANA_INSTALLED)
@@ -348,10 +373,10 @@ class RulesEngine:
         methods = self._access_methods_used
         if not methods:
             return {
-                'access_methods': {},
-                'primary_method': 'unknown',
-                'used_cib_xml': False,
-                'description': 'No data collected'
+                "access_methods": {},
+                "primary_method": "unknown",
+                "used_cib_xml": False,
+                "description": "No data collected",
             }
 
         # Find most common method
@@ -361,25 +386,25 @@ class RulesEngine:
         primary_method = max(method_counts, key=method_counts.get)
 
         # Build description
-        if primary_method == 'sosreport':
+        if primary_method == "sosreport":
             if self._used_cib_xml:
                 description = "SOSreport analysis (cluster was stopped - using cib.xml)"
             else:
                 description = "SOSreport analysis (offline data)"
-        elif primary_method == 'ssh':
+        elif primary_method == "ssh":
             description = "Live cluster via SSH"
-        elif primary_method == 'local':
+        elif primary_method == "local":
             description = "Local execution on cluster node"
-        elif primary_method == 'ansible':
+        elif primary_method == "ansible":
             description = "Live cluster via Ansible"
         else:
             description = f"Data source: {primary_method}"
 
         return {
-            'access_methods': methods,
-            'primary_method': primary_method,
-            'used_cib_xml': self._used_cib_xml,
-            'description': description
+            "access_methods": methods,
+            "primary_method": primary_method,
+            "used_cib_xml": self._used_cib_xml,
+            "description": description,
         }
 
     def get_cluster_resources_config(self) -> Dict[str, Any]:
@@ -392,12 +417,12 @@ class RulesEngine:
         Returns dict with report summary from CIBParser.
         """
         # Find cib.xml from sosreport or live system
-        nodes = self.access_config.get('nodes', {})
+        nodes = self.access_config.get("nodes", {})
         parser = None
 
         # Try SOSreport paths first
-        for node_name, node_info in nodes.items():
-            sos_path = node_info.get('sosreport_path')
+        for _node_name, node_info in nodes.items():
+            sos_path = node_info.get("sosreport_path")
             if sos_path:
                 parser = CIBParser.from_sosreport(sos_path)
                 if parser and parser.is_available():
@@ -409,7 +434,7 @@ class RulesEngine:
             parser = CIBParser.from_live_system()
 
         if not parser or not parser.is_available():
-            return {'available': False}
+            return {"available": False}
 
         # Use unified parser to get report summary
         return parser.get_report_summary()
@@ -427,27 +452,27 @@ class RulesEngine:
 
         for rule_file in rule_files:
             try:
-                with open(rule_file, 'r') as f:
+                with open(rule_file, "r", encoding="utf-8") as f:
                     data = yaml.safe_load(f)
 
-                if not data or not data.get('enabled', True):
+                if not data or not data.get("enabled", True):
                     print(f"  [SKIP] {rule_file.name} (disabled)")
                     continue
 
                 rule = RuleDefinition(
-                    check_id=data.get('check_id', rule_file.stem),
-                    version=data.get('version', '1.0'),
-                    severity=data.get('severity', 'WARNING'),
-                    description=data.get('description', ''),
-                    enabled=data.get('enabled', True),
-                    optional=data.get('optional', False),
-                    hana_nodes_only=data.get('hana_nodes_only', False),
-                    source_definitions=data.get('source_definitions', {}),
-                    parser=data.get('parser', {}),
-                    validation_logic=data.get('validation_logic', {}),
-                    topology_filter=data.get('topology_filter'),
-                    requires=data.get('requires'),
-                    raw_yaml=data
+                    check_id=data.get("check_id", rule_file.stem),
+                    version=data.get("version", "1.0"),
+                    severity=data.get("severity", "WARNING"),
+                    description=data.get("description", ""),
+                    enabled=data.get("enabled", True),
+                    optional=data.get("optional", False),
+                    hana_nodes_only=data.get("hana_nodes_only", False),
+                    source_definitions=data.get("source_definitions", {}),
+                    parser=data.get("parser", {}),
+                    validation_logic=data.get("validation_logic", {}),
+                    topology_filter=data.get("topology_filter"),
+                    requires=data.get("requires"),
+                    raw_yaml=data,
                 )
                 self.rules.append(rule)
                 print(f"  [LOAD] {rule.check_id}: {rule.description[:50]}...")
@@ -461,15 +486,17 @@ class RulesEngine:
         """Return a summary list of loaded rules."""
         return [
             {
-                'check_id': r.check_id,
-                'severity': r.severity,
-                'description': r.description,
-                'enabled': r.enabled
+                "check_id": r.check_id,
+                "severity": r.severity,
+                "description": r.description,
+                "enabled": r.enabled,
             }
             for r in self.rules
         ]
 
-    def _check_cluster_status(self, node: str, method: str = 'ssh', user: str = None) -> Tuple[bool, bool]:
+    def _check_cluster_status(
+        self, node: str, method: str = "ssh", user: str = None
+    ) -> Tuple[bool, bool]:
         """
         Check if cluster is running and if cib.xml exists on a node.
         Returns (cluster_running, cib_available) tuple.
@@ -485,12 +512,12 @@ class RulesEngine:
         check_cmd = "systemctl is-active pacemaker 2>/dev/null"
         success, output = self._execute_command_raw(check_cmd, node, method, user)
         # Check for exact 'active' status (not 'inactive')
-        cluster_running = success and output.strip() == 'active'
+        cluster_running = success and output.strip() == "active"
 
         # Check if cib.xml exists
         cib_check_cmd = f"test -f {self.CIB_PATH} && echo 'exists'"
         success, output = self._execute_command_raw(cib_check_cmd, node, method, user)
-        cib_available = success and 'exists' in output
+        cib_available = success and "exists" in output
 
         self._cluster_running[node] = cluster_running
         self._cib_available[node] = cib_available
@@ -503,7 +530,7 @@ class RulesEngine:
         Only transforms commands that can work with -f flag.
         """
         # Commands that support -f flag for offline queries
-        pcs_offline_cmds = ['pcs property', 'pcs resource', 'pcs stonith', 'pcs constraint']
+        pcs_offline_cmds = ["pcs property", "pcs resource", "pcs stonith", "pcs constraint"]
 
         for pcs_cmd in pcs_offline_cmds:
             if pcs_cmd in cmd:
@@ -515,19 +542,22 @@ class RulesEngine:
 
         return None  # Command cannot be transformed
 
-    def _execute_command_raw(self, cmd: str, node: str = None,
-                             method: str = 'ssh', user: str = None) -> Tuple[bool, str]:
+    def _execute_command_raw(
+        self, cmd: str, node: str = None, method: str = "ssh", user: str = None
+    ) -> Tuple[bool, str]:
         """Execute a command without fallback logic (internal use)."""
         try:
-            if method == 'local':
+            if method == "local":
                 full_cmd = cmd
-            elif node and method == 'ssh':
-                ssh_user = user or os.environ.get('USER', 'root')
-                if ssh_user != 'root':
+            elif node and method == "ssh":
+                ssh_user = user or os.environ.get("USER", "root")
+                if ssh_user != "root":
                     cmd = f"sudo {cmd}"
                 escaped_cmd = cmd.replace("'", "'\"'\"'")
-                full_cmd = f"ssh -o BatchMode=yes -o ConnectTimeout=10 {ssh_user}@{node} '{escaped_cmd}'"
-            elif node and method == 'ansible':
+                full_cmd = (
+                    f"ssh -o BatchMode=yes -o ConnectTimeout=10 {ssh_user}@{node} '{escaped_cmd}'"
+                )
+            elif node and method == "ansible":
                 escaped_cmd = cmd.replace("'", "'\"'\"'")
                 full_cmd = f"ansible {node} -m shell -a '{escaped_cmd}' -o"
             else:
@@ -537,15 +567,17 @@ class RulesEngine:
                 full_cmd,
                 shell=True,
                 stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 universal_newlines=True,
-                timeout=self.CMD_TIMEOUT
+                timeout=self.CMD_TIMEOUT,
+                check=False,
             )
 
             output = result.stdout
-            if method == 'ansible' and node:
-                if '|' in output and '>>' in output:
-                    output = output.split('>>', 1)[-1].strip()
+            if method == "ansible" and node:
+                if "|" in output and ">>" in output:
+                    output = output.split(">>", 1)[-1].strip()
 
             return result.returncode == 0, output
 
@@ -554,13 +586,14 @@ class RulesEngine:
         except Exception as e:
             return False, str(e)
 
-    def _execute_command(self, cmd: str, node: str = None,
-                        method: str = 'ssh', user: str = None) -> Tuple[bool, str]:
+    def _execute_command(
+        self, cmd: str, node: str = None, method: str = "ssh", user: str = None
+    ) -> Tuple[bool, str]:
         """Execute a command locally, via SSH, or via Ansible.
         Uses pcs -f cib.xml if cluster is not running but cib.xml exists."""
         # For pcs commands, pre-check if cluster is running
         # If not running but cib.xml exists, use -f cib.xml from the start
-        if 'pcs ' in cmd and node:
+        if "pcs " in cmd and node:
             cluster_running, cib_available = self._check_cluster_status(node, method, user)
 
             if not cluster_running and cib_available:
@@ -572,7 +605,9 @@ class RulesEngine:
         # Execute the original command
         return self._execute_command_raw(cmd, node, method, user)
 
-    def _run_sos_cmd(self, sos_cmd: str, sos_cmd_file: str, node: str, sos_base: str) -> Tuple[bool, str]:
+    def _run_sos_cmd(
+        self, sos_cmd: str, sos_cmd_file: str, node: str, sos_base: str
+    ) -> Tuple[bool, str]:
         """Run a local command using a file from the sosreport.
 
         This allows running commands like 'pcs -f {file} resource config'
@@ -601,7 +636,7 @@ class RulesEngine:
                         break
 
         # Find the file (supports glob patterns)
-        if '*' in sos_cmd_file or '?' in sos_cmd_file:
+        if "*" in sos_cmd_file or "?" in sos_cmd_file:
             pattern = str(node_sos / sos_cmd_file)
             matches = glob_module.glob(pattern)
             if not matches:
@@ -613,7 +648,7 @@ class RulesEngine:
                 return False, f"File not found: {file_path}"
 
         # Replace {file} placeholder with actual path
-        full_cmd = sos_cmd.replace('{file}', file_path)
+        full_cmd = sos_cmd.replace("{file}", file_path)
 
         # Execute locally
         try:
@@ -621,9 +656,11 @@ class RulesEngine:
                 full_cmd,
                 shell=True,
                 stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 universal_newlines=True,
-                timeout=self.CMD_TIMEOUT
+                timeout=self.CMD_TIMEOUT,
+                check=False,
             )
             return result.returncode == 0, result.stdout
         except subprocess.TimeoutExpired:
@@ -651,14 +688,14 @@ class RulesEngine:
                         break
 
         # Check if sos_path contains glob patterns
-        if '*' in sos_path or '?' in sos_path:
+        if "*" in sos_path or "?" in sos_path:
             # Use glob to find matching files
             pattern = str(node_sos / sos_path)
             matches = glob_module.glob(pattern)
             if matches:
                 # Use first matching file
                 try:
-                    with open(matches[0], 'r') as f:
+                    with open(matches[0], "r", encoding="utf-8") as f:
                         return True, f.read()
                 except Exception as e:
                     return False, str(e)
@@ -667,7 +704,7 @@ class RulesEngine:
         file_path = node_sos / sos_path
         if file_path.exists():
             try:
-                with open(file_path, 'r') as f:
+                with open(file_path, "r", encoding="utf-8") as f:
                     return True, f.read()
             except Exception as e:
                 return False, str(e)
@@ -678,16 +715,16 @@ class RulesEngine:
         """Parse command output using configured parser."""
         parsed = {}
 
-        if parser_config.get('type') != 'regex':
-            return {'raw': output}
+        if parser_config.get("type") != "regex":
+            return {"raw": output}
 
-        patterns = parser_config.get('search_patterns', [])
-        flags = re.MULTILINE if parser_config.get('multiline', False) else 0
+        patterns = parser_config.get("search_patterns", [])
+        flags = re.MULTILINE if parser_config.get("multiline", False) else 0
 
         for pattern in patterns:
-            name = pattern.get('name')
-            regex = pattern.get('regex')
-            group = pattern.get('group', 0)
+            name = pattern.get("name")
+            regex = pattern.get("regex")
+            group = pattern.get("group", 0)
 
             if not name or not regex:
                 continue
@@ -703,13 +740,13 @@ class RulesEngine:
                     parsed[name] = None
             except Exception as e:
                 parsed[name] = None
-                parsed[f'{name}_error'] = str(e)
+                parsed[f"{name}_error"] = str(e)
 
         return parsed
 
     def _handle_detection_check(self, rule: RuleDefinition, parsed: Dict, node: str) -> CheckResult:
         """Handle detection-type checks that gather information rather than validate."""
-        if rule.check_id == 'CHK_CLUSTER_TYPE':
+        if rule.check_id == "CHK_CLUSTER_TYPE":
             return self._detect_cluster_type(rule, parsed, node)
 
         # Default: return parsed data as info
@@ -719,8 +756,8 @@ class RulesEngine:
             status=CheckStatus.PASSED,
             severity=Severity.INFO,
             message="Detection completed",
-            details={'parsed': parsed},
-            node=node
+            details={"parsed": parsed},
+            node=node,
         )
 
     def _detect_cluster_type(self, rule: RuleDefinition, parsed: Dict, node: str) -> CheckResult:
@@ -737,17 +774,17 @@ class RulesEngine:
         Majority maker detection: by location constraints (primary) or name pattern.
         """
         # Extract parsed values
-        node_count_str = parsed.get('node_count')
-        saphana_resource = parsed.get('saphana_resource')  # SAPHana_* = older Scale-Up
-        saphana_controller = parsed.get('saphana_controller')  # SAPHanaController_* = can be either
-        majority_maker = parsed.get('majority_maker')
-        majority_maker_node = parsed.get('majority_maker_node')  # Actual node name
-        clone_max_str = parsed.get('clone_max')
+        node_count_str = parsed.get("node_count")
+        saphana_resource = parsed.get("saphana_resource")  # SAPHana_* = older Scale-Up
+        saphana_controller = parsed.get("saphana_controller")  # SAPHanaController_* = can be either
+        majority_maker = parsed.get("majority_maker")
+        majority_maker_node = parsed.get("majority_maker_node")  # Actual node name
+        clone_max_str = parsed.get("clone_max")
 
         # hdbnsutil -sr_state output for Scale-Out validation
-        site_hosts_count_str = parsed.get('site_hosts_count')  # Number of hosts per site
-        sidadm_user = parsed.get('sidadm_user')
-        hdbnsutil_failed = parsed.get('hdbnsutil_failed')
+        site_hosts_count_str = parsed.get("site_hosts_count")  # Number of hosts per site
+        sidadm_user = parsed.get("sidadm_user")
+        hdbnsutil_failed = parsed.get("hdbnsutil_failed")
 
         # Count nodes
         try:
@@ -767,8 +804,9 @@ class RulesEngine:
         has_hana_resource = has_saphana or has_controller
         # Detect if location constraints exclude a node from HANA resources
         # This could indicate a majority maker (Scale-Out) OR an app server (Scale-Up)
-        has_constraint_excluded_node = (majority_maker is not None and majority_maker != 'none') or \
-                            (majority_maker_node is not None and majority_maker_node != 'none')
+        has_constraint_excluded_node = (
+            majority_maker is not None and majority_maker != "none"
+        ) or (majority_maker_node is not None and majority_maker_node != "none")
 
         # Validate Scale-Out using hdbnsutil -sr_state
         # True Scale-Out has multiple hosts per site (site_hosts_count > 1)
@@ -797,16 +835,16 @@ class RulesEngine:
 
         cluster_type = "Unknown"
         details = {
-            'node_count': node_count,
-            'clone_max': clone_max,
-            'has_saphana_resource': has_saphana,
-            'has_saphana_controller': has_controller,
-            'has_majority_maker': has_majority_maker,
-            'majority_maker_node': majority_maker_node if has_majority_maker else None,
-            'hdbnsutil_host_count': hdbnsutil_host_count,
-            'hdbnsutil_confirms_scaleout': hdbnsutil_confirms_scaleout,
-            'sidadm_user': sidadm_user,
-            'parsed': parsed
+            "node_count": node_count,
+            "clone_max": clone_max,
+            "has_saphana_resource": has_saphana,
+            "has_saphana_controller": has_controller,
+            "has_majority_maker": has_majority_maker,
+            "majority_maker_node": majority_maker_node if has_majority_maker else None,
+            "hdbnsutil_host_count": hdbnsutil_host_count,
+            "hdbnsutil_confirms_scaleout": hdbnsutil_confirms_scaleout,
+            "sidadm_user": sidadm_user,
+            "parsed": parsed,
         }
 
         # Decision tree:
@@ -830,25 +868,31 @@ class RulesEngine:
 
             if has_majority_maker:
                 mm_info = f" [{majority_maker_node}]" if majority_maker_node else ""
-                base_message = f"Scale-Out configuration ({hana_nodes} HANA nodes + majority maker{mm_info})"
+                base_message = (
+                    f"Scale-Out configuration ({hana_nodes} HANA nodes + majority maker{mm_info})"
+                )
             else:
                 base_message = f"Scale-Out configuration ({hana_nodes} HANA nodes) - WARNING: no majority maker detected"
 
             # Validate with hdbnsutil -sr_state
             if hdbnsutil_failed:
-                message = f"{base_message} - NOTE: could not verify with hdbnsutil ({hdbnsutil_failed})"
+                message = (
+                    f"{base_message} - NOTE: could not verify with hdbnsutil ({hdbnsutil_failed})"
+                )
             elif hdbnsutil_confirms_scaleout:
-                message = f"{base_message} - verified: {hdbnsutil_host_count} HANA instances per site"
+                message = (
+                    f"{base_message} - verified: {hdbnsutil_host_count} HANA instances per site"
+                )
             elif hdbnsutil_host_count == 1:
                 message = f"{base_message} - WARNING: hdbnsutil shows only 1 HANA instance per site"
             else:
                 message = base_message
-            details['hana_nodes'] = hana_nodes
+            details["hana_nodes"] = hana_nodes
         else:
             # Scale-Up: clone-max < 4 (1 HANA instance per site, typically clone-max=2)
             cluster_type = "Scale-Up"
             extra_nodes = max(0, node_count - clone_max) if node_count > 0 else 0
-            if node_count == 2 or node_count == 0:
+            if node_count in (2, 0):
                 message = f"Scale-Up configuration ({clone_max} HANA nodes)"
             elif extra_nodes > 0 and has_constraint_excluded_node:
                 # Extra node with HANA exclusion constraints = app server, NOT majority maker
@@ -857,9 +901,9 @@ class RulesEngine:
                 message = f"Scale-Up configuration ({clone_max} HANA nodes, {extra_nodes} additional node(s))"
             else:
                 message = f"Scale-Up configuration ({clone_max} HANA nodes)"
-            details['hana_nodes'] = clone_max
+            details["hana_nodes"] = clone_max
 
-        details['cluster_type'] = cluster_type
+        details["cluster_type"] = cluster_type
 
         return CheckResult(
             check_id=rule.check_id,
@@ -868,7 +912,7 @@ class RulesEngine:
             severity=Severity.INFO,
             message=message,
             details=details,
-            node=node
+            node=node,
         )
 
     def _validate_clone_max(self, rule: RuleDefinition, parsed: Dict, node: str) -> CheckResult:
@@ -883,13 +927,13 @@ class RulesEngine:
         info = []
 
         # Get clone-max values
-        controller_clone_max = parsed.get('controller_clone_max')
-        topology_clone_max = parsed.get('topology_clone_max')
-        controller_clone_node_max = parsed.get('controller_clone_node_max')
-        topology_clone_node_max = parsed.get('topology_clone_node_max')
-        controller_interleave = parsed.get('controller_interleave')
-        topology_interleave = parsed.get('topology_interleave')
-        controller_promotable = parsed.get('controller_promotable')
+        controller_clone_max = parsed.get("controller_clone_max")
+        topology_clone_max = parsed.get("topology_clone_max")
+        controller_clone_node_max = parsed.get("controller_clone_node_max")
+        topology_clone_node_max = parsed.get("topology_clone_node_max")
+        controller_interleave = parsed.get("controller_interleave")
+        topology_interleave = parsed.get("topology_interleave")
+        controller_promotable = parsed.get("controller_promotable")
 
         # Check if we have any data
         if not controller_clone_max and not topology_clone_max:
@@ -900,24 +944,26 @@ class RulesEngine:
                 status=CheckStatus.PASSED,
                 severity=Severity.INFO,
                 message="Clone configuration not available (cluster may be stopped)",
-                details={'parsed': parsed},
-                node=node
+                details={"parsed": parsed},
+                node=node,
             )
 
         # Validate clone-node-max = 1
-        if controller_clone_node_max and controller_clone_node_max != '1':
-            issues.append(f"SAPHanaController clone-node-max={controller_clone_node_max} (should be 1)")
-        if topology_clone_node_max and topology_clone_node_max != '1':
+        if controller_clone_node_max and controller_clone_node_max != "1":
+            issues.append(
+                f"SAPHanaController clone-node-max={controller_clone_node_max} (should be 1)"
+            )
+        if topology_clone_node_max and topology_clone_node_max != "1":
             issues.append(f"SAPHanaTopology clone-node-max={topology_clone_node_max} (should be 1)")
 
         # Validate interleave = true
-        if controller_interleave and controller_interleave != 'true':
+        if controller_interleave and controller_interleave != "true":
             issues.append(f"SAPHanaController interleave={controller_interleave} (should be true)")
-        if topology_interleave and topology_interleave != 'true':
+        if topology_interleave and topology_interleave != "true":
             issues.append(f"SAPHanaTopology interleave={topology_interleave} (should be true)")
 
         # Validate promotable = true for controller
-        if controller_promotable and controller_promotable != 'true':
+        if controller_promotable and controller_promotable != "true":
             issues.append(f"SAPHanaController promotable={controller_promotable} (should be true)")
 
         # Report clone-max values (informational - we can't validate without knowing HANA node count)
@@ -927,8 +973,14 @@ class RulesEngine:
             info.append(f"SAPHanaTopology clone-max={topology_clone_max}")
 
         # Check if controller and topology have matching clone-max
-        if controller_clone_max and topology_clone_max and controller_clone_max != topology_clone_max:
-            issues.append(f"clone-max mismatch: Controller={controller_clone_max}, Topology={topology_clone_max}")
+        if (
+            controller_clone_max
+            and topology_clone_max
+            and controller_clone_max != topology_clone_max
+        ):
+            issues.append(
+                f"clone-max mismatch: Controller={controller_clone_max}, Topology={topology_clone_max}"
+            )
 
         if issues:
             return CheckResult(
@@ -937,8 +989,8 @@ class RulesEngine:
                 status=CheckStatus.FAILED,
                 severity=Severity.WARNING,
                 message="; ".join(issues),
-                details={'parsed': parsed, 'issues': issues},
-                node=node
+                details={"parsed": parsed, "issues": issues},
+                node=node,
             )
 
         # All checks passed
@@ -952,16 +1004,17 @@ class RulesEngine:
             status=CheckStatus.PASSED,
             severity=Severity.INFO,
             message=message,
-            details={'parsed': parsed, 'info': info},
-            node=node
+            details={"parsed": parsed, "info": info},
+            node=node,
         )
 
     # ------------------------------------------------------------------
     # HA/DR provider hook validation (CHK_HADR_HOOKS v2.0)
     # ------------------------------------------------------------------
 
-    def _validate_hadr_hooks(self, rule: RuleDefinition, parsed: Dict,
-                             node: str, raw_output: str) -> CheckResult:
+    def _validate_hadr_hooks(
+        self, rule: RuleDefinition, _parsed: Dict, node: str, raw_output: str
+    ) -> CheckResult:
         """Architecture-aware HA/DR provider hook validation.
 
         Uses context from prior checks (CHK_CLUSTER_TYPE, CHK_PACKAGE_CONSISTENCY,
@@ -972,10 +1025,11 @@ class RulesEngine:
         """
         try:
             from hadr_provider import (
-                has_required_data, parse_collected_output,
-                get_expected_config, detect_arch_type,
-                validate_rhel_arch_compatibility, HadrValidator,
-                ArchType, Topology,
+                has_required_data,
+                parse_collected_output,
+                get_expected_config,
+                validate_rhel_arch_compatibility,
+                HadrValidator,
             )
             from hadr_provider.suggestions import format_finding_message
         except ImportError:
@@ -985,7 +1039,7 @@ class RulesEngine:
                 status=CheckStatus.SKIPPED,
                 severity=Severity[rule.severity],
                 message="hadr_provider module not available (check HA_DR_PROVIDER installation)",
-                node=node
+                node=node,
             )
 
         # Skip if data is insufficient (SOSreport mode or empty output)
@@ -996,7 +1050,7 @@ class RulesEngine:
                 status=CheckStatus.SKIPPED,
                 severity=Severity[rule.severity],
                 message="Skipped: requires SSH/local access (SOSreport data insufficient)",
-                node=node
+                node=node,
             )
 
         # Gather context from prior check results
@@ -1012,7 +1066,7 @@ class RulesEngine:
                 status=CheckStatus.SKIPPED,
                 severity=Severity[rule.severity],
                 message="Skipped: SID not detected (CHK_HANA_INSTALLED may have failed)",
-                node=node
+                node=node,
             )
 
         if arch_type is None:
@@ -1022,7 +1076,7 @@ class RulesEngine:
                 status=CheckStatus.SKIPPED,
                 severity=Severity[rule.severity],
                 message="Skipped: resource agent package not detected (sap-hana-ha / resource-agents-sap-hana)",
-                node=node
+                node=node,
             )
 
         # Validate RHEL/arch compatibility
@@ -1034,8 +1088,8 @@ class RulesEngine:
                 status=CheckStatus.FAILED,
                 severity=Severity.CRITICAL,
                 message=compat_msg,
-                details={'rhel_major': rhel_major, 'arch_type': arch_type.value},
-                node=node
+                details={"rhel_major": rhel_major, "arch_type": arch_type.value},
+                node=node,
             )
 
         # Get expected config and parse actual config
@@ -1056,77 +1110,79 @@ class RulesEngine:
                     f"({arch_type.value}, {topology.value}, RHEL {rhel_major})"
                 ),
                 details={
-                    'arch_type': arch_type.value,
-                    'topology': topology.value,
-                    'rhel_major': rhel_major,
-                    'hooks': [h.section_name for h in expected.hooks if not h.is_optional],
+                    "arch_type": arch_type.value,
+                    "topology": topology.value,
+                    "rhel_major": rhel_major,
+                    "hooks": [h.section_name for h in expected.hooks if not h.is_optional],
                 },
-                node=node
+                node=node,
             )
 
         # Build result with findings
-        critical_findings = [f for f in findings if f.severity == 'CRITICAL']
-        warning_findings = [f for f in findings if f.severity == 'WARNING']
-        info_findings = [f for f in findings if f.severity == 'INFO']
+        critical_findings = [f for f in findings if f.severity == "CRITICAL"]
+        warning_findings = [f for f in findings if f.severity == "WARNING"]
+        info_findings = [f for f in findings if f.severity == "INFO"]
 
-        max_severity = 'CRITICAL' if critical_findings else ('WARNING' if warning_findings else 'INFO')
+        max_severity = (
+            "CRITICAL" if critical_findings else ("WARNING" if warning_findings else "INFO")
+        )
 
-        messages = [format_finding_message(f) for f in findings if f.severity != 'INFO']
-        summary = '; '.join(messages[:3])
+        messages = [format_finding_message(f) for f in findings if f.severity != "INFO"]
+        summary = "; ".join(messages[:3])
         if len(messages) > 3:
-            summary += f' (+{len(messages) - 3} more)'
+            summary += f" (+{len(messages) - 3} more)"
 
         return CheckResult(
             check_id=rule.check_id,
             description=rule.description,
-            status=CheckStatus.FAILED if max_severity != 'INFO' else CheckStatus.PASSED,
+            status=CheckStatus.FAILED if max_severity != "INFO" else CheckStatus.PASSED,
             severity=Severity[max_severity],
             message=summary or f"HA/DR hooks: {len(info_findings)} info note(s)",
             details={
-                'arch_type': arch_type.value,
-                'topology': topology.value,
-                'rhel_major': rhel_major,
-                'findings': [
+                "arch_type": arch_type.value,
+                "topology": topology.value,
+                "rhel_major": rhel_major,
+                "findings": [
                     {
-                        'category': f.category,
-                        'severity': f.severity,
-                        'what_is_wrong': f.what_is_wrong,
-                        'expected': f.expected_value,
-                        'actual': f.actual_value,
-                        'fix': f.fix_description,
-                        'fix_command': f.fix_command,
+                        "category": f.category,
+                        "severity": f.severity,
+                        "what_is_wrong": f.what_is_wrong,
+                        "expected": f.expected_value,
+                        "actual": f.actual_value,
+                        "fix": f.fix_description,
+                        "fix_command": f.fix_command,
                     }
                     for f in findings
                 ],
-                'total_findings': len(findings),
-                'critical_count': len(critical_findings),
-                'warning_count': len(warning_findings),
-                'info_count': len(info_findings),
+                "total_findings": len(findings),
+                "critical_count": len(critical_findings),
+                "warning_count": len(warning_findings),
+                "info_count": len(info_findings),
             },
-            node=node
+            node=node,
         )
 
     def _get_rhel_major(self) -> int:
         """Get RHEL major version from access config or prior results."""
         # Try access config first (set during discovery)
-        if hasattr(self.access_config, 'clusters'):
+        if hasattr(self.access_config, "clusters"):
             for cluster_info in self.access_config.clusters.values():
-                rv = cluster_info.get('rhel_version', '')
-                match = re.search(r'(\d+)', str(rv))
+                rv = cluster_info.get("rhel_version", "")
+                match = re.search(r"(\d+)", str(rv))
                 if match:
                     return int(match.group(1))
         elif isinstance(self.access_config, dict):
-            rv = self.access_config.get('rhel_version', '')
-            match = re.search(r'(\d+)', str(rv))
+            rv = self.access_config.get("rhel_version", "")
+            match = re.search(r"(\d+)", str(rv))
             if match:
                 return int(match.group(1))
         # Fallback: check CHK_PACKAGE_CONSISTENCY results for el<N> in package names
         for result in self.results:
-            if result.check_id == 'CHK_PACKAGE_CONSISTENCY' and result.details:
-                parsed = result.details.get('parsed', {})
-                for key, val in parsed.items():
+            if result.check_id == "CHK_PACKAGE_CONSISTENCY" and result.details:
+                parsed = result.details.get("parsed", {})
+                for _key, val in parsed.items():
                     if val:
-                        el_match = re.search(r'\.el(\d+)', str(val))
+                        el_match = re.search(r"\.el(\d+)", str(val))
                         if el_match:
                             return int(el_match.group(1))
         return 9  # Safe default (RHEL 9 supports both ANGI and Legacy)
@@ -1134,34 +1190,39 @@ class RulesEngine:
     def _get_hadr_topology(self):
         """Get cluster topology from CHK_CLUSTER_TYPE result."""
         from hadr_provider.models import Topology
+
         for result in self.results:
-            if result.check_id == 'CHK_CLUSTER_TYPE' and result.details:
-                ct = result.details.get('cluster_type', 'Scale-Up')
-                if ct == 'Scale-Out':
+            if result.check_id == "CHK_CLUSTER_TYPE" and result.details:
+                ct = result.details.get("cluster_type", "Scale-Up")
+                if ct == "Scale-Out":
                     return Topology.SCALE_OUT
         return Topology.SCALE_UP
 
     def _get_hadr_sid(self) -> str:
         """Get SID from CHK_HANA_INSTALLED result."""
         for result in self.results:
-            if result.check_id == 'CHK_HANA_INSTALLED' and result.details:
-                parsed = result.details.get('parsed', {})
-                sid = parsed.get('sid')
+            if result.check_id == "CHK_HANA_INSTALLED" and result.details:
+                parsed = result.details.get("parsed", {})
+                sid = parsed.get("sid")
                 if sid:
                     return sid
         # Fallback: try the cluster config
         resource_config = self.get_cluster_resources_config()
-        return resource_config.get('sid', '')
+        return resource_config.get("sid", "")
 
     def _detect_hadr_arch_type(self):
         """Detect resource agent arch type from CHK_PACKAGE_CONSISTENCY results."""
         from hadr_provider.config_matrix import detect_arch_type
+
         for result in self.results:
-            if result.check_id == 'CHK_PACKAGE_CONSISTENCY' and result.details:
-                parsed = result.details.get('parsed', {})
+            if result.check_id == "CHK_PACKAGE_CONSISTENCY" and result.details:
+                parsed = result.details.get("parsed", {})
                 packages = []
-                for key in ('sap_hana_ha_version', 'resource_agents_sap_hana',
-                            'resource_agents_sap_hana_scaleout'):
+                for key in (
+                    "sap_hana_ha_version",
+                    "resource_agents_sap_hana",
+                    "resource_agents_sap_hana_scaleout",
+                ):
                     val = parsed.get(key)
                     if val:
                         packages.append(val)
@@ -1178,29 +1239,32 @@ class RulesEngine:
         Special operators:
         - info_if_exists: Always passes, but shows pass_message if key exists (informational)
         """
-        key = expectation.get('key')
-        operator = expectation.get('operator')
-        expected = expectation.get('value')
-        message = expectation.get('message', f"Check failed for {key}")
-        pass_message = expectation.get('pass_message')  # Optional message shown when expectation passes
+        key = expectation.get("key")
+        operator = expectation.get("operator")
+        expected = expectation.get("value")
+        message = expectation.get("message", f"Check failed for {key}")
+        pass_message = expectation.get(
+            "pass_message"
+        )  # Optional message shown when expectation passes
 
         actual = parsed.get(key)
 
         # Support template variables in pass_message: ${key} is replaced with parsed[key]
-        if pass_message and '${' in pass_message:
-            import re as regex_module
+        if pass_message and "${" in pass_message:
+
             def replace_var(match):
                 var_name = match.group(1)
-                return str(parsed.get(var_name, f'${{{var_name}}}'))
-            pass_message = regex_module.sub(r'\$\{(\w+)\}', replace_var, pass_message)
+                return str(parsed.get(var_name, f"${{{var_name}}}"))
+
+            pass_message = re.sub(r"\$\{(\w+)\}", replace_var, pass_message)
 
         # Handle info_if_exists: always passes, shows message if key exists
-        if operator == 'info_if_exists':
+        if operator == "info_if_exists":
             if actual is not None and pass_message:
                 return True, message, pass_message
             return True, message, None
 
-        if operator == 'exists':
+        if operator == "exists":
             # 'exists' checks if the key has a non-None value
             # If value is specified as False, check that key does NOT exist
             if expected is False:
@@ -1208,26 +1272,26 @@ class RulesEngine:
             else:
                 # Default: pass if actual exists (is not None)
                 passed = actual is not None
-        elif operator == 'not_exists':
+        elif operator == "not_exists":
             passed = actual is None
-        elif operator == 'eq':
+        elif operator == "eq":
             passed = actual == expected
-        elif operator == 'ne':
+        elif operator == "ne":
             passed = actual != expected
-        elif operator == 'in':
+        elif operator == "in":
             passed = actual in expected if isinstance(expected, list) else actual == expected
-        elif operator == 'not_in':
+        elif operator == "not_in":
             passed = actual not in expected if isinstance(expected, list) else actual != expected
-        elif operator == 'contains':
+        elif operator == "contains":
             passed = expected in str(actual) if actual else False
-        elif operator == 'regex':
+        elif operator == "regex":
             passed = bool(re.search(expected, str(actual))) if actual else False
-        elif operator == 'gt':
+        elif operator == "gt":
             try:
                 passed = float(actual) > float(expected)
             except (TypeError, ValueError):
                 passed = False
-        elif operator == 'lt':
+        elif operator == "lt":
             try:
                 passed = float(actual) < float(expected)
             except (TypeError, ValueError):
@@ -1250,8 +1314,32 @@ class RulesEngine:
         - Multi-line scripts with comments
         - Shell constructs (if/for/while)
         """
-        builtins = ['grep', 'cat', 'echo', 'awk', 'sed', 'head', 'tail', 'cut', 'tr', 'sort', 'timeout',
-                    'if', 'for', 'while', 'then', 'else', 'fi', 'do', 'done', 'case', 'esac', 'ls', 'test', '[']
+        builtins = [
+            "grep",
+            "cat",
+            "echo",
+            "awk",
+            "sed",
+            "head",
+            "tail",
+            "cut",
+            "tr",
+            "sort",
+            "timeout",
+            "if",
+            "for",
+            "while",
+            "then",
+            "else",
+            "fi",
+            "do",
+            "done",
+            "case",
+            "esac",
+            "ls",
+            "test",
+            "[",
+        ]
 
         def extract_cmd_name(cmd_part: str) -> str:
             """Extract the primary command name from a command string."""
@@ -1260,34 +1348,34 @@ class RulesEngine:
 
             # Skip empty parts
             if not cmd_part:
-                return ''
+                return ""
 
             # For multi-line commands, find first non-comment, non-empty line
-            lines = cmd_part.split('\n')
+            lines = cmd_part.split("\n")
             for line in lines:
                 line = line.strip()
-                if line and not line.startswith('#'):
+                if line and not line.startswith("#"):
                     # Split on pipe to get first command in pipeline
-                    first_part = line.split('|')[0].split(';')[0].split('&&')[0].strip()
+                    first_part = line.split("|")[0].split(";")[0].split("&&")[0].strip()
                     # Get the command name (first word)
-                    cmd_name = first_part.split()[0] if first_part else ''
-                    if cmd_name and not cmd_name.startswith('#'):
+                    cmd_name = first_part.split()[0] if first_part else ""
+                    if cmd_name and not cmd_name.startswith("#"):
                         # Handle variable assignments: VAR=$(cmd ...) or VAR=val cmd
-                        if '=' in cmd_name:
+                        if "=" in cmd_name:
                             # VAR=$(cmd ...) - extract command from subshell
-                            after_eq = cmd_name.split('=', 1)[1]
-                            if after_eq.startswith('$('):
-                                cmd_name = after_eq[2:].rstrip(')')
-                            elif after_eq.startswith('`'):
-                                cmd_name = after_eq[1:].rstrip('`')
+                            after_eq = cmd_name.split("=", 1)[1]
+                            if after_eq.startswith("$("):
+                                cmd_name = after_eq[2:].rstrip(")")
+                            elif after_eq.startswith("`"):
+                                cmd_name = after_eq[1:].rstrip("`")
                             else:
                                 # VAR=value (no command), skip to next line
                                 continue
                         return cmd_name
-            return ''
+            return ""
 
         # Split on '||' to handle fallback commands
-        fallback_parts = cmd.split('||')
+        fallback_parts = cmd.split("||")
 
         for part in fallback_parts:
             cmd_name = extract_cmd_name(part)
@@ -1297,14 +1385,14 @@ class RulesEngine:
                 continue
 
             # Skip check for built-in commands and common utilities
-            if cmd_name in builtins or cmd_name.startswith('/'):
+            if cmd_name in builtins or cmd_name.startswith("/"):
                 return True, "builtin/path"
 
             # Check if command exists (locally or on remote node)
             check_cmd = f"command -v {cmd_name} >/dev/null 2>&1 && echo 'OK' || echo 'MISSING'"
             success, output = self._execute_command(check_cmd, node, method, user)
 
-            if success and 'OK' in output:
+            if success and "OK" in output:
                 return True, f"{cmd_name} available"
 
         # If we get here, either all commands were builtins (which is fine) or none were found
@@ -1314,18 +1402,18 @@ class RulesEngine:
             return True, "shell script"
         return False, f"Commands not found on {node}: {', '.join(all_cmds)}"
 
-    def _run_check_on_node(self, rule: RuleDefinition, node: str,
-                          method: str, user: str = None,
-                          sos_base: str = None) -> CheckResult:
+    def _run_check_on_node(  # pylint: disable=too-many-positional-arguments
+        self, rule: RuleDefinition, node: str, method: str, user: str = None, sos_base: str = None
+    ) -> CheckResult:
         """Run a single check on a specific node."""
         source_defs = rule.source_definitions
 
         # Get data based on access method
-        if method == 'sosreport' and sos_base:
-            sos_path = source_defs.get('sos_path')
-            alternates = source_defs.get('sos_path_alternates', [])
-            sos_cmd = source_defs.get('sos_cmd')
-            sos_cmd_file = source_defs.get('sos_cmd_file')
+        if method == "sosreport" and sos_base:
+            sos_path = source_defs.get("sos_path")
+            alternates = source_defs.get("sos_path_alternates", [])
+            sos_cmd = source_defs.get("sos_cmd")
+            sos_cmd_file = source_defs.get("sos_cmd_file")
 
             success = False
             output = ""
@@ -1333,12 +1421,14 @@ class RulesEngine:
             # Try sos_path first (has actual SOSreport data, e.g. crm_mon output)
             if sos_path:
                 success, output = self._read_sosreport(sos_path, node, sos_base)
-                self._access_methods_used[node] = 'sosreport'
+                self._access_methods_used[node] = "sosreport"
 
             # If sos_path failed/missing, try sos_cmd (pcs -f cib.xml fallback)
-            if not success or (success and output.strip().startswith('Error:')):
+            if not success or (success and output.strip().startswith("Error:")):
                 if sos_cmd and sos_cmd_file:
-                    cmd_success, cmd_output = self._run_sos_cmd(sos_cmd, sos_cmd_file, node, sos_base)
+                    cmd_success, cmd_output = self._run_sos_cmd(
+                        sos_cmd, sos_cmd_file, node, sos_base
+                    )
                     if cmd_success and cmd_output.strip():
                         success, output = cmd_success, cmd_output
                         # Only mark as used_cib_xml if a sos_path was defined but
@@ -1347,17 +1437,17 @@ class RulesEngine:
                         # by design (e.g. CHK_CLUSTER_TYPE) - not a fallback.
                         if sos_path:
                             self._used_cib_xml = True
-                        self._access_methods_used[node] = 'sosreport'
+                        self._access_methods_used[node] = "sosreport"
 
             # Try file alternates as last resort
-            if not success or (success and output.strip().startswith('Error:')):
+            if not success or (success and output.strip().startswith("Error:")):
                 for alt_path in alternates:
                     alt_success, alt_output = self._read_sosreport(alt_path, node, sos_base)
-                    if alt_success and not alt_output.strip().startswith('Error:'):
+                    if alt_success and not alt_output.strip().startswith("Error:"):
                         success, output = alt_success, alt_output
                         break
         else:
-            cmd = source_defs.get('live_cmd')
+            cmd = source_defs.get("live_cmd")
             if not cmd:
                 return CheckResult(
                     check_id=rule.check_id,
@@ -1365,11 +1455,11 @@ class RulesEngine:
                     status=CheckStatus.SKIPPED,
                     severity=Severity[rule.severity],
                     message="No live command defined",
-                    node=node
+                    node=node,
                 )
 
             # Pre-flight check: verify primary command is available
-            preflight = source_defs.get('preflight_check', True)
+            preflight = source_defs.get("preflight_check", True)
             if preflight:
                 cmd_available, reason = self._check_command_available(cmd, node, method, user)
                 if not cmd_available:
@@ -1379,7 +1469,7 @@ class RulesEngine:
                         status=CheckStatus.SKIPPED,
                         severity=Severity[rule.severity],
                         message=f"Skipped: {reason}",
-                        node=node
+                        node=node,
                     )
 
             success, output = self._execute_command(cmd, node, method, user)
@@ -1392,7 +1482,7 @@ class RulesEngine:
                 status=CheckStatus.ERROR,
                 severity=Severity[rule.severity],
                 message=f"Failed to get data: {output[:100]}",
-                node=node
+                node=node,
             )
 
         # Parse output
@@ -1400,19 +1490,19 @@ class RulesEngine:
 
         # Handle detection-type checks (e.g., CHK_CLUSTER_TYPE)
         validation = rule.validation_logic
-        if validation.get('type') == 'detection':
+        if validation.get("type") == "detection":
             return self._handle_detection_check(rule, parsed, node)
 
         # Handle custom checks (e.g., clone_max_validation, hadr_hooks_validation)
-        custom_check = validation.get('custom_check')
-        if custom_check == 'clone_max_validation':
+        custom_check = validation.get("custom_check")
+        if custom_check == "clone_max_validation":
             return self._validate_clone_max(rule, parsed, node)
-        elif custom_check == 'hadr_hooks_validation':
+        if custom_check == "hadr_hooks_validation":
             return self._validate_hadr_hooks(rule, parsed, node, output)
 
         # Evaluate expectations
-        expectations = validation.get('expectations', [])
-        match_mode = validation.get('match_mode', 'all')  # 'all' (default) or 'any'
+        expectations = validation.get("expectations", [])
+        match_mode = validation.get("match_mode", "all")  # 'all' (default) or 'any'
 
         failed_expectations = []
         passed_expectations = []
@@ -1420,11 +1510,13 @@ class RulesEngine:
         for exp in expectations:
             passed, message, pass_msg = self._evaluate_expectation(parsed, exp)
             if not passed:
-                failed_expectations.append({
-                    'key': exp.get('key'),
-                    'severity': exp.get('severity', rule.severity),
-                    'message': message
-                })
+                failed_expectations.append(
+                    {
+                        "key": exp.get("key"),
+                        "severity": exp.get("severity", rule.severity),
+                        "message": message,
+                    }
+                )
             else:
                 passed_expectations.append(exp)
                 if pass_msg:
@@ -1433,7 +1525,7 @@ class RulesEngine:
         # match_mode: any - pass if at least one expectation passes
         # match_mode: all (default) - fail if any expectation fails
         check_failed = False
-        if match_mode == 'any':
+        if match_mode == "any":
             # Pass if ANY expectation passed
             check_failed = len(passed_expectations) == 0
         else:
@@ -1444,24 +1536,28 @@ class RulesEngine:
             # Use highest severity from failed expectations
             max_severity = rule.severity
             for fe in failed_expectations:
-                if fe['severity'] == 'CRITICAL':
-                    max_severity = 'CRITICAL'
+                if fe["severity"] == "CRITICAL":
+                    max_severity = "CRITICAL"
                     break
-                elif fe['severity'] == 'WARNING' and max_severity != 'CRITICAL':
-                    max_severity = 'WARNING'
+                if fe["severity"] == "WARNING" and max_severity != "CRITICAL":
+                    max_severity = "WARNING"
 
             # In non-strict mode, downgrade optional checks from CRITICAL to WARNING
-            if rule.optional and not self.strict_mode and max_severity == 'CRITICAL':
-                max_severity = 'WARNING'
+            if rule.optional and not self.strict_mode and max_severity == "CRITICAL":
+                max_severity = "WARNING"
 
             return CheckResult(
                 check_id=rule.check_id,
                 description=rule.description,
                 status=CheckStatus.FAILED,
                 severity=Severity[max_severity],
-                message="; ".join(fe['message'] for fe in failed_expectations),
-                details={'parsed': parsed, 'failed': failed_expectations, 'optional': rule.optional},
-                node=node
+                message="; ".join(fe["message"] for fe in failed_expectations),
+                details={
+                    "parsed": parsed,
+                    "failed": failed_expectations,
+                    "optional": rule.optional,
+                },
+                node=node,
             )
 
         # Build result message - include info messages if any
@@ -1475,8 +1571,8 @@ class RulesEngine:
             status=CheckStatus.PASSED,
             severity=Severity[rule.severity],
             message=result_message,
-            details={'parsed': parsed, 'info_messages': info_messages},
-            node=node
+            details={"parsed": parsed, "info_messages": info_messages},
+            node=node,
         )
 
     def run_check(self, rule: RuleDefinition, nodes: Dict[str, dict]) -> List[CheckResult]:
@@ -1497,18 +1593,19 @@ class RulesEngine:
         # for the parallel execution path via _run_rules_parallel.
         if rule.requires:
             required_passed = any(
-                r.check_id == rule.requires and r.status == CheckStatus.PASSED
-                for r in self.results
+                r.check_id == rule.requires and r.status == CheckStatus.PASSED for r in self.results
             )
             if not required_passed:
-                return [CheckResult(
-                    check_id=rule.check_id,
-                    description=rule.description,
-                    status=CheckStatus.SKIPPED,
-                    severity=Severity.WARNING,
-                    message=f"Skipped: required check {rule.requires} did not pass",
-                    node=None
-                )]
+                return [
+                    CheckResult(
+                        check_id=rule.check_id,
+                        description=rule.description,
+                        status=CheckStatus.SKIPPED,
+                        severity=Severity.WARNING,
+                        message=f"Skipped: required check {rule.requires} did not pass",
+                        node=None,
+                    )
+                ]
 
         # Check topology_filter - skip if rule specifies a topology that
         # doesn't match the detected topology (engine-level safety net)
@@ -1517,35 +1614,39 @@ class RulesEngine:
             if isinstance(allowed, str):
                 allowed = [allowed]
             if self._detected_topology not in allowed:
-                return [CheckResult(
-                    check_id=rule.check_id,
-                    description=rule.description,
-                    status=CheckStatus.SKIPPED,
-                    severity=Severity.INFO,
-                    message=f"Not applicable for {self._detected_topology} topology",
-                    node=None
-                )]
+                return [
+                    CheckResult(
+                        check_id=rule.check_id,
+                        description=rule.description,
+                        status=CheckStatus.SKIPPED,
+                        severity=Severity.INFO,
+                        message=f"Not applicable for {self._detected_topology} topology",
+                        node=None,
+                    )
+                ]
 
-        scope = rule.validation_logic.get('scope', 'per_node')
-        compare_keys = rule.validation_logic.get('compare_keys', [])
+        scope = rule.validation_logic.get("scope", "per_node")
+        compare_keys = rule.validation_logic.get("compare_keys", [])
 
         # For 'cluster' scope, only run on first accessible node
         # If cluster_retry_if is set and the parsed field has a value, try the next node
         # (e.g., hdbnsutil_failed on majority maker → retry on a real HANA node)
-        if scope == 'cluster':
-            retry_key = rule.validation_logic.get('cluster_retry_if')
+        if scope == "cluster":
+            retry_key = rule.validation_logic.get("cluster_retry_if")
             fallback_result = None
             for node_name, node_info in nodes.items():
-                method = node_info.get('preferred_method')
+                method = node_info.get("preferred_method")
                 if method:
-                    user = node_info.get('ssh_user') or node_info.get('ansible_user')
+                    user = node_info.get("ssh_user") or node_info.get("ansible_user")
                     # Use node's specific sosreport_path if available, otherwise fall back to sosreport_directory
-                    sos_base = node_info.get('sosreport_path') or self.access_config.get('sosreport_directory')
+                    sos_base = node_info.get("sosreport_path") or self.access_config.get(
+                        "sosreport_directory"
+                    )
                     result = self._run_check_on_node(rule, node_name, method, user, sos_base)
                     result.node = f"{node_name} (cluster)"
                     # Check if result is incomplete and we should try next node
                     if retry_key and fallback_result is None:
-                        parsed = result.details.get('parsed', {}) if result.details else {}
+                        parsed = result.details.get("parsed", {}) if result.details else {}
                         if parsed.get(retry_key):
                             fallback_result = result
                             continue  # Try next node
@@ -1553,26 +1654,28 @@ class RulesEngine:
             if fallback_result:
                 return [fallback_result]
             # No accessible node
-            return [CheckResult(
-                check_id=rule.check_id,
-                description=rule.description,
-                status=CheckStatus.SKIPPED,
-                severity=Severity[rule.severity],
-                message="No accessible node for cluster check",
-                node=None
-            )]
+            return [
+                CheckResult(
+                    check_id=rule.check_id,
+                    description=rule.description,
+                    status=CheckStatus.SKIPPED,
+                    severity=Severity[rule.severity],
+                    message="No accessible node for cluster check",
+                    node=None,
+                )
+            ]
 
         # Get nodes excluded from HANA by constraints (app servers or majority makers)
         hana_excluded_nodes = set()
         if rule.hana_nodes_only:
             resource_config = self.get_cluster_resources_config()
-            if resource_config.get('available'):
+            if resource_config.get("available"):
                 # hana_excluded_node: node with SAPHanaTopology + SAPHanaController exclusion constraints
-                excluded = resource_config.get('hana_excluded_node')
+                excluded = resource_config.get("hana_excluded_node")
                 if excluded:
                     hana_excluded_nodes.add(excluded)
                 # Also check legacy majority_maker field
-                mm_node = resource_config.get('majority_maker')
+                mm_node = resource_config.get("majority_maker")
                 if mm_node:
                     hana_excluded_nodes.add(mm_node)
             # Fallback: nodes confirmed to not have HANA (from CHK_HANA_INSTALLED)
@@ -1586,35 +1689,40 @@ class RulesEngine:
             for node_name, node_info in nodes.items():
                 # Skip nodes excluded from HANA resources by constraints
                 if rule.hana_nodes_only and node_name in hana_excluded_nodes:
-                    results.append(CheckResult(
-                        check_id=rule.check_id,
-                        description=rule.description,
-                        status=CheckStatus.SKIPPED,
-                        severity=Severity[rule.severity],
-                        message="Node excluded from HANA resources by constraints",
-                        node=node_name
-                    ))
+                    results.append(
+                        CheckResult(
+                            check_id=rule.check_id,
+                            description=rule.description,
+                            status=CheckStatus.SKIPPED,
+                            severity=Severity[rule.severity],
+                            message="Node excluded from HANA resources by constraints",
+                            node=node_name,
+                        )
+                    )
                     continue
 
-                method = node_info.get('preferred_method')
+                method = node_info.get("preferred_method")
                 if not method:
-                    results.append(CheckResult(
-                        check_id=rule.check_id,
-                        description=rule.description,
-                        status=CheckStatus.SKIPPED,
-                        severity=Severity[rule.severity],
-                        message="No access method available",
-                        node=node_name
-                    ))
+                    results.append(
+                        CheckResult(
+                            check_id=rule.check_id,
+                            description=rule.description,
+                            status=CheckStatus.SKIPPED,
+                            severity=Severity[rule.severity],
+                            message="No access method available",
+                            node=node_name,
+                        )
+                    )
                     continue
 
-                user = node_info.get('ssh_user') or node_info.get('ansible_user')
+                user = node_info.get("ssh_user") or node_info.get("ansible_user")
                 # Use node's specific sosreport_path if available, otherwise fall back to sosreport_directory
-                sos_path = node_info.get('sosreport_path') or self.access_config.get('sosreport_directory')
+                sos_path = node_info.get("sosreport_path") or self.access_config.get(
+                    "sosreport_directory"
+                )
 
                 future = executor.submit(
-                    self._run_check_on_node,
-                    rule, node_name, method, user, sos_path
+                    self._run_check_on_node, rule, node_name, method, user, sos_path
                 )
                 futures[future] = node_name
 
@@ -1623,41 +1731,46 @@ class RulesEngine:
                     result = future.result()
                     results.append(result)
                 except Exception as e:
-                    results.append(CheckResult(
-                        check_id=rule.check_id,
-                        description=rule.description,
-                        status=CheckStatus.ERROR,
-                        severity=Severity[rule.severity],
-                        message=str(e),
-                        node=futures[future]
-                    ))
+                    results.append(
+                        CheckResult(
+                            check_id=rule.check_id,
+                            description=rule.description,
+                            status=CheckStatus.ERROR,
+                            severity=Severity[rule.severity],
+                            message=str(e),
+                            node=futures[future],
+                        )
+                    )
 
         # Handle scope-specific logic
-        if scope == 'any_node':
+        if scope == "any_node":
             # Pass if at least one node passed
             passed = [r for r in results if r.status == CheckStatus.PASSED]
             if passed:
-                return [CheckResult(
-                    check_id=rule.check_id,
-                    description=rule.description,
-                    status=CheckStatus.PASSED,
-                    severity=Severity[rule.severity],
-                    message=f"Passed on {len(passed)}/{len(results)} node(s)",
-                    details={'passed_nodes': [r.node for r in passed]},
-                    node=None
-                )]
-            else:
-                return [CheckResult(
+                return [
+                    CheckResult(
+                        check_id=rule.check_id,
+                        description=rule.description,
+                        status=CheckStatus.PASSED,
+                        severity=Severity[rule.severity],
+                        message=f"Passed on {len(passed)}/{len(results)} node(s)",
+                        details={"passed_nodes": [r.node for r in passed]},
+                        node=None,
+                    )
+                ]
+            return [
+                CheckResult(
                     check_id=rule.check_id,
                     description=rule.description,
                     status=CheckStatus.FAILED,
                     severity=Severity[rule.severity],
                     message="Failed on all nodes",
-                    details={'results': [{'node': r.node, 'message': r.message} for r in results]},
-                    node=None
-                )]
+                    details={"results": [{"node": r.node, "message": r.message} for r in results]},
+                    node=None,
+                )
+            ]
 
-        elif scope == 'all_nodes_equal':
+        if scope == "all_nodes_equal":
             # All nodes must have the same values for compare_keys
             passed_results = [r for r in results if r.status == CheckStatus.PASSED]
             if len(passed_results) < 2:
@@ -1666,43 +1779,49 @@ class RulesEngine:
             # Get values to compare
             if not compare_keys:
                 # Use all parsed keys
-                compare_keys = list(passed_results[0].details.get('parsed', {}).keys())
+                compare_keys = list(passed_results[0].details.get("parsed", {}).keys())
 
             # Compare values across nodes
             mismatches = []
             reference_node = passed_results[0].node
-            reference_values = passed_results[0].details.get('parsed', {})
+            reference_values = passed_results[0].details.get("parsed", {})
 
             for result in passed_results[1:]:
-                node_values = result.details.get('parsed', {})
+                node_values = result.details.get("parsed", {})
                 for key in compare_keys:
                     ref_val = reference_values.get(key)
                     node_val = node_values.get(key)
                     if ref_val != node_val:
-                        mismatches.append({
-                            'key': key,
-                            'node': result.node,
-                            'expected': ref_val,
-                            'actual': node_val
-                        })
+                        mismatches.append(
+                            {
+                                "key": key,
+                                "node": result.node,
+                                "expected": ref_val,
+                                "actual": node_val,
+                            }
+                        )
 
             if mismatches:
                 # SAP HANA package keys - differences in these on majority maker nodes are expected
                 sap_hana_package_keys = {
-                    'sap_hana_ha_version', 'resource_agents_sap_hana',
-                    'resource_agents_sap_hana_scaleout', 'saphanasr_version'
+                    "sap_hana_ha_version",
+                    "resource_agents_sap_hana",
+                    "resource_agents_sap_hana_scaleout",
+                    "saphanasr_version",
                 }
 
                 # Build detailed message about differences
                 missing_packages = []  # Package exists on some nodes but not others
-                version_diffs = []     # Same package, different versions
+                version_diffs = []  # Same package, different versions
                 critical_mismatches = []  # Non-SAP-HANA package mismatches (always report)
-                sap_hana_mismatches = []  # SAP HANA package mismatches (may be expected on majority maker)
+                sap_hana_mismatches = (
+                    []
+                )  # SAP HANA package mismatches (may be expected on majority maker)
 
                 for m in mismatches:
-                    key = m['key']
-                    expected = m.get('expected')
-                    actual = m.get('actual')
+                    key = m["key"]
+                    expected = m.get("expected")
+                    actual = m.get("actual")
                     is_sap_hana_pkg = key in sap_hana_package_keys
 
                     if expected is None and actual is not None:
@@ -1734,51 +1853,66 @@ class RulesEngine:
                 # Maps each mismatched key to {node: version_string}
                 version_table = {}
                 for m in mismatches:
-                    key = m['key']
+                    key = m["key"]
                     if key not in version_table:
                         ref_val = reference_values.get(key)
-                        version_table[key] = {reference_node: ref_val if ref_val else 'not installed'}
-                    actual = m.get('actual')
-                    version_table[key][m['node']] = actual if actual else 'not installed'
+                        version_table[key] = {
+                            reference_node: ref_val if ref_val else "not installed"
+                        }
+                    actual = m.get("actual")
+                    version_table[key][m["node"]] = actual if actual else "not installed"
 
                 # Determine status: if only SAP HANA package differences, it's INFO (expected for majority maker)
                 only_sap_hana_diffs = len(critical_mismatches) == 0 and len(sap_hana_mismatches) > 0
 
                 # Build concise message listing only which packages differ
-                diff_keys = sorted(set(m['key'] for m in mismatches))
+                diff_keys = sorted(set(m["key"] for m in mismatches))
                 pkg_short_names = {
-                    'pacemaker_version': 'pacemaker',
-                    'corosync_version': 'corosync',
-                    'sap_hana_ha_version': 'sap-hana-ha',
-                    'resource_agents_sap_hana': 'resource-agents-sap-hana',
-                    'resource_agents_sap_hana_scaleout': 'res-agents-sap-hana-scaleout',
-                    'saphanasr_version': 'SAPHanaSR',
+                    "pacemaker_version": "pacemaker",
+                    "corosync_version": "corosync",
+                    "sap_hana_ha_version": "sap-hana-ha",
+                    "resource_agents_sap_hana": "resource-agents-sap-hana",
+                    "resource_agents_sap_hana_scaleout": "res-agents-sap-hana-scaleout",
+                    "saphanasr_version": "SAPHanaSR",
                 }
                 diff_names = [pkg_short_names.get(k, k) for k in diff_keys]
 
                 if only_sap_hana_diffs:
                     message = f"Differs: {', '.join(diff_names)} (expected for MajorityMaker)"
-                    results.append(CheckResult(
-                        check_id=rule.check_id,
-                        description=rule.description,
-                        status=CheckStatus.PASSED,
-                        severity=Severity.INFO,
-                        message=message,
-                        details={'mismatches': mismatches, 'reference_node': reference_node, 'majority_maker_expected': True, 'version_table': version_table},
-                        node="(comparison)"
-                    ))
+                    results.append(
+                        CheckResult(
+                            check_id=rule.check_id,
+                            description=rule.description,
+                            status=CheckStatus.PASSED,
+                            severity=Severity.INFO,
+                            message=message,
+                            details={
+                                "mismatches": mismatches,
+                                "reference_node": reference_node,
+                                "majority_maker_expected": True,
+                                "version_table": version_table,
+                            },
+                            node="(comparison)",
+                        )
+                    )
                 else:
                     message = f"Differs across nodes: {', '.join(diff_names)}"
                     # Add a comparison failure result
-                    results.append(CheckResult(
-                        check_id=rule.check_id,
-                        description=rule.description,
-                        status=CheckStatus.FAILED,
-                        severity=Severity[rule.severity],
-                        message=message,
-                        details={'mismatches': mismatches, 'reference_node': reference_node, 'version_table': version_table},
-                        node="(comparison)"
-                    ))
+                    results.append(
+                        CheckResult(
+                            check_id=rule.check_id,
+                            description=rule.description,
+                            status=CheckStatus.FAILED,
+                            severity=Severity[rule.severity],
+                            message=message,
+                            details={
+                                "mismatches": mismatches,
+                                "reference_node": reference_node,
+                                "version_table": version_table,
+                            },
+                            node="(comparison)",
+                        )
+                    )
 
         return results
 
@@ -1801,7 +1935,7 @@ class RulesEngine:
                     CheckStatus.PASSED: "✓",
                     CheckStatus.FAILED: "✗",
                     CheckStatus.SKIPPED: "○",
-                    CheckStatus.ERROR: "!"
+                    CheckStatus.ERROR: "!",
                 }.get(result.status, "?")
                 node_str = f" ({result.node})" if result.node else ""
                 print(f"    {status_icon} {result.status.value}{node_str}: {result.message[:60]}")
@@ -1811,28 +1945,28 @@ class RulesEngine:
     def get_summary(self) -> Dict[str, Any]:
         """Get summary of all check results."""
         summary = {
-            'total': len(self.results),
-            'passed': 0,
-            'failed': 0,
-            'skipped': 0,
-            'errors': 0,
-            'critical_failures': [],
-            'warnings': []
+            "total": len(self.results),
+            "passed": 0,
+            "failed": 0,
+            "skipped": 0,
+            "errors": 0,
+            "critical_failures": [],
+            "warnings": [],
         }
 
         for result in self.results:
             if result.status == CheckStatus.PASSED:
-                summary['passed'] += 1
+                summary["passed"] += 1
             elif result.status == CheckStatus.FAILED:
-                summary['failed'] += 1
+                summary["failed"] += 1
                 if result.severity == Severity.CRITICAL:
-                    summary['critical_failures'].append(result)
+                    summary["critical_failures"].append(result)
                 else:
-                    summary['warnings'].append(result)
+                    summary["warnings"].append(result)
             elif result.status == CheckStatus.SKIPPED:
-                summary['skipped'] += 1
+                summary["skipped"] += 1
             elif result.status == CheckStatus.ERROR:
-                summary['errors'] += 1
+                summary["errors"] += 1
 
         return summary
 
@@ -1849,14 +1983,14 @@ class RulesEngine:
         print(f"  Skipped:       {summary['skipped']}")
         print(f"  Errors:        {summary['errors']}")
 
-        if summary['critical_failures']:
+        if summary["critical_failures"]:
             print("\n  CRITICAL FAILURES:")
-            for r in summary['critical_failures']:
+            for r in summary["critical_failures"]:
                 print(f"    - [{r.check_id}] {r.message[:50]}")
 
-        if summary['warnings']:
+        if summary["warnings"]:
             print("\n  WARNINGS:")
-            for r in summary['warnings'][:5]:  # Show first 5
+            for r in summary["warnings"][:5]:  # Show first 5
                 print(f"    - [{r.check_id}] {r.message[:50]}")
-            if len(summary['warnings']) > 5:
+            if len(summary["warnings"]) > 5:
                 print(f"    ... and {len(summary['warnings']) - 5} more")

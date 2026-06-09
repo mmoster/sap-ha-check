@@ -29,7 +29,7 @@ from typing import Dict, List, Any
 
 # Python 3.6 compatibility for dataclasses
 try:
-    from dataclasses import dataclass, field, asdict
+    from dataclasses import dataclass, asdict
 except ImportError:
     # Fallback for Python < 3.7
     def field(default=None, default_factory=None):
@@ -40,19 +40,21 @@ except ImportError:
         result = {}
         for key in obj.__annotations__:
             value = getattr(obj, key, None)
-            if hasattr(value, '__annotations__'):
+            if hasattr(value, "__annotations__"):
                 result[key] = asdict(value)
             elif isinstance(value, list):
-                result[key] = [asdict(v) if hasattr(v, '__annotations__') else v for v in value]
+                result[key] = [asdict(v) if hasattr(v, "__annotations__") else v for v in value]
             elif isinstance(value, dict):
-                result[key] = {k: asdict(v) if hasattr(v, '__annotations__') else v for k, v in value.items()}
+                result[key] = {
+                    k: asdict(v) if hasattr(v, "__annotations__") else v for k, v in value.items()
+                }
             else:
                 result[key] = value
         return result
 
     def dataclass(cls):
         """Simple dataclass decorator fallback."""
-        original_annotations = getattr(cls, '__annotations__', {})
+        original_annotations = getattr(cls, "__annotations__", {})
 
         def __init__(self, **kwargs):
             # Set defaults from class annotations first
@@ -65,7 +67,7 @@ except ImportError:
             for key, value in kwargs.items():
                 setattr(self, key, value)
             # Call __post_init__ if defined
-            if hasattr(self, '__post_init__'):
+            if hasattr(self, "__post_init__"):
                 self.__post_init__()
 
         cls.__init__ = __init__
@@ -199,7 +201,7 @@ class ClusterReportData:
             self.summary = {}
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'ClusterReportData':
+    def from_dict(cls, data: Dict[str, Any]) -> "ClusterReportData":
         """
         Create ClusterReportData from a dictionary (e.g., loaded from YAML).
 
@@ -235,59 +237,51 @@ class ClusterReportData:
         """
         cluster_info = {
             # Core cluster info
-            'cluster_name': self.cluster_name,
-            'nodes': self.nodes,
-            'cluster_type': self.cluster_type,
-            'majority_makers': self.majority_makers,
-
+            "cluster_name": self.cluster_name,
+            "nodes": self.nodes,
+            "cluster_type": self.cluster_type,
+            "majority_makers": self.majority_makers,
             # Data source
-            'data_source': self.data_source,
-            'access_method': self.access_method,
-            'used_cib_xml': self.used_cib_xml,
-            'cluster_running': self.cluster_running,
-            'hana_resource_state': self.hana_resource_state,
-            'hana_db_status': self.hana_db_status,
-
+            "data_source": self.data_source,
+            "access_method": self.access_method,
+            "used_cib_xml": self.used_cib_xml,
+            "cluster_running": self.cluster_running,
+            "hana_resource_state": self.hana_resource_state,
+            "hana_db_status": self.hana_db_status,
             # OS/Software versions
-            'rhel_version': self.rhel_version,
-            'pacemaker_version': self.pacemaker_version,
-            'resource_agent': self.resource_agent,
-
+            "rhel_version": self.rhel_version,
+            "pacemaker_version": self.pacemaker_version,
+            "resource_agent": self.resource_agent,
             # SAP HANA config
-            'sid': self.sid,
-            'instance_number': self.instance_number,
-            'virtual_ip': self.virtual_ip,
-            'secondary_vip': self.secondary_vip,
-            'replication_mode': self.replication_mode,
-            'operation_mode': self.operation_mode,
-            'secondary_read': self.secondary_read,
-
+            "sid": self.sid,
+            "instance_number": self.instance_number,
+            "virtual_ip": self.virtual_ip,
+            "secondary_vip": self.secondary_vip,
+            "replication_mode": self.replication_mode,
+            "operation_mode": self.operation_mode,
+            "secondary_read": self.secondary_read,
             # Node configuration
-            'node1_hostname': self.node1_hostname,
-            'node1_ip': self.node1_ip,
-            'node2_hostname': self.node2_hostname,
-            'node2_ip': self.node2_ip,
-            'sites': self.sites,
-
+            "node1_hostname": self.node1_hostname,
+            "node1_ip": self.node1_ip,
+            "node2_hostname": self.node2_hostname,
+            "node2_ip": self.node2_ip,
+            "sites": self.sites,
             # HA parameters
-            'prefer_site_takeover': self.prefer_site_takeover,
-            'automated_register': self.automated_register,
-            'duplicate_primary_timeout': self.duplicate_primary_timeout,
-            'migration_threshold': self.migration_threshold,
-
+            "prefer_site_takeover": self.prefer_site_takeover,
+            "automated_register": self.automated_register,
+            "duplicate_primary_timeout": self.duplicate_primary_timeout,
+            "migration_threshold": self.migration_threshold,
             # Resource configuration
-            'resource_type': self.resource_type,
-            'resource_name': self.resource_name,
-            'topology_resource': self.topology_resource,
-            'vip_resource': self.vip_resource,
-            'secondary_vip_resource': self.secondary_vip_resource,
-
+            "resource_type": self.resource_type,
+            "resource_name": self.resource_name,
+            "topology_resource": self.topology_resource,
+            "vip_resource": self.vip_resource,
+            "secondary_vip_resource": self.secondary_vip_resource,
             # STONITH
-            'stonith_device': self.stonith_device,
-            'stonith_params': self.stonith_params,
-
+            "stonith_device": self.stonith_device,
+            "stonith_params": self.stonith_params,
             # CIB resource config
-            'resource_config': self.resource_config,
+            "resource_config": self.resource_config,
         }
 
         return cluster_info

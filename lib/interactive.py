@@ -58,11 +58,11 @@ USAGE EXAMPLES
     config = {}
     if config_path.exists() and yaml:
         try:
-            with open(config_path, 'r') as f:
+            with open(config_path, "r", encoding="utf-8") as f:
                 config = yaml.safe_load(f) or {}
-            existing_nodes = list(config.get('nodes', {}).keys())
-            clusters_config = config.get('clusters', {})
-            nodes_config = config.get('nodes', {})
+            existing_nodes = list(config.get("nodes", {}).keys())
+            clusters_config = config.get("clusters", {})
+            nodes_config = config.get("nodes", {})
         except Exception:
             pass
 
@@ -76,7 +76,7 @@ USAGE EXAMPLES
         if corosync_conf.exists():
             try:
                 content = corosync_conf.read_text()
-                match = re.search(r'cluster_name:\s*(\S+)', content)
+                match = re.search(r"cluster_name:\s*(\S+)", content)
                 if match:
                     return match.group(1)
             except Exception:
@@ -87,7 +87,7 @@ USAGE EXAMPLES
         if pcs_status.exists():
             try:
                 content = pcs_status.read_text()
-                match = re.search(r'Cluster name:\s*(\S+)', content)
+                match = re.search(r"Cluster name:\s*(\S+)", content)
                 if match:
                     return match.group(1)
             except Exception:
@@ -100,7 +100,7 @@ USAGE EXAMPLES
     detected_clusters = {}  # node -> cluster_name
     for node_name in existing_nodes:
         node_info = nodes_config.get(node_name, {})
-        sosreport_path = node_info.get('sosreport_path')
+        sosreport_path = node_info.get("sosreport_path")
         if sosreport_path and Path(sosreport_path).exists():
             cluster_name = get_cluster_name_from_sosreport(sosreport_path)
             if cluster_name:
@@ -120,9 +120,9 @@ USAGE EXAMPLES
 
     # Then, use clusters from config for remaining nodes
     for cname, cinfo in clusters_config.items():
-        if cname == '(unknown)':
+        if cname == "(unknown)":
             continue  # Skip the unknown cluster from config, we'll handle unassigned nodes later
-        cluster_nodes = set(cinfo.get('nodes', []))
+        cluster_nodes = set(cinfo.get("nodes", []))
         matching_nodes = cluster_nodes & unassigned_nodes
         if matching_nodes:
             if cname not in cluster_node_map:
@@ -136,20 +136,22 @@ USAGE EXAMPLES
 
     # Add unassigned nodes as "(unknown)" cluster if any
     if unassigned_nodes:
-        cluster_node_map['(unknown)'] = sorted(unassigned_nodes)
+        cluster_node_map["(unknown)"] = sorted(unassigned_nodes)
 
     print("-" * 63)
     if existing_nodes:
         print("EXISTING CONFIGURATION FOUND")
 
         # Check if we have multiple clusters or need cluster selection
-        if len(cluster_node_map) > 1 or (len(cluster_node_map) == 1 and '(unknown)' in cluster_node_map):
+        if len(cluster_node_map) > 1 or (
+            len(cluster_node_map) == 1 and "(unknown)" in cluster_node_map
+        ):
             # Multiple clusters or unknown cluster - show selection menu
             print()
             print("  Detected clusters and their nodes:")
-            cluster_list = sorted([c for c in cluster_node_map.keys() if c != '(unknown)'])
-            if '(unknown)' in cluster_node_map:
-                cluster_list.append('(unknown)')
+            cluster_list = sorted([c for c in cluster_node_map if c != "(unknown)"])
+            if "(unknown)" in cluster_node_map:
+                cluster_list.append("(unknown)")
 
             for idx, cname in enumerate(cluster_list, 1):
                 nodes_in_cluster = cluster_node_map[cname]
@@ -171,21 +173,21 @@ USAGE EXAMPLES
                 print("\n")
                 return None, False
 
-            if response == 'q':
+            if response == "q":
                 print("Exiting.")
                 return None, False
 
-            if response == 'd':
+            if response == "d":
                 if config_path.exists():
                     config_path.unlink()
                     print(f"Deleted: {config_path}")
                 print("Configuration deleted. Run again to start fresh.")
                 return None, False
 
-            if response == 'l':
-                return ['local'], True
+            if response == "l":
+                return ["local"], True
 
-            if response == 'a' or response == '':
+            if response in ("a", ""):
                 return existing_nodes, True
 
             # Check if user entered a cluster number
@@ -197,9 +199,8 @@ USAGE EXAMPLES
                     print(f"Selected cluster: {selected_cluster}")
                     print(f"Nodes: {', '.join(selected_nodes)}")
                     return selected_nodes, True
-                else:
-                    print(f"Invalid choice. Enter 1-{len(cluster_list)}.")
-                    return None, False
+                print(f"Invalid choice. Enter 1-{len(cluster_list)}.")
+                return None, False
             except ValueError:
                 pass
 
@@ -210,19 +211,18 @@ USAGE EXAMPLES
 
             return None, False
 
-        else:
-            # Single known cluster
-            cluster_name = list(cluster_node_map.keys())[0] if cluster_node_map else None
-            if cluster_name:
-                print(f"  Cluster: {cluster_name}")
-            print(f"  Nodes:   {', '.join(sorted(existing_nodes))}")
-            print()
-            print("Options:")
-            print("  [Enter]     Continue with these nodes")
-            print("  [l]         Run in local mode (on this cluster node)")
-            print("  [nodes]     Enter different node names (space-separated)")
-            print("  [d]         Delete reports and start fresh")
-            print("  [q]         Quit")
+        # Single known cluster
+        cluster_name = list(cluster_node_map.keys())[0] if cluster_node_map else None
+        if cluster_name:
+            print(f"  Cluster: {cluster_name}")
+        print(f"  Nodes:   {', '.join(sorted(existing_nodes))}")
+        print()
+        print("Options:")
+        print("  [Enter]     Continue with these nodes")
+        print("  [l]         Run in local mode (on this cluster node)")
+        print("  [nodes]     Enter different node names (space-separated)")
+        print("  [d]         Delete reports and start fresh")
+        print("  [q]         Quit")
     else:
         # No existing configuration — first run, offer usage guide
         while True:
@@ -241,18 +241,18 @@ USAGE EXAMPLES
                 print("\n")
                 return None, False
 
-            if response == 'g':
+            if response == "g":
                 print_guide()
                 print()
                 print("-" * 63)
                 continue
 
-            if response == 'q':
+            if response == "q":
                 print("Exiting.")
                 return None, False
 
-            if response == '':
-                return ['local'], True
+            if response == "":
+                return ["local"], True
 
             # User entered node names
             nodes = response.split()
@@ -270,25 +270,25 @@ USAGE EXAMPLES
         print("\n")
         return None, False
 
-    if response == 'q':
+    if response == "q":
         print("Exiting.")
         return None, False
 
-    if response == 'd':
+    if response == "d":
         if config_path.exists():
             config_path.unlink()
             print(f"Deleted: {config_path}")
         print("Configuration deleted. Run again to start fresh.")
         return None, False
 
-    if response == 'l':
-        return ['local'], True
+    if response == "l":
+        return ["local"], True
 
-    if response == '':
+    if response == "":
         # Continue with existing nodes
         if existing_nodes:
             return existing_nodes, True
-        return ['local'], True
+        return ["local"], True
 
     # User entered node names
     nodes = response.split()
@@ -328,13 +328,13 @@ def run_usage_scan(base_dir: str = None, seed_hosts: list = None):
     resources = scan_for_resources(scan_dir)
 
     # Count what we found
-    n_compressed = len(resources['sosreports_compressed'])
-    n_extracted = len(resources['sosreports_extracted'])
-    n_inventory = len(resources['inventory_files'])
-    n_hosts = len(resources['hosts_files'])
-    n_results = len(resources['former_results'])
-    n_config = len(resources['config_files'])
-    n_pdf = len(resources['pdf_reports'])
+    n_compressed = len(resources["sosreports_compressed"])
+    n_extracted = len(resources["sosreports_extracted"])
+    n_inventory = len(resources["inventory_files"])
+    n_hosts = len(resources["hosts_files"])
+    n_results = len(resources["former_results"])
+    n_config = len(resources["config_files"])
+    n_pdf = len(resources["pdf_reports"])
 
     has_sosreports = n_compressed > 0 or n_extracted > 0
     has_inventory = n_inventory > 0 or n_hosts > 0
@@ -347,31 +347,31 @@ def run_usage_scan(base_dir: str = None, seed_hosts: list = None):
 
     if n_compressed > 0:
         print(f"  SOSreports (compressed):  {n_compressed}")
-        for f in resources['sosreports_compressed'][:5]:
+        for f in resources["sosreports_compressed"][:5]:
             print(f"    - {os.path.basename(f)}")
         if n_compressed > 5:
             print(f"    ... and {n_compressed - 5} more")
 
     if n_extracted > 0:
         print(f"  SOSreports (extracted):   {n_extracted}")
-        for f in resources['sosreports_extracted'][:5]:
+        for f in resources["sosreports_extracted"][:5]:
             print(f"    - {os.path.basename(f)}")
         if n_extracted > 5:
             print(f"    ... and {n_extracted - 5} more")
 
     if n_inventory > 0:
         print(f"  Inventory files:          {n_inventory}")
-        for f in resources['inventory_files'][:3]:
+        for f in resources["inventory_files"][:3]:
             print(f"    - {f}")
 
     if n_hosts > 0:
         print(f"  Hosts files:              {n_hosts}")
-        for f in resources['hosts_files'][:3]:
+        for f in resources["hosts_files"][:3]:
             print(f"    - {f}")
 
     if n_results > 0:
         print(f"  Former results:           {n_results}")
-        for f in sorted(resources['former_results'], reverse=True)[:3]:
+        for f in sorted(resources["former_results"], reverse=True)[:3]:
             print(f"    - {os.path.basename(f)}")
 
     if n_pdf > 0:
@@ -391,29 +391,37 @@ def run_usage_scan(base_dir: str = None, seed_hosts: list = None):
     options = []
 
     if has_former:
-        options.append(('d', 'Delete former results and config, then run health check'))
-        options.append(('c', 'Continue with existing configuration'))
+        options.append(("d", "Delete former results and config, then run health check"))
+        options.append(("c", "Continue with existing configuration"))
 
     if n_compressed > 0:
-        options.append(('e', f'Extract {n_compressed} compressed sosreport(s) and analyze'))
+        options.append(("e", f"Extract {n_compressed} compressed sosreport(s) and analyze"))
 
     if n_extracted > 0 or n_compressed > 0:
-        sos_dir = os.path.dirname(resources['sosreports_extracted'][0]) if n_extracted > 0 else os.path.dirname(resources['sosreports_compressed'][0])
-        options.append(('s', f'Analyze sosreports in {sos_dir}'))
+        sos_dir = (
+            os.path.dirname(resources["sosreports_extracted"][0])
+            if n_extracted > 0
+            else os.path.dirname(resources["sosreports_compressed"][0])
+        )
+        options.append(("s", f"Analyze sosreports in {sos_dir}"))
 
     if has_inventory:
-        inv_file = resources['inventory_files'][0] if n_inventory > 0 else resources['hosts_files'][0]
-        options.append(('i', f'Use inventory/hosts file: {inv_file}'))
+        inv_file = (
+            resources["inventory_files"][0] if n_inventory > 0 else resources["hosts_files"][0]
+        )
+        options.append(("i", f"Use inventory/hosts file: {inv_file}"))
 
     # Always offer the option to fetch SOSreports from a cluster
     if seed_hosts:
-        options.append(('f', f'Fetch SOSreports from cluster (using {seed_hosts[0]} to discover all nodes)'))
+        options.append(
+            ("f", f"Fetch SOSreports from cluster (using {seed_hosts[0]} to discover all nodes)")
+        )
     else:
-        options.append(('f', 'Fetch SOSreports from cluster (enter one node to discover all)'))
-    options.append(('n', 'Enter hostnames manually'))
-    options.append(('l', 'Run locally (on this cluster node)'))
-    options.append(('h', 'Show help and examples'))
-    options.append(('q', 'Quit'))
+        options.append(("f", "Fetch SOSreports from cluster (enter one node to discover all)"))
+    options.append(("n", "Enter hostnames manually"))
+    options.append(("l", "Run locally (on this cluster node)"))
+    options.append(("h", "Show help and examples"))
+    options.append(("q", "Quit"))
 
     for key, desc in options:
         print(f"  [{key}] {desc}")
@@ -426,19 +434,19 @@ def run_usage_scan(base_dir: str = None, seed_hosts: list = None):
         print("\n  Cancelled.")
         return None
 
-    if choice == 'q':
+    if choice == "q":
         print("  Exiting.")
         return None
 
-    if choice == 'h':
+    if choice == "h":
         print_usage_help()
         return None
 
-    if choice == 'd':
+    if choice == "d":
         # Delete former results and continue
         print("\n  Deleting former results and config...")
         deleted = 0
-        for f in resources['former_results'] + resources['config_files'] + resources['pdf_reports']:
+        for f in resources["former_results"] + resources["config_files"] + resources["pdf_reports"]:
             try:
                 os.remove(f)
                 print(f"    Deleted: {os.path.basename(f)}")
@@ -449,99 +457,101 @@ def run_usage_scan(base_dir: str = None, seed_hosts: list = None):
 
         # Continue with health check - determine best action based on available resources
         if n_extracted > 0:
-            sos_dir = os.path.dirname(resources['sosreports_extracted'][0])
+            sos_dir = os.path.dirname(resources["sosreports_extracted"][0])
             print(f"  Continuing with sosreports in {sos_dir}...")
-            return {'action': 'sosreport', 'sosreport_dir': sos_dir}
-        elif n_compressed > 0:
+            return {"action": "sosreport", "sosreport_dir": sos_dir}
+        if n_compressed > 0:
             # Extract and analyze
-            extracted = extract_sosreports_parallel(resources['sosreports_compressed'])
+            extracted = extract_sosreports_parallel(resources["sosreports_compressed"])
             if extracted:
                 sos_dir = os.path.dirname(extracted[0])
                 print(f"  Continuing with extracted sosreports in {sos_dir}...")
-                return {'action': 'sosreport', 'sosreport_dir': sos_dir}
-        elif has_inventory:
-            inv_file = resources['inventory_files'][0] if n_inventory > 0 else resources['hosts_files'][0]
+                return {"action": "sosreport", "sosreport_dir": sos_dir}
+        if has_inventory:
+            inv_file = (
+                resources["inventory_files"][0] if n_inventory > 0 else resources["hosts_files"][0]
+            )
             print(f"  Continuing with inventory file {inv_file}...")
-            return {'action': 'hosts_file', 'hosts_file': inv_file}
-        else:
-            # No resources found, ask for hostnames
-            try:
-                hosts = input("  Enter hostnames (space-separated): ").strip()
-                if hosts:
-                    return {'action': 'hosts', 'hosts': hosts.split()}
-            except (EOFError, KeyboardInterrupt):
-                pass
-            return None
+            return {"action": "hosts_file", "hosts_file": inv_file}
+        # No resources found, ask for hostnames
+        try:
+            hosts = input("  Enter hostnames (space-separated): ").strip()
+            if hosts:
+                return {"action": "hosts", "hosts": hosts.split()}
+        except (EOFError, KeyboardInterrupt):
+            pass
+        return None
 
-    if choice == 'c':
+    if choice == "c":
         # Continue with existing config
         if n_config > 0:
-            config_dir = os.path.dirname(resources['config_files'][0])
-            return {'action': 'continue', 'config_dir': config_dir}
-        else:
-            print("  No existing configuration found.")
-            return None
+            config_dir = os.path.dirname(resources["config_files"][0])
+            return {"action": "continue", "config_dir": config_dir}
+        print("  No existing configuration found.")
+        return None
 
-    if choice == 'e':
+    if choice == "e":
         # Extract and analyze sosreports
-        extracted = extract_sosreports_parallel(resources['sosreports_compressed'])
+        extracted = extract_sosreports_parallel(resources["sosreports_compressed"])
         if extracted:
             sos_dir = os.path.dirname(extracted[0])
             print(f"\n  Extracted {len(extracted)} sosreport(s).")
             print("  Run health check with:")
             print(f"    ./cluster_health_check.py -s {sos_dir}")
-            return {'action': 'sosreport', 'sosreport_dir': sos_dir}
-        else:
-            print("  No sosreports extracted.")
-            return None
+            return {"action": "sosreport", "sosreport_dir": sos_dir}
+        print("  No sosreports extracted.")
+        return None
 
-    if choice == 's':
+    if choice == "s":
         # Analyze sosreports directly
         if n_extracted > 0:
-            sos_dir = os.path.dirname(resources['sosreports_extracted'][0])
+            sos_dir = os.path.dirname(resources["sosreports_extracted"][0])
         else:
             # Extract first
-            extracted = extract_sosreports_parallel(resources['sosreports_compressed'])
+            extracted = extract_sosreports_parallel(resources["sosreports_compressed"])
             sos_dir = os.path.dirname(extracted[0]) if extracted else None
 
         if sos_dir:
-            return {'action': 'sosreport', 'sosreport_dir': sos_dir}
-        else:
-            print("  No sosreports found to analyze.")
-            return None
+            return {"action": "sosreport", "sosreport_dir": sos_dir}
+        print("  No sosreports found to analyze.")
+        return None
 
-    if choice == 'i':
+    if choice == "i":
         # Use inventory file
-        inv_file = resources['inventory_files'][0] if n_inventory > 0 else resources['hosts_files'][0]
-        return {'action': 'hosts_file', 'hosts_file': inv_file}
+        inv_file = (
+            resources["inventory_files"][0] if n_inventory > 0 else resources["hosts_files"][0]
+        )
+        return {"action": "hosts_file", "hosts_file": inv_file}
 
-    if choice == 'f':
+    if choice == "f":
         # Fetch SOSreports from cluster - use seed_hosts from CLI or prompt
         try:
             if seed_hosts:
                 host = seed_hosts[0]
                 print(f"  Using {host} to discover all cluster nodes...")
             else:
-                host = input("  Enter one cluster node hostname (all nodes will be discovered): ").strip()
+                host = input(
+                    "  Enter one cluster node hostname (all nodes will be discovered): "
+                ).strip()
             if host:
                 output_dir = scan_dir if scan_dir != "." else None
-                return {'action': 'fetch_sosreports', 'seed_node': host, 'output_dir': output_dir}
+                return {"action": "fetch_sosreports", "seed_node": host, "output_dir": output_dir}
         except (EOFError, KeyboardInterrupt):
             pass
         return None
 
-    if choice == 'n':
+    if choice == "n":
         # Manual hostname entry
         try:
             hosts = input("  Enter hostnames (space-separated): ").strip()
             if hosts:
-                return {'action': 'hosts', 'hosts': hosts.split()}
+                return {"action": "hosts", "hosts": hosts.split()}
         except (EOFError, KeyboardInterrupt):
             pass
         return None
 
-    if choice == 'l':
-        return {'action': 'local'}
+    if choice == "l":
+        return {"action": "local"}
 
     print(f"  Unknown option: {choice}")
     return None

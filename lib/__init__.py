@@ -38,22 +38,22 @@ from .cluster_report import (
 
 __all__ = [
     # utils
-    'scan_for_resources',
-    'extract_sosreports_parallel',
-    'check_for_updates',
-    'SCRIPT_DIR',
+    "scan_for_resources",
+    "extract_sosreports_parallel",
+    "check_for_updates",
+    "SCRIPT_DIR",
     # installation
-    'get_redhat_doc_urls',
-    'print_guide',
-    'print_steps',
-    'print_suggestions',
+    "get_redhat_doc_urls",
+    "print_guide",
+    "print_steps",
+    "print_suggestions",
     # interactive
-    'interactive_startup',
-    'run_usage_scan',
-    'print_usage_help',
+    "interactive_startup",
+    "run_usage_scan",
+    "print_usage_help",
     # cib_parser
-    'CIBParser',
+    "CIBParser",
     # cluster_report
-    'ClusterReportData',
-    'REPORT_VERSION',
+    "ClusterReportData",
+    "REPORT_VERSION",
 ]
