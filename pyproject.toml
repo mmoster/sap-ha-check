@@ -30,7 +30,7 @@ disable = [
     "missing-class-docstring",   # C0115
     "missing-function-docstring",# C0116
 
-    # Import errors from dynamic sys.path — will fix in restructuring phase
+    # Import errors — pylint doesn't resolve all package-internal imports
     "import-error",             # E0401
 
     # Broad exception catching is intentional at error boundaries (SSH, subprocess, YAML, file I/O)
@@ -55,3 +55,6 @@ good-names = ["i", "j", "k", "e", "f", "fd", "ip", "ok", "rc", "fn", "db", "n", 
 
 [tool.pylint.similarities]
 min-similarity-lines = 8
+
+[tool.pytest.ini_options]
+pythonpath = ["sap_ha_check/lib"]

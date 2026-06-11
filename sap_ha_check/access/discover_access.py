@@ -452,8 +452,8 @@ class AccessDiscovery:
   To collect extended SAP HANA HA data in future SOSreports, deploy
   the following configuration to all cluster nodes:
 
-  Run: ./cluster_health_check.py -R --configure-extensions
-  Or:  ./cluster_health_check.py -R <node>
+  Run: ./sap_ha_check.py -R --configure-extensions
+  Or:  ./sap_ha_check.py -R <node>
 
   This will configure SAP HANA HA data collection (global.ini,
   sudoers, SAPHanaSR-showAttr, cluster state) and create SOSreports.
@@ -747,7 +747,7 @@ class AccessDiscovery:
 
         # Try to use CIBParser for detailed config
         try:
-            from lib.cib_parser import CIBParser
+            from ..lib.cib_parser import CIBParser
 
             # Use SOSreport or local cib.xml
             if sosreport_path:
@@ -1059,7 +1059,7 @@ class AccessDiscovery:
 
                 # Also try to get nodes from cib.xml for more accurate matching
                 try:
-                    from lib.cib_parser import CIBParser
+                    from ..lib.cib_parser import CIBParser
 
                     parser = CIBParser.from_sosreport(first_sos_path)
                     if parser and parser.is_available():
@@ -1869,7 +1869,7 @@ class AccessDiscovery:
                 )
                 if result.returncode == 0:
                     # Parse the cib.xml
-                    from lib.cib_parser import CIBParser
+                    from ..lib.cib_parser import CIBParser
 
                     parser = CIBParser.from_file(tmp_path)
                     if parser and parser.is_available():
@@ -2687,7 +2687,7 @@ def show_config(config_path: Path, cluster_or_node: str = None, config_only: boo
     if not config_path.exists():
         print(f"No configuration file found at {config_path}")
         print("\nRun discovery first:")
-        print("  ./cluster_health_check.py hana01")
+        print("  ./sap_ha_check.py hana01")
         return False
 
     with open(config_path, "r", encoding="utf-8") as f:
@@ -2728,10 +2728,10 @@ def show_config(config_path: Path, cluster_or_node: str = None, config_only: boo
                     else:
                         print()
                     print("\nTo show all configuration:")
-                    print("  ./cluster_health_check.py --show-config")
+                    print("  ./sap_ha_check.py --show-config")
                 else:
                     print("\nNo clusters discovered yet. Run discovery first:")
-                    print("  ./cluster_health_check.py hana01")
+                    print("  ./sap_ha_check.py hana01")
                 return False
 
     print("\n" + "=" * 60)
@@ -3024,10 +3024,10 @@ def show_config(config_path: Path, cluster_or_node: str = None, config_only: boo
 
             if not config_only:
                 print("\n    To check this cluster:")
-                print(f"      ./cluster_health_check.py -C {name}")
+                print(f"      ./sap_ha_check.py -C {name}")
     else:
         print("\n[INFO] No clusters discovered yet")
-        print("  Run: ./cluster_health_check.py hana01")
+        print("  Run: ./sap_ha_check.py hana01")
 
     # Skip remaining sections if config_only mode
     if config_only:
@@ -3078,15 +3078,15 @@ def show_config(config_path: Path, cluster_or_node: str = None, config_only: boo
 
     print("\n--- Quick Commands ---")
     if cluster_name:
-        print(f"  Check cluster:    ./cluster_health_check.py -C {cluster_name}")
-        print("  Show all config:  ./cluster_health_check.py --show-config")
+        print(f"  Check cluster:    ./sap_ha_check.py -C {cluster_name}")
+        print("  Show all config:  ./sap_ha_check.py --show-config")
     elif clusters:
         first_cluster = list(clusters.keys())[0]
-        print(f"  Check cluster:    ./cluster_health_check.py -C {first_cluster}")
-        print(f"  Show one cluster: ./cluster_health_check.py --show-config {first_cluster}")
-    print("  Force rediscover: ./cluster_health_check.py -f hana01")
-    print("  Delete config:    ./cluster_health_check.py -D")
-    print("  Show guide:       ./cluster_health_check.py --guide")
+        print(f"  Check cluster:    ./sap_ha_check.py -C {first_cluster}")
+        print(f"  Show one cluster: ./sap_ha_check.py --show-config {first_cluster}")
+    print("  Force rediscover: ./sap_ha_check.py -f hana01")
+    print("  Delete config:    ./sap_ha_check.py -D")
+    print("  Show guide:       ./sap_ha_check.py --guide")
 
     return True
 
@@ -3120,7 +3120,7 @@ def export_ansible_vars(config_path: Path, cluster_name: str, output_file: str =
 
     if not sid:
         print(f"No SAP HANA configuration found for cluster '{cluster_name}'.")
-        print("Run discovery with: ./cluster_health_check.py -f <node>")
+        print("Run discovery with: ./sap_ha_check.py -f <node>")
         return False
 
     # Build Ansible vars dictionary
@@ -4140,7 +4140,7 @@ def create_and_fetch_sosreports(
         print(f" Downloaded {len(downloaded_files)} SOSreport(s) to: {sos_dir}")
         print()
         print(" To analyze with health check:")
-        print(f"   ./cluster_health_check.py -s {sos_dir}")
+        print(f"   ./sap_ha_check.py -s {sos_dir}")
     else:
         print(" No SOSreports were downloaded.")
     print(f"{'='*63}")
@@ -4408,7 +4408,7 @@ def fetch_sosreports(  # pylint: disable=too-many-positional-arguments
     if downloaded_files:
         print(f"Downloaded {len(downloaded_files)} sosreport(s) to: {sos_dir}")
         print("\nTo analyze with health check:")
-        print(f"  ./cluster_health_check.py -s {sos_dir}")
+        print(f"  ./sap_ha_check.py -s {sos_dir}")
     else:
         print("No sosreports were downloaded.")
 

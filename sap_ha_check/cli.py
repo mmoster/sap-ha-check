@@ -35,13 +35,7 @@ except ImportError:
 
 import yaml
 
-# Add modules to path
-SCRIPT_DIR = Path(__file__).parent.resolve()
-sys.path.insert(0, str(SCRIPT_DIR / "access"))
-sys.path.insert(0, str(SCRIPT_DIR / "rules"))
-
-# pylint: disable=wrong-import-position
-from discover_access import (  # noqa: E402
+from .access.discover_access import (
     AccessDiscovery,
     show_config,
     delete_config,
@@ -49,9 +43,8 @@ from discover_access import (  # noqa: E402
     fetch_sosreports,
     create_and_fetch_sosreports,
 )
-from engine import RulesEngine, CheckResult, CheckStatus, Severity, CheckDispatch  # noqa: E402
-
-from lib import (  # noqa: E402
+from .rules.engine import RulesEngine, CheckResult, CheckStatus, Severity, CheckDispatch
+from .lib import (
     get_redhat_doc_urls,
     print_guide,
     print_steps,
@@ -61,9 +54,9 @@ from lib import (  # noqa: E402
     ClusterReportData,
     REPORT_VERSION,
 )
-from lib.config_extractor import ConfigExtractor  # noqa: E402
+from .lib.config_extractor import ConfigExtractor
 
-# pylint: enable=wrong-import-position
+SCRIPT_DIR = Path(__file__).parent.resolve()
 
 
 class Spinner:
@@ -1299,7 +1292,7 @@ class ClusterHealthCheck:
             print(" All installation steps completed!")
             print("=" * 63)
             print("\n  Run health check to verify configuration:")
-            print("    ./cluster_health_check.py")
+            print("    ./sap_ha_check.py")
             return
 
         # Determine the immediate next step
@@ -1515,7 +1508,7 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
 
         print("-" * 63)
         print(" After completing these steps, rerun the health check:")
-        print("   ./cluster_health_check.py")
+        print("   ./sap_ha_check.py")
         print("-" * 63)
 
     def print_banner(self):
@@ -2576,7 +2569,7 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
         # Generate PDF report if requested (fpdf2 availability checked at startup)
         if self.generate_pdf:
             try:
-                from report_generator import generate_health_check_report
+                from .report_generator import generate_health_check_report
 
                 # Use unified data for PDF generation
                 cluster_info = report_data.to_cluster_info()
@@ -2636,8 +2629,8 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
             print("Source: Ansible inventory (auto-discovery)")
 
         print("-" * 63)
-        print("To use different nodes:  ./cluster_health_check.py <node1> <node2>")
-        print("To reset configuration:  ./cluster_health_check.py -D")
+        print("To use different nodes:  ./sap_ha_check.py <node1> <node2>")
+        print("To reset configuration:  ./sap_ha_check.py -D")
         print("-" * 63)
 
         skip_steps = skip_steps or []
@@ -2783,8 +2776,8 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                     print(f"  Missing commands: {', '.join(commands_missing)}")
                 print()
                 print("  To see installation steps, run:")
-                print("    ./cluster_health_check.py -i")
-                print("    ./cluster_health_check.py --suggest install")
+                print("    ./sap_ha_check.py -i")
+                print("    ./sap_ha_check.py --suggest install")
                 print("=" * 63)
 
             elif failed_checks:
@@ -2831,7 +2824,7 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                 # Auto-generate PDF report on success (fpdf2 availability checked at startup)
                 if self.generate_pdf:
                     try:
-                        from report_generator import generate_health_check_report
+                        from .report_generator import generate_health_check_report
 
                         # Use unified data model for PDF generation
                         report_data = self._build_cluster_report_data()
@@ -2967,8 +2960,8 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
         if failed:
             # Show hint about --suggest
             first_failed = failed[0]
-            print(f"\n  Get help: ./cluster_health_check.py --suggest {first_failed}")
-            print("  Or auto:  ./cluster_health_check.py --suggest")
+            print(f"\n  Get help: ./sap_ha_check.py --suggest {first_failed}")
+            print("  Or auto:  ./sap_ha_check.py --suggest")
 
         # Show next steps
         self._print_next_steps(results)
@@ -2986,7 +2979,7 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
             )
             print("    systemctl enable --now pcsd")
             print("    ... (more steps required)")
-            print("\n  For full guide: ./cluster_health_check.py -i")
+            print("\n  For full guide: ./sap_ha_check.py -i")
 
             print("\nOptions:")
             print("  [Enter]  Rerun health check (monitor installation progress)")
@@ -3086,7 +3079,7 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                 )
                 if missing_steps:
                     print(f"          Missing: {', '.join(missing_steps)}")
-                print("          Run ./cluster_health_check.py -i to see remaining steps.")
+                print("          Run ./sap_ha_check.py -i to see remaining steps.")
             else:
                 print("\n[WARNING] Some health checks FAILED. Review report for details.")
             return 1
@@ -3096,7 +3089,7 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
             )
             if missing_steps:
                 print(f"             Missing: {', '.join(missing_steps)}")
-            print("             Run ./cluster_health_check.py -i to see remaining steps.")
+            print("             Run ./sap_ha_check.py -i to see remaining steps.")
             return 2
         if has_skipped:
             print("\n[INFO] Some checks were skipped (commands not available).")
@@ -3117,8 +3110,8 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
         if not results.get("access"):
             print("""
   Access discovery failed. Try:
-    ./cluster_health_check.py --debug hana01    # Debug with specific node
-    ./cluster_health_check.py -s /path/to/sos   # Use SOSreports instead
+    ./sap_ha_check.py --debug hana01    # Debug with specific node
+    ./sap_ha_check.py -s /path/to/sos   # Use SOSreports instead
 """)
             return
 
@@ -3193,7 +3186,7 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
             if packages_missing or essential_cmd_missing:
                 print("""
   INSTALLATION REQUIRED: Cluster packages not installed!
-    Run: ./cluster_health_check.py --suggest install
+    Run: ./sap_ha_check.py --suggest install
 
     This will show step-by-step installation instructions for:
     - Pacemaker, Corosync, pcs
@@ -3226,7 +3219,7 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
                 for i, step in enumerate(missing_steps, 1):
                     print(f"  ║  {i}. {step:<55} ║")
                 print("""  ║                                                               ║
-  ║  Run ./cluster_health_check.py -i for detailed guide          ║
+  ║  Run ./sap_ha_check.py -i for detailed guide          ║
   ╚═══════════════════════════════════════════════════════════════╝
 """)
             elif cluster_not_running:
@@ -3259,12 +3252,12 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
 
         print("""
   Common next steps:
-    ./cluster_health_check.py --suggest install   # Installation guide
-    ./cluster_health_check.py --show-config       # View all clusters config
-    ./cluster_health_check.py -S mycluster        # View specific cluster config
-    ./cluster_health_check.py -f hana01           # Force re-discovery
-    ./cluster_health_check.py --list-rules        # List all health checks
-    ./cluster_health_check.py --guide             # Show detailed usage guide
+    ./sap_ha_check.py --suggest install   # Installation guide
+    ./sap_ha_check.py --show-config       # View all clusters config
+    ./sap_ha_check.py -S mycluster        # View specific cluster config
+    ./sap_ha_check.py -f hana01           # Force re-discovery
+    ./sap_ha_check.py --list-rules        # List all health checks
+    ./sap_ha_check.py --guide             # Show detailed usage guide
 """)
 
         doc_urls = get_redhat_doc_urls(self._get_rhel_major())
@@ -3709,9 +3702,9 @@ Examples:
 
             if not status_file.exists():
                 print("No previous run found. Run a health check first:")
-                print("  ./cluster_health_check.py hana01")
+                print("  ./sap_ha_check.py hana01")
                 print("\nOr specify a step directly:")
-                print("  ./cluster_health_check.py --suggest config")
+                print("  ./sap_ha_check.py --suggest config")
                 sys.exit(1)
 
             with open(status_file, "r", encoding="utf-8") as f:
@@ -3943,7 +3936,7 @@ Examples:
 
     # Check upfront if PDF dependencies are available - inform user of missing packages
     if generate_pdf:
-        from report_generator import is_pdf_available
+        from .report_generator import is_pdf_available
 
         if not is_pdf_available():
             # Check which PDF-related packages are missing
@@ -4186,7 +4179,7 @@ Examples:
                             pdf_file = health_check.config_dir / default_name
 
                         # Generate PDF using unified data model
-                        from report_generator import generate_health_check_report
+                        from .report_generator import generate_health_check_report
 
                         # Use unified data model for PDF generation
                         # pylint: disable-next=protected-access
@@ -4261,8 +4254,8 @@ Examples:
                                 config_file.unlink()
                                 print("  Configuration deleted.")
                                 print("\n  To rediscover, run:")
-                                print("    ./cluster_health_check.py <hostname>")
-                                print("    ./cluster_health_check.py -s sosreports/")
+                                print("    ./sap_ha_check.py <hostname>")
+                                print("    ./sap_ha_check.py -s sosreports/")
                             else:
                                 print("  Cancelled.")
                         except (EOFError, KeyboardInterrupt):
@@ -4291,7 +4284,7 @@ Examples:
                             )
 
                             # Generate PDF
-                            from report_generator import generate_health_check_report
+                            from .report_generator import generate_health_check_report
 
                             # pylint: disable-next=protected-access
                             report_data = health_check._build_cluster_report_data()

@@ -364,7 +364,7 @@ CHK_*.yaml  →  engine.run_check()  →  1. Check topology_filter
 | `rules/check_dispatch.yaml` | Dispatch manifest: step/phase/gate/topology assignment |
 | `rules/health_checks/CHK_*.yaml` | Health check definitions (data + validation) |
 | `rules/engine.py` | Rules engine, CheckDispatch loader |
-| `cluster_health_check.py` | Main CLI, GateRegistry, step orchestration |
+| `sap_ha_check.py` | Main CLI, GateRegistry, step orchestration |
 | `report_generator.py` | PDF/YAML report generation |
 
 ---
@@ -376,4 +376,4 @@ The engine uses a **declarative approach** where you describe *what* to check, n
 1. **Rule file** (`CHK_*.yaml`) — defines data collection, parsing, and validation
 2. **Dispatch manifest** (`check_dispatch.yaml`) — defines when and where the check runs
 
-The `rules/engine.py` handles command execution, SOSreport reading, regex parsing, expectation evaluation, and result aggregation. The `cluster_health_check.py` orchestrator handles step sequencing, gate evaluation, topology filtering, and post-phase state extraction.
+The `rules/engine.py` handles command execution, SOSreport reading, regex parsing, expectation evaluation, and result aggregation. The `sap_ha_check.py` orchestrator handles step sequencing, gate evaluation, topology filtering, and post-phase state extraction.

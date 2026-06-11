@@ -46,12 +46,12 @@ except ImportError:
             return {k: v for k, v in obj.__dict__.items() if not k.startswith('_')}
         return obj
 
-# Pfad zum Wrapper-Modul hinzufügen
+# Pfad zum Paket hinzufügen
 SCRIPT_DIR = Path(__file__).parent.resolve()
-WRAPPER_DIR = SCRIPT_DIR.parent.parent / "wrapper"
-sys.path.insert(0, str(WRAPPER_DIR / "access"))
+PROJECT_ROOT = SCRIPT_DIR.parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
 
-from discover_access import AccessDiscovery  # noqa: E402
+from sap_ha_check.access.discover_access import AccessDiscovery  # noqa: E402
 
 
 @dataclass

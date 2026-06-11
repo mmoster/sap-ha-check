@@ -9,7 +9,6 @@ Supports both live command execution and SOSreport parsing.
 import os
 import re
 import subprocess
-import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from enum import Enum
 from pathlib import Path
@@ -17,17 +16,7 @@ from typing import List, Dict, Optional, Any, Tuple
 
 import yaml
 
-# Add parent directory to path for lib imports
-SCRIPT_DIR = Path(__file__).parent.parent.resolve()
-if str(SCRIPT_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPT_DIR))
-
-# Add lib/ to path for hadr_provider imports
-_LIB_DIR = str(Path(__file__).parent.parent / "lib")
-if _LIB_DIR not in sys.path:
-    sys.path.insert(0, _LIB_DIR)
-
-from lib import CIBParser  # noqa: E402  # pylint: disable=wrong-import-position
+from ..lib import CIBParser
 
 # Python 3.6 compatibility for dataclasses
 try:
@@ -1024,14 +1013,14 @@ class RulesEngine:
         Skips when running from SOSreport (insufficient data).
         """
         try:
-            from hadr_provider import (
+            from ..lib.hadr_provider import (
                 has_required_data,
                 parse_collected_output,
                 get_expected_config,
                 validate_rhel_arch_compatibility,
                 HadrValidator,
             )
-            from hadr_provider.suggestions import format_finding_message
+            from ..lib.hadr_provider.suggestions import format_finding_message
         except ImportError:
             return CheckResult(
                 check_id=rule.check_id,
@@ -1189,7 +1178,7 @@ class RulesEngine:
 
     def _get_hadr_topology(self):
         """Get cluster topology from CHK_CLUSTER_TYPE result."""
-        from hadr_provider.models import Topology
+        from ..lib.hadr_provider.models import Topology
 
         for result in self.results:
             if result.check_id == "CHK_CLUSTER_TYPE" and result.details:
@@ -1212,7 +1201,7 @@ class RulesEngine:
 
     def _detect_hadr_arch_type(self):
         """Detect resource agent arch type from CHK_PACKAGE_CONSISTENCY results."""
-        from hadr_provider.config_matrix import detect_arch_type
+        from ..lib.hadr_provider.config_matrix import detect_arch_type
 
         for result in self.results:
             if result.check_id == "CHK_PACKAGE_CONSISTENCY" and result.details:

@@ -9,7 +9,7 @@ import sys
 from datetime import datetime
 from typing import Dict, List
 
-from lib.installation import get_redhat_doc_urls
+from .lib.installation import get_redhat_doc_urls
 
 # fpdf2 is optional - PDF generation will be skipped if not available
 FPDF_AVAILABLE = False

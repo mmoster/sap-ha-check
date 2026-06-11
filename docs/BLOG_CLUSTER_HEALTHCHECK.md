@@ -44,13 +44,13 @@ cd sap-ha-check-main
 
 ```bash
 # On a cluster node — the simplest way
-./cluster_health_check.py --local
+./sap_ha_check.py --local
 
 # Remote check via SSH (auto-discovers all cluster members from one node)
-./cluster_health_check.py hana01
+./sap_ha_check.py hana01
 
 # Analyze SOSreports offline
-./cluster_health_check.py -s /path/to/sosreports/
+./sap_ha_check.py -s /path/to/sosreports/
 ```
 
 That's it. The tool discovers the cluster topology, runs all checks, and generates a PDF report.
@@ -65,7 +65,7 @@ You don't need to know every node in your cluster. Provide a single seed node, a
 
 ```bash
 # Just provide one node — the tool finds the rest
-./cluster_health_check.py hana01
+./sap_ha_check.py hana01
 
 # The tool discovers hana02 (and any other members)
 # and runs checks across the entire cluster
@@ -79,10 +79,10 @@ When multiple clusters are discovered (e.g., from an Ansible inventory with seve
 
 ```bash
 # Use a previously discovered cluster
-./cluster_health_check.py -C mycluster
+./sap_ha_check.py -C mycluster
 
 # Show all discovered clusters
-./cluster_health_check.py --show-config
+./sap_ha_check.py --show-config
 ```
 
 ---
@@ -137,7 +137,7 @@ Every check has a severity level: **CRITICAL** (must-fix for production), **WARN
 Run directly on a cluster node — the most common approach:
 
 ```bash
-./cluster_health_check.py --local
+./sap_ha_check.py --local
 ```
 
 The tool detects it's running on a cluster node, discovers all members from Pacemaker, and runs the full check suite.
@@ -148,13 +148,13 @@ Specify one or more hostnames. The tool checks SSH connectivity (with a 2-second
 
 ```bash
 # Specify nodes directly
-./cluster_health_check.py hana01 hana02
+./sap_ha_check.py hana01 hana02
 
 # Or use a hosts file
-./cluster_health_check.py -H hosts.txt
+./sap_ha_check.py -H hosts.txt
 
 # Or filter by Ansible inventory group
-./cluster_health_check.py -g sap_cluster
+./sap_ha_check.py -g sap_cluster
 ```
 
 ### Example 3: Offline SOSreport Analysis
@@ -162,7 +162,7 @@ Specify one or more hostnames. The tool checks SSH connectivity (with a 2-second
 For support engineers and consultants, or when you need to analyze a cluster state from a specific point in time:
 
 ```bash
-./cluster_health_check.py -s /path/to/sosreports/
+./sap_ha_check.py -s /path/to/sosreports/
 ```
 
 Supported formats: `.tar.xz`, `.tar.gz`, `.tar.bz2`, and plain `.tar` — all auto-extracted in parallel.
@@ -173,10 +173,10 @@ A single command that discovers the cluster, configures SAP-specific SOSreport e
 
 ```bash
 # Provide any cluster node — all others are discovered
-./cluster_health_check.py -R hana01
+./sap_ha_check.py -R hana01
 
 # Auto-configure SAP extensions without prompting
-./cluster_health_check.py -R hana01 --configure-extensions
+./sap_ha_check.py -R hana01 --configure-extensions
 ```
 
 The SAP extensions add critical data that is often missing in default SOSreports:
@@ -189,7 +189,7 @@ The SAP extensions add critical data that is often missing in default SOSreports
 Don't remember where your SOSreports are? Use interactive mode to scan the directory and choose:
 
 ```bash
-./cluster_health_check.py -u
+./sap_ha_check.py -u
 ```
 
 ```
@@ -259,7 +259,7 @@ The tool auto-generates a PDF report containing:
 Use `-v` for **verbose PDF reports** that document every single check with full details — not just failures. This is ideal for audits, compliance reviews, or handover documentation:
 
 ```bash
-./cluster_health_check.py --local -v
+./sap_ha_check.py --local -v
 ```
 
 ---
@@ -284,19 +284,19 @@ New to the tool or troubleshooting a failed check? The built-in guidance system 
 
 ```bash
 # Show a detailed usage guide with examples
-./cluster_health_check.py --guide
+./sap_ha_check.py --guide
 
 # Show installation guide
-./cluster_health_check.py --install
+./sap_ha_check.py --install
 
 # Get suggestions for the first failing step from the last run
-./cluster_health_check.py --suggest
+./sap_ha_check.py --suggest
 
 # Get suggestions for a specific step
-./cluster_health_check.py --suggest pacemaker
+./sap_ha_check.py --suggest pacemaker
 
 # List all health check steps with descriptions
-./cluster_health_check.py --list-steps
+./sap_ha_check.py --list-steps
 ```
 
 The `--suggest` feature analyzes your last run results and provides targeted remediation advice for failing checks — saving you from searching through documentation manually.
@@ -318,7 +318,7 @@ Example cronjob for weekly health checks:
 
 ```bash
 # Run every Monday at 6:00 AM
-0 6 * * 1 /opt/sap-ha-check/cluster_health_check.py --local \
+0 6 * * 1 /opt/sap-ha-check/sap_ha_check.py --local \
     --no-update-check --no-pdf >> /var/log/sap_healthcheck.log 2>&1
 ```
 
@@ -330,13 +330,13 @@ Export your discovered cluster configuration as Ansible group_vars YAML for use 
 
 ```bash
 # Export cluster config as Ansible-compatible YAML
-./cluster_health_check.py --export-ansible mycluster output.yml
+./sap_ha_check.py --export-ansible mycluster output.yml
 ```
 
 You can also scope checks to a specific Ansible inventory group:
 
 ```bash
-./cluster_health_check.py -g sap_hana_cluster
+./sap_ha_check.py -g sap_hana_cluster
 ```
 
 ---
@@ -363,7 +363,7 @@ See [EXTENDING_HEALTH_CHECKS.md](EXTENDING_HEALTH_CHECKS.md) for the full techni
 ## Complete Command Reference
 
 ```
-./cluster_health_check.py [OPTIONS] [NODES...]
+./sap_ha_check.py [OPTIONS] [NODES...]
 ```
 
 ### Core Options
@@ -461,7 +461,7 @@ See [EXTENDING_HEALTH_CHECKS.md](EXTENDING_HEALTH_CHECKS.md) for the full techni
 ```bash
 git clone https://github.com/mmoster/sap-ha-check.git
 cd sap-ha-check
-./cluster_health_check.py --local
+./sap_ha_check.py --local
 ```
 
 - **GitHub Repository:** [github.com/mmoster/sap-ha-check](https://github.com/mmoster/sap-ha-check)

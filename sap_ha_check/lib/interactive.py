@@ -45,10 +45,10 @@ This tool checks SAP HANA Pacemaker cluster health by:
 
 USAGE EXAMPLES
 --------------
-  ./cluster_health_check.py hana01 hana02    Check specific nodes
-  ./cluster_health_check.py -s /path/sos     Analyze SOSreports
-  ./cluster_health_check.py -i               Show installation guide
-  ./cluster_health_check.py -G               Show full usage guide
+  ./sap_ha_check.py hana01 hana02    Check specific nodes
+  ./sap_ha_check.py -s /path/sos     Analyze SOSreports
+  ./sap_ha_check.py -i               Show installation guide
+  ./sap_ha_check.py -G               Show full usage guide
 """)
 
     # Check for existing configuration
@@ -497,7 +497,7 @@ def run_usage_scan(base_dir: str = None, seed_hosts: list = None):
             sos_dir = os.path.dirname(extracted[0])
             print(f"\n  Extracted {len(extracted)} sosreport(s).")
             print("  Run health check with:")
-            print(f"    ./cluster_health_check.py -s {sos_dir}")
+            print(f"    ./sap_ha_check.py -s {sos_dir}")
             return {"action": "sosreport", "sosreport_dir": sos_dir}
         print("  No sosreports extracted.")
         return None
@@ -565,12 +565,12 @@ def print_usage_help():
 ===============================================================
 
 BASIC USAGE:
-  ./cluster_health_check.py                    # Interactive mode
-  ./cluster_health_check.py <hostname>         # Check cluster via hostname
-  ./cluster_health_check.py -s <sosreport_dir> # Analyze sosreports offline
+  ./sap_ha_check.py                    # Interactive mode
+  ./sap_ha_check.py <hostname>         # Check cluster via hostname
+  ./sap_ha_check.py -s <sosreport_dir> # Analyze sosreports offline
 
 SCANNING FOR RESOURCES (-u):
-  ./cluster_health_check.py -u
+  ./sap_ha_check.py -u
 
   This scans the current directory and subdirectories for:
   - SOSreport archives (.tar.xz, .tar.gz) - extracts in parallel if needed
@@ -594,24 +594,24 @@ COMMON WORKFLOWS:
      cp /path/to/sosreport-*.tar.xz .
 
      # Scan and analyze
-     ../cluster_health_check.py -u
+     ../sap_ha_check.py -u
      # Or directly:
-     ../cluster_health_check.py -s .
+     ../sap_ha_check.py -s .
 
   2. Check a live cluster:
-     ./cluster_health_check.py hana01 hana02
+     ./sap_ha_check.py hana01 hana02
      # Or from a hosts file:
-     ./cluster_health_check.py -H hosts.txt
+     ./sap_ha_check.py -H hosts.txt
 
   3. Check from a cluster node:
-     ./cluster_health_check.py --local
+     ./sap_ha_check.py --local
      # Or:
-     ./cluster_health_check.py -l
+     ./sap_ha_check.py -l
 
   4. PDF reports are generated automatically after each health check.
 
 MORE OPTIONS:
-  ./cluster_health_check.py --help     # Full help
-  ./cluster_health_check.py --guide    # Detailed guide
-  ./cluster_health_check.py -L         # List health checks
+  ./sap_ha_check.py --help     # Full help
+  ./sap_ha_check.py --guide    # Detailed guide
+  ./sap_ha_check.py -L         # List health checks
 """)

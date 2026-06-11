@@ -20,33 +20,33 @@ This tool is designed for **SAP Basis administrators, Linux system administrator
 # Clone and run locally
 git clone https://github.com/mmoster/sap-ha-check.git
 cd sap-ha-check
-./cluster_health_check.py --local
+./sap_ha_check.py --local
 ```
 
 ### Remote Check
 
 ```bash
 # Check specific nodes
-./cluster_health_check.py hana01 hana02
+./sap_ha_check.py hana01 hana02
 
 # Use a hosts file
-./cluster_health_check.py -H hosts.txt
+./sap_ha_check.py -H hosts.txt
 
 # Analyze SOSreports offline
-./cluster_health_check.py -s /path/to/sosreports/
+./sap_ha_check.py -s /path/to/sosreports/
 
 # Verbose PDF (show all checks in detail, not just failures)
-./cluster_health_check.py hana01 -v
+./sap_ha_check.py hana01 -v
 
 # Collect SOSreports from cluster (auto-discovers all nodes)
-./cluster_health_check.py -R hana01
+./sap_ha_check.py -R hana01
 ```
 
 ### Interactive Mode
 
 ```bash
 # Scan directory for sosreports/inventory/results
-./cluster_health_check.py -u
+./sap_ha_check.py -u
 ```
 
 This scans the current directory for:
@@ -94,7 +94,7 @@ sudo yum install git    # RHEL 7
 # Clone and run
 git clone https://github.com/mmoster/sap-ha-check.git
 cd sap-ha-check
-./cluster_health_check.py --local
+./sap_ha_check.py --local
 ```
 
 ### Option 2: Download without git
@@ -103,7 +103,7 @@ cd sap-ha-check
 # Download and extract
 curl -L https://github.com/mmoster/sap-ha-check/archive/refs/heads/main.tar.gz | tar xz
 cd sap-ha-check-main
-./cluster_health_check.py --local
+./sap_ha_check.py --local
 ```
 
 ### Requirements
@@ -115,7 +115,7 @@ cd sap-ha-check-main
 ## Usage
 
 ```
-./cluster_health_check.py [OPTIONS] [NODES...]
+./sap_ha_check.py [OPTIONS] [NODES...]
 
 Options:
   -u, --usage           Interactive mode - scan directory for resources
@@ -231,13 +231,13 @@ nodes:
 
 ```bash
 # Show all discovered clusters and nodes
-./cluster_health_check.py --show-config
+./sap_ha_check.py --show-config
 
 # Show config for a specific cluster
-./cluster_health_check.py --show-config my_cluster
+./sap_ha_check.py --show-config my_cluster
 
 # Show config for cluster containing a specific node
-./cluster_health_check.py -S hana01
+./sap_ha_check.py -S hana01
 ```
 
 **Example Output:**
@@ -289,7 +289,7 @@ Delete with `-D` to restart the investigation from scratch.
 Use `-v` (verbose) to generate a complete PDF report documenting **all** health checks — not just failures. This is ideal for audits, compliance reviews, or handover documentation:
 
 ```bash
-./cluster_health_check.py --local -v
+./sap_ha_check.py --local -v
 ```
 
 The verbose report includes every check with its full result, the discovered cluster configuration, and system details — providing a complete snapshot of your cluster's health status.
