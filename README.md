@@ -299,6 +299,25 @@ See [docs/EXTENDING_HEALTH_CHECKS.md](docs/EXTENDING_HEALTH_CHECKS.md) for detai
 | PyYAML | `pip install pyyaml` or `dnf install python3-pyyaml` |
 | fpdf2 (optional) | For PDF report generation: `pip install fpdf2` |
 
+## Platform Compatibility Matrix
+
+This tool uses platform-specific commands and paths. The following matrix shows what is supported:
+
+| Component | Supported | Not Supported |
+|-----------|-----------|---------------|
+| **Operating System** | RHEL for SAP Solutions 8.x, 9.x, 10.x | SLES for SAP, other Linux distributions |
+| **Cluster Stack** | Pacemaker/Corosync with `pcs` CLI | Pacemaker/Corosync with `crmsh` (SUSE) |
+| **Cluster Topology** | Scale-Up (2+ nodes), Scale-Out (4+ nodes + majority maker) | ASCS/ERS (planned), standalone HANA |
+| **Resource Agents** | `sap-hana-ha` (ANGI, RHEL 9+), `resource-agents-sap-hana` (classic), `resource-agents-sap-hana-scaleout` (classic) | SUSE resource agents (`SAPHanaSR`, `SAPHanaSR-ScaleOut`) |
+| **Fencing** | All STONITH agents supported by RHEL | — |
+| **Subscription** | Red Hat Subscription Manager (`subscription-manager`) | SUSEConnect, zypper |
+| **Package Manager** | `rpm`, `dnf`/`yum` | `zypper` |
+| **OS Detection** | `/etc/redhat-release` | `/etc/os-release` (generic), `/etc/SuSE-release` |
+| **Python** | 3.6+ (included in RHEL 8/9/10) | Python 2.x |
+| **Access Methods** | Local, SSH, Ansible, SOSreport | — |
+
+> **Note:** Red Hat-specific dependencies include `pcs` (cluster CLI), `subscription-manager` (entitlement), `/etc/redhat-release` (version detection), and Red Hat-branded PDF report formatting. Contributions to support additional platforms are welcome.
+
 ## Testing
 
 This tool has been tested across different operating systems, cluster topologies, and resource agent packages.
