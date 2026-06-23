@@ -10,8 +10,6 @@ It supports **RHEL 8, 9, and 10** with both classic (`resource-agents-sap-hana`)
 
 This tool is designed for **SAP Basis administrators, Linux system administrators, and consultants** responsible for SAP HANA HA clusters. It can be run directly on a cluster node, remotely via SSH, or offline against SOSreport archives — no agent installation required. Whether you're doing an initial setup validation, a periodic health check, or troubleshooting a replication issue, this tool gives you a clear pass/fail report with actionable findings.
 
-**Contributors**: Amir and Janine are available to review, test, and commit changes to this project.
-
 ## Quick Start
 
 ### On a Cluster Node (Recommended)
@@ -298,10 +296,75 @@ The verbose report includes every check with its full result, the discovered clu
 
 See [docs/EXTENDING_HEALTH_CHECKS.md](docs/EXTENDING_HEALTH_CHECKS.md) for details on creating custom health check rules.
 
-## License
+## Requirements
 
-Apache License 2.0 - See [LICENSE](LICENSE) for details.
+| Component | Requirement |
+| --- | --- |
+| Operating System | Red Hat Enterprise Linux for SAP Solutions 8.x, 9.x, and 10.x |
+| Python | 3.6 or higher (included in RHEL 8/9/10) |
+| PyYAML | `pip install pyyaml` or `dnf install python3-pyyaml` |
+| fpdf2 (optional) | For PDF report generation: `pip install fpdf2` |
+
+## Testing
+
+This tool has been tested across different operating systems, cluster topologies, and resource agent packages.
+
+Operating systems:
+
+- Red Hat Enterprise Linux for SAP Solutions 8.x, 9.x, and 10.x
+
+Cluster topologies:
+
+- SAP HANA Scale-Up (2 HANA nodes + optional additional cluster nodes)
+- SAP HANA Scale-Out (4+ HANA nodes + 1 majority maker)
+
+Resource agent packages:
+
+- `sap-hana-ha` (ANGI, RHEL 9+)
+- `resource-agents-sap-hana` (classic)
+- `resource-agents-sap-hana-scaleout` (classic, Scale-Out)
+
+Access methods:
+
+- Local execution on cluster node
+- Remote execution via SSH
+- Offline analysis via SOSreport archives
+
+> **Testing Disclaimer**<br>
+> It is not possible to test every operating system, SAP HANA version, and cluster configuration combination with every release.<br>
+> Testing is regularly done for common scenarios: SAP HANA Scale-Up HA on RHEL 9 with ANGI resource agents.
+
+## Disclaimer
+
+> **Supported Platforms**<br>
+> This tool is designed for and tested on Red Hat Enterprise Linux for SAP Solutions 8.x, 9.x, and 10.x. SUSE Linux Enterprise Server for SAP Applications is not currently supported.
+
+> **Testing Coverage**<br>
+> Health checks are validated against SAP and Red Hat best practice documentation. Not every combination of SAP HANA version, RHEL version, cluster topology, and resource agent package can be covered. Results should be verified against the applicable Red Hat and SAP documentation for your specific environment.
+
+> **Constraints and Limitations**
+> - Only SAP HANA System Replication (HSR) clusters managed by Pacemaker are supported
+> - ASCS/ERS cluster validation is not yet implemented
+> - SUSE Linux Enterprise Server is not supported
+> - The tool performs read-only checks and does not modify any cluster or SAP configuration
+> - SOSreport analysis depends on the completeness of the collected SOSreport data
+> - PDF report generation requires the optional `fpdf2` package
+
+> **Use at Your Own Responsibility**<br>
+> This tool is provided as-is, without warranties or guarantees of any kind. While it performs only read-only operations, it is your responsibility to verify findings against the official SAP and Red Hat documentation for your environment. Use it at your own risk and responsibility.
 
 ## Contributing
 
 Contributions are welcome! Please open an issue or submit a pull request.
+
+## Contributors
+
+jfuchs and amemon are available to review, test, and commit changes to this project.
+
+## Support
+
+You can report any issues using the [Issues](https://github.com/mmoster/sap-ha-check/issues) section.
+
+## License
+
+[Apache 2.0](LICENSE)

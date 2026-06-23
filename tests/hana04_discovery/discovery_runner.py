@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Discovery Runner - Führt YAML-basierte Discovery-Regeln aus
+Discovery Runner - Executes YAML-based discovery rules
 
-Lädt Discovery-Regeln aus YAML-Dateien und sammelt Informationen
-von Remote-Hosts via SSH.
+Loads discovery rules from YAML files and collects information
+from remote hosts via SSH.
 """
 
 import os
@@ -46,7 +46,7 @@ except ImportError:
             return {k: v for k, v in obj.__dict__.items() if not k.startswith('_')}
         return obj
 
-# Pfad zum Paket hinzufügen
+# Add package path
 SCRIPT_DIR = Path(__file__).parent.resolve()
 PROJECT_ROOT = SCRIPT_DIR.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -56,7 +56,7 @@ from sap_ha_check.access.discover_access import AccessDiscovery  # noqa: E402
 
 @dataclass
 class DiscoveryResult:
-    """Ergebnis einer einzelnen Discovery"""
+    """Result of a single discovery"""
     id: str = None
     description: str = None
     success: bool = False
@@ -68,7 +68,7 @@ class DiscoveryResult:
 
 @dataclass
 class DiscoveredData:
-    """Gesammelte Discovery-Daten für einen Host"""
+    """Collected discovery data for a host"""
     hostname: str = None
     access_method: str = None
     discovery_timestamp: str = None
@@ -83,7 +83,7 @@ class DiscoveredData:
 
 
 class DiscoveryRunner:
-    """Führt Discovery-Regeln aus und sammelt Ergebnisse"""
+    """Executes discovery rules and collects results"""
 
     SSH_TIMEOUT = 30
     MAX_WORKERS = 5
@@ -102,7 +102,7 @@ class DiscoveryRunner:
             print(f"  [DEBUG {timestamp}] {message}")
 
     def load_rules(self) -> Dict[str, Dict]:
-        """Lädt alle Discovery-Regeln aus YAML-Dateien"""
+        """Load all discovery rules from YAML files"""
         self.rules = {}
 
         if not self.rules_dir.exists():
@@ -146,7 +146,7 @@ class DiscoveryRunner:
 
     def _execute_ssh_command(self, cmd: str, host: str,
                               user: str = None) -> Tuple[bool, str]:
-        """Führt einen SSH-Befehl aus"""
+        """Execute an SSH command"""
         ssh_user = user or os.environ.get('USER', 'root')
 
         try:
@@ -173,7 +173,7 @@ class DiscoveryRunner:
             return False, str(e)
 
     def _parse_output(self, output: str, parser_config: Dict) -> Any:
-        """Parst die Ausgabe gemäß Konfiguration"""
+        """Parse the output according to configuration"""
         parser_type = parser_config.get('type', 'raw')
 
         if parser_type == 'raw':
@@ -225,7 +225,7 @@ class DiscoveryRunner:
 
     def run_discovery(self, discovery: Dict, host: str,
                       user: str = None) -> DiscoveryResult:
-        """Führt eine einzelne Discovery aus"""
+        """Execute a single discovery"""
         disc_id = discovery.get('id', 'UNKNOWN')
         description = discovery.get('description', '')
         cmd = discovery.get('live_cmd', '')
@@ -269,7 +269,7 @@ class DiscoveryRunner:
 
     def run_group(self, group_name: str, host: str,
                   user: str = None) -> Dict[str, DiscoveryResult]:
-        """Führt alle Discoveries einer Gruppe aus"""
+        """Execute all discoveries in a group"""
         results = {}
 
         if group_name not in self.rules:
@@ -292,7 +292,7 @@ class DiscoveryRunner:
 
     def run_all(self, hosts: Dict[str, Dict],
                 groups: List[str] = None) -> Dict[str, DiscoveredData]:
-        """Führt alle Discoveries auf allen Hosts aus"""
+        """Execute all discoveries on all hosts"""
         self.results = {}
 
         groups_to_run = groups or list(self.rules.keys())
@@ -327,11 +327,11 @@ class DiscoveryRunner:
             for group_name in groups_to_run:
                 group_results = self.run_group(group_name, hostname, user)
 
-                # Ergebnisse strukturiert speichern
+                # Store results in structured format
                 host_data.groups[group_name] = {}
                 for disc_id, result in group_results.items():
                     store_as = None
-                    # Finde store_as aus Discovery-Definition
+                    # Find store_as from discovery definition
                     for disc in self.rules[group_name]['discoveries']:
                         if disc.get('id') == disc_id:
                             store_as = disc.get('store_as', disc_id)
@@ -352,14 +352,14 @@ class DiscoveryRunner:
         return self.results
 
     def save_results(self, output_file: str = None) -> str:
-        """Speichert die Ergebnisse in eine YAML-Datei"""
+        """Save the results to a YAML file"""
         if not output_file:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             output_file = self.config_dir / f"discovered_data_{timestamp}.yaml"
         else:
             output_file = Path(output_file)
 
-        # Ergebnisse in serialisierbares Format konvertieren
+        # Convert results to serializable format
         output_data = {
             'discovery_run': {
                 'timestamp': datetime.now().isoformat(),
@@ -385,7 +385,7 @@ class DiscoveryRunner:
         return str(output_file)
 
     def print_summary(self):
-        """Gibt eine Zusammenfassung aus"""
+        """Print a summary of results"""
         print(f"\n{'='*60}")
         print(" Discovery Summary")
         print(f"{'='*60}")
@@ -474,7 +474,7 @@ Examples:
 
     args = parser.parse_args()
 
-    # Discovery Runner initialisieren
+    # Initialize Discovery Runner
     runner = DiscoveryRunner(
         rules_dir=args.rules_dir,
         config_dir=args.config_dir,
@@ -492,10 +492,10 @@ Examples:
         print(f"  Access config:       {Path(args.config_dir) / 'cluster_access_config.yaml'}")
         print()
 
-    # Regeln laden
+    # Load rules
     runner.load_rules()
 
-    # Wenn nur Regeln auflisten
+    # If only listing rules
     if args.list_rules:
         print(f"\n{'='*60}")
         print(" Available Discovery Rules")
@@ -506,7 +506,7 @@ Examples:
                 print(f"  - {disc['id']}: {disc.get('description', '')[:50]}")
         sys.exit(0)
 
-    # Access Discovery durchführen
+    # Perform access discovery
     print(f"\n{'='*60}")
     print(" Step 1: Access Discovery")
     print(f"{'='*60}")
@@ -519,7 +519,7 @@ Examples:
 
     access_config = access_discovery.discover_all()
 
-    # Hosts filtern wenn gewünscht
+    # Filter hosts if requested
     hosts = access_config.nodes
     if args.host:
         if args.host in hosts:
@@ -528,7 +528,7 @@ Examples:
             print(f"[ERROR] Host not found: {args.host}")
             sys.exit(1)
 
-    # Prüfen ob zugängliche Hosts vorhanden
+    # Check if accessible hosts are available
     accessible_hosts = {
         h: info for h, info in hosts.items()
         if info.get('preferred_method') and info.get('preferred_method') != 'sosreport'
@@ -538,20 +538,20 @@ Examples:
         print("[ERROR] No accessible hosts found for live discovery")
         sys.exit(1)
 
-    # Discoveries ausführen
+    # Execute discoveries
     print(f"\n{'='*60}")
     print(" Step 2: Running Discoveries")
     print(f"{'='*60}")
 
     runner.run_all(accessible_hosts, groups=args.groups)
 
-    # Zusammenfassung
+    # Summary
     runner.print_summary()
 
-    # Ergebnisse speichern
+    # Save results
     output_file = runner.save_results(args.output)
 
-    # Optional: Daten anzeigen
+    # Optional: Display collected data
     if args.show_data:
         print(f"\n{'='*60}")
         print(" Collected Data")

@@ -1,14 +1,14 @@
-# Discovery Rules: Cluster-Ressourcen
-# Gruppe: resources
-# Diese Regeln sammeln Informationen über Cluster-Ressourcen
+# Discovery Rules: Cluster Resources
+# Group: resources
+# These rules collect information about cluster resources
 
 group: resources
-description: Pacemaker Cluster Ressourcen und Constraints
+description: Pacemaker cluster resources and constraints
 enabled: true
 
 discoveries:
   - id: DISC_RESOURCES_ALL
-    description: Alle konfigurierten Ressourcen
+    description: All configured resources
     live_cmd: "crm_resource -L 2>/dev/null || pcs resource show 2>/dev/null"
     parser:
       type: lines
@@ -16,42 +16,42 @@ discoveries:
     store_as: resources_list
 
   - id: DISC_RESOURCES_RUNNING
-    description: Laufende Ressourcen
+    description: Running resources
     live_cmd: "crm_mon -1 2>/dev/null | grep -E '^\\s*(Started|Master|Slave)' || pcs status resources 2>/dev/null"
     parser:
       type: lines
     store_as: resources_running
 
   - id: DISC_STONITH_DEVICES
-    description: STONITH/Fencing-Geräte
+    description: STONITH/fencing devices
     live_cmd: "crm_resource -L 2>/dev/null | grep -i stonith || stonith_admin -L 2>/dev/null"
     parser:
       type: lines
     store_as: stonith_devices
 
   - id: DISC_STONITH_CONFIG
-    description: STONITH-Konfiguration
+    description: STONITH configuration
     live_cmd: "crm configure show | grep -A10 'stonith' 2>/dev/null || pcs stonith show 2>/dev/null"
     parser:
       type: raw
     store_as: stonith_config
 
   - id: DISC_CONSTRAINTS
-    description: Ressourcen-Constraints
+    description: Resource constraints
     live_cmd: "crm configure show | grep -E '(location|colocation|order)' 2>/dev/null || pcs constraint show 2>/dev/null"
     parser:
       type: lines
     store_as: constraints
 
   - id: DISC_RESOURCE_DEFAULTS
-    description: Ressourcen-Defaults
+    description: Resource defaults
     live_cmd: "crm configure show | grep -E '^(rsc_defaults|op_defaults)' 2>/dev/null || pcs resource defaults 2>/dev/null"
     parser:
       type: lines
     store_as: resource_defaults
 
   - id: DISC_CLONE_CONFIG
-    description: Clone/Master-Slave Konfiguration
+    description: Clone/master-slave configuration
     live_cmd: "crm configure show | grep -B2 -A5 'clone\\|master' 2>/dev/null"
     parser:
       type: raw
