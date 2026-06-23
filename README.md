@@ -104,12 +104,6 @@ cd sap-ha-check-main
 ./sap_ha_check.py --local
 ```
 
-### Requirements
-
-- Python 3.6+ (included in RHEL 8/9/10)
-- PyYAML (`pip install pyyaml` or `dnf install python3-pyyaml`)
-- fpdf2 (optional, for PDF reports): `pip install fpdf2`
-
 ## Usage
 
 ```
