@@ -5,6 +5,8 @@ Mixin class providing the dynamic installation guide that shows
 only the steps still needed based on current installation status.
 """
 
+from .installation import print_suggestions
+
 
 class InstallGuideMixin:
     """Mixin providing installation guide printing for ClusterHealthCheck."""
