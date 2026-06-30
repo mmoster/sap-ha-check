@@ -110,9 +110,9 @@ class DiscoveryRunner:
             return self.rules
 
         rule_files = sorted(self.rules_dir.glob("*.yaml"))
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f" Loading Discovery Rules from {self.rules_dir}")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         self._debug_print(f"Rules directory: {self.rules_dir}")
         self._debug_print(f"Config directory: {self.config_dir}")
@@ -145,7 +145,7 @@ class DiscoveryRunner:
         return self.rules
 
     def _execute_ssh_command(self, cmd: str, host: str,
-                              user: str = None) -> Tuple[bool, str]:
+                             user: str = None) -> Tuple[bool, str]:
         """Execute an SSH command"""
         ssh_user = user or os.environ.get('USER', 'root')
 
@@ -297,9 +297,9 @@ class DiscoveryRunner:
 
         groups_to_run = groups or list(self.rules.keys())
 
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(" Running Discoveries")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
         print(f" Hosts: {len(hosts)}")
         print(f" Groups: {', '.join(groups_to_run)}")
 
@@ -314,9 +314,9 @@ class DiscoveryRunner:
                 print(f"\n[SKIP] {hostname}: No live access (method={method})")
                 continue
 
-            print(f"\n{'='*60}")
+            print(f"\n{'=' * 60}")
             print(f" Host: {hostname} (via {method})")
-            print(f"{'='*60}")
+            print(f"{'=' * 60}")
 
             host_data = DiscoveredData(
                 hostname=hostname,
@@ -386,9 +386,9 @@ class DiscoveryRunner:
 
     def print_summary(self):
         """Print a summary of results"""
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(" Discovery Summary")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         for hostname, data in self.results.items():
             total_discoveries = sum(len(g) for g in data.groups.values())
@@ -483,9 +483,9 @@ Examples:
 
     # Debug banner
     if args.debug:
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(" DEBUG MODE ENABLED - Configuration Files")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
         print(f"  Rules directory:     {args.rules_dir}")
         print(f"  Config directory:    {args.config_dir}")
         print(f"  Hosts file:          {args.hosts_file}")
@@ -497,9 +497,9 @@ Examples:
 
     # If only listing rules
     if args.list_rules:
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(" Available Discovery Rules")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
         for group, data in runner.rules.items():
             print(f"\n[{group}] {data['description']}")
             for disc in data['discoveries']:
@@ -507,9 +507,9 @@ Examples:
         sys.exit(0)
 
     # Perform access discovery
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(" Step 1: Access Discovery")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     access_discovery = AccessDiscovery(
         config_dir=args.config_dir,
@@ -539,9 +539,9 @@ Examples:
         sys.exit(1)
 
     # Execute discoveries
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(" Step 2: Running Discoveries")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     runner.run_all(accessible_hosts, groups=args.groups)
 
@@ -553,9 +553,9 @@ Examples:
 
     # Optional: Display collected data
     if args.show_data:
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(" Collected Data")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         with open(output_file, 'r') as f:
             print(f.read())

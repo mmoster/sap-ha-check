@@ -1340,7 +1340,12 @@ def generate_health_check_report(  # pylint: disable=redefined-outer-name
             "Configure STONITH/Fencing",
             "STONITH is required for production SAP HANA clusters to ensure data integrity.",
             [
-                "# Option A: Configure real STONITH (production)\npcs stonith create fence_node1 fence_ipmilan \\\n    ipaddr=<IPMI_IP> login=<USER> passwd=<PASS> \\\n    lanplus=1 pcmk_host_list=node1",
+                (
+                    "# Option A: Configure real STONITH (production)\n"
+                    "pcs stonith create fence_node1 fence_ipmilan \\\n"
+                    "    ipaddr=<IPMI_IP> login=<USER> passwd=<PASS> \\\n"
+                    "    lanplus=1 pcmk_host_list=node1"
+                ),
                 "# Option B: Disable STONITH (test/dev only)\npcs property set stonith-enabled=false",
             ],
         )
@@ -1361,8 +1366,19 @@ def generate_health_check_report(  # pylint: disable=redefined-outer-name
             "Configure SAP HANA Cluster Resources",
             "SAP HANA cluster resources are not configured. Configure SAPHana and SAPHanaTopology resources.",
             [
-                "# Create SAPHanaTopology resource\npcs resource create SAPHanaTopology_<SID>_<INST> SAPHanaTopology \\\n    SID=<SID> InstanceNumber=<INST> \\\n    clone clone-max=2 clone-node-max=1 interleave=true",
-                "# Create SAPHana resource\npcs resource create SAPHana_<SID>_<INST> SAPHana \\\n    SID=<SID> InstanceNumber=<INST> \\\n    PREFER_SITE_TAKEOVER=true DUPLICATE_PRIMARY_TIMEOUT=7200 \\\n    promotable notify=true clone-max=2 clone-node-max=1",
+                (
+                    "# Create SAPHanaTopology resource\n"
+                    "pcs resource create SAPHanaTopology_<SID>_<INST> SAPHanaTopology \\\n"
+                    "    SID=<SID> InstanceNumber=<INST> \\\n"
+                    "    clone clone-max=2 clone-node-max=1 interleave=true"
+                ),
+                (
+                    "# Create SAPHana resource\n"
+                    "pcs resource create SAPHana_<SID>_<INST> SAPHana \\\n"
+                    "    SID=<SID> InstanceNumber=<INST> \\\n"
+                    "    PREFER_SITE_TAKEOVER=true DUPLICATE_PRIMARY_TIMEOUT=7200 \\\n"
+                    "    promotable notify=true clone-max=2 clone-node-max=1"
+                ),
             ],
         )
         priority += 1

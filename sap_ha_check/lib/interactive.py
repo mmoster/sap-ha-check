@@ -319,9 +319,9 @@ def run_usage_scan(base_dir: str = None, seed_hosts: list = None):
             print(f"  Error creating directory: {e}")
             return None
 
-    print(f"\n{'='*63}")
+    print(f"\n{'=' * 63}")
     print(" Scanning for resources...")
-    print(f"{'='*63}")
+    print(f"{'=' * 63}")
     print(f"  Base directory: {os.path.abspath(scan_dir)}")
 
     # Scan for resources

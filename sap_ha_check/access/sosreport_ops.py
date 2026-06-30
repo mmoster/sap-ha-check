@@ -114,9 +114,9 @@ def create_sosreports(
         else:
             sos_options = base_options
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(" Creating SOSreports on cluster nodes")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(f"  Nodes: {', '.join(nodes)}")
     if cluster_name:
         print(f"  Cluster: {cluster_name}")
@@ -599,9 +599,9 @@ def create_and_fetch_sosreports(
     Returns:
         List of downloaded file paths, or empty list on failure
     """
-    print(f"\n{'='*63}")
+    print(f"\n{'=' * 63}")
     print(" SAP HANA Cluster SOSreport Collection")
-    print(f"{'='*63}")
+    print(f"{'=' * 63}")
     print(f"  Seed node: {seed_node}")
     print(f"  SSH user: {ssh_user}")
     print()
@@ -861,7 +861,7 @@ def create_and_fetch_sosreports(
                 downloaded_files.append(filepath)
 
     print()
-    print(f"{'='*63}")
+    print(f"{'=' * 63}")
     if downloaded_files:
         print(f" Downloaded {len(downloaded_files)} SOSreport(s) to: {sos_dir}")
         print()
@@ -869,7 +869,7 @@ def create_and_fetch_sosreports(
         print(f"   ./sap_ha_check.py -s {sos_dir}")
     else:
         print(" No SOSreports were downloaded.")
-    print(f"{'='*63}")
+    print(f"{'=' * 63}")
 
     return downloaded_files
 
@@ -920,9 +920,9 @@ def fetch_sosreports(  # pylint: disable=too-many-positional-arguments
         # If single node specified, try to discover all cluster nodes
         if len(nodes) == 1:
             seed_node = nodes[0]
-            print(f"\n{'='*60}")
+            print(f"\n{'=' * 60}")
             print(" Discovering cluster from seed node")
-            print(f"{'='*60}")
+            print(f"{'=' * 60}")
             print(f"  Seed node: {seed_node}")
 
             discovery = discover_cluster_from_node(seed_node, ssh_user)
@@ -1012,9 +1012,9 @@ def fetch_sosreports(  # pylint: disable=too-many-positional-arguments
         return []
 
     # Step 1: Check which nodes have existing SOSreports
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(" Checking for existing SOSreports")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(f"  Nodes: {', '.join(target_nodes)}")
     print()
 
@@ -1062,9 +1062,9 @@ def fetch_sosreports(  # pylint: disable=too-many-positional-arguments
         print("\nNo SOSreports available to download.")
         return []
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(" Fetching SOSreports from cluster nodes")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(f"  Nodes: {', '.join(nodes_with_sos)}")
     print(f"  Output: {sos_dir}")
     print(f"  SSH user: {ssh_user}")

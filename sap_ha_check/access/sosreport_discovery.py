@@ -649,10 +649,10 @@ class SOSReportDiscoveryMixin:
                         node_name = name_match.group(1)
                         nodes.append(node_name)
                         # Store node info
-                        node_key = f"node{i+1}_hostname"
+                        node_key = f"node{i + 1}_hostname"
                         config[node_key] = node_name
                         if ring_match:
-                            config[f"node{i+1}_ip"] = ring_match.group(1)
+                            config[f"node{i + 1}_ip"] = ring_match.group(1)
             except Exception:
                 pass
 
