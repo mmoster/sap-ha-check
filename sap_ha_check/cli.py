@@ -2268,7 +2268,7 @@ Examples:
 
                         sys.stdout.write("  Update to latest version? [y/N] (auto-skip in 20s): ")
                         sys.stdout.flush()
-                        ready, _, _ = _select.select([sys.stdin], [], [], 20)
+                        ready, _wlist, _xlist = _select.select([sys.stdin], [], [], 20)
                         if ready:
                             response = sys.stdin.readline().strip().lower()
                         else:
@@ -2698,7 +2698,7 @@ Examples:
 
             sys.stdout.write("  Enter choice [1-7/q] (auto-quit in 20s): ")
             sys.stdout.flush()
-            ready, _, _ = _select.select([sys.stdin], [], [], 20)
+            ready, _wlist, _xlist = _select.select([sys.stdin], [], [], 20)
             if ready:
                 choice = sys.stdin.readline().strip().lower()
                 return choice if choice else "1"  # Default to installation status

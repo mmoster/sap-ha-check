@@ -856,7 +856,7 @@ class SOSReportDiscoveryMixin:
 
                 if default_idx:
                     # Wait for input with timeout; auto-select default if no response
-                    ready, _, _ = select.select([sys.stdin], [], [], timeout_seconds)
+                    ready, _wlist, _xlist = select.select([sys.stdin], [], [], timeout_seconds)
                     if ready:
                         choice = sys.stdin.readline().strip().lower()
                     else:

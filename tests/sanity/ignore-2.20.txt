@@ -1,0 +1,13 @@
+deploy.sh shebang!skip
+dist/sap_cluster_discovery.tar.gz.sh shebang!skip
+dist/setup.sh shebang!skip
+sap_ha_check.py shebang!skip
+sap_ha_check/access/discover_access.py shebang!skip
+sap_ha_check/cli.py shebang!skip
+sap_ha_check/lib/cib_parser.py shebang!skip
+sap_ha_check/lib/cluster_report.py shebang!skip
+sap_ha_check/lib/config_extractor.py shebang!skip
+sap_ha_check/report_generator.py shebang!skip
+sap_ha_check/rules/engine.py shebang!skip
+tests/hana04_discovery/discovery_runner.py shebang!skip
+tests/hana04_discovery/run_discovery.sh shebang!skip

@@ -183,7 +183,7 @@ def create_sosreports(
             print(f"  [{hostname}] {status} {message}")
 
     print()
-    success_count = sum(1 for s, _ in results.values() if s)
+    success_count = sum(1 for s, _msg in results.values() if s)
     print(f"SOSreport creation: {success_count}/{len(nodes)} successful")
 
     return results

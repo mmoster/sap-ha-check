@@ -9,12 +9,9 @@ cluster configuration:
 """
 
 import os
-import sys
 from pathlib import Path
 
 import yaml
-
-from .models import NodeAccess, AccessConfig, asdict
 
 
 def show_config(config_path: Path, cluster_or_node: str = None, config_only: bool = False):

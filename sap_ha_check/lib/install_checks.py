@@ -6,7 +6,6 @@ Provides CommandExecutor for running commands on nodes and make_status_dict()
 for creating the standard status dictionary template.
 """
 
-import re
 import subprocess
 
 

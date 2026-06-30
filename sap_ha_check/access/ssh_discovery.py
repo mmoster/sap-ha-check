@@ -7,18 +7,15 @@ methods for AccessDiscovery.
 
 import os
 import re
-import select
 import socket
 import subprocess
-import sys
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 
 import yaml
 
-from .models import NodeAccess, asdict
+from .models import NodeAccess
 
 
 class SSHDiscoveryMixin:

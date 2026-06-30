@@ -2,9 +2,7 @@
 
 from pathlib import Path
 
-import pytest
-
-from hadr_provider.models import ArchType, Topology, ActualConfig
+from hadr_provider.models import ArchType, Topology
 from hadr_provider.config_matrix import get_expected_config
 from hadr_provider.collector import parse_collected_output
 from hadr_provider.validator import HadrValidator

@@ -10,7 +10,7 @@ from typing import Dict, Optional
 
 # Python 3.6 compatibility for dataclasses
 try:
-    from dataclasses import dataclass, asdict
+    from dataclasses import dataclass, asdict  # pylint: disable=unused-import  # noqa: F401 - re-exported
 except ImportError:
     # Fallback for Python < 3.7
     def field(default=None, default_factory=None):

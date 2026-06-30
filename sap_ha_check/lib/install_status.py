@@ -9,7 +9,7 @@ import re
 import subprocess
 from pathlib import Path
 
-from .install_checks import CommandExecutor, make_status_dict
+from .install_checks import make_status_dict
 
 
 class InstallStatusMixin:

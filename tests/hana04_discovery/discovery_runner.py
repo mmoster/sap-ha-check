@@ -18,7 +18,7 @@ from typing import Dict, List, Any, Optional, Tuple
 
 # Python 3.6 compatibility for dataclasses
 try:
-    from dataclasses import dataclass, field, asdict
+    from dataclasses import dataclass
 except ImportError:
     # Fallback for Python < 3.7
     def field(default=None, default_factory=None):
@@ -162,7 +162,8 @@ class DiscoveryRunner:
                 full_cmd,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 universal_newlines=True,
-                timeout=self.SSH_TIMEOUT
+                timeout=self.SSH_TIMEOUT,
+                check=False,
             )
 
             return result.returncode == 0, result.stdout.strip()
@@ -192,7 +193,7 @@ class DiscoveryRunner:
 
             for line in output.strip().split('\n'):
                 if delimiter in line:
-                    key, _, value = line.partition(delimiter)
+                    key, _sep, value = line.partition(delimiter)
                     key = key.strip()
                     value = value.strip()
                     if strip_quotes:
