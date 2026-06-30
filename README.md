@@ -286,6 +286,10 @@ Use `-v` (verbose) to generate a complete PDF report documenting **all** health 
 
 The verbose report includes every check with its full result, the discovered cluster configuration, and system details — providing a complete snapshot of your cluster's health status.
 
+## Test Sequence
+
+See [docs/test_sequence.md](docs/test_sequence.md) for the full execution order of all 22 health checks, including steps, phases, gates, and the read-only commands used.
+
 ## Extending Health Checks
 
 See [docs/EXTENDING_HEALTH_CHECKS.md](docs/EXTENDING_HEALTH_CHECKS.md) for details on creating custom health check rules.
