@@ -1,4 +1,3 @@
-#!/bin/bash
 #
 # SAP Cluster Discovery Tool - Setup Script
 #
@@ -13,7 +12,6 @@
 set -e
 
 TARGET_DIR="${1:-.}"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 echo "=============================================="
 echo " SAP Cluster Discovery Tool - Setup"

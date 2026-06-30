@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 PDF Report Generator for SAP HANA Cluster Health Check
 Following Red Hat Documentation Style Guidelines

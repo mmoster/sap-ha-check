@@ -1,4 +1,3 @@
-#!/bin/bash
 #
 # SAP Cluster Discovery Tool - Deploy Script
 #
@@ -166,10 +165,14 @@ print_summary() {
     echo "Verzeichnis: $TARGET_DIR"
     echo ""
     echo "Dateien:"
-    ls -la "$TARGET_DIR/" | grep -v "^total" | awk '{print "  " $0}'
+    for f in "$TARGET_DIR/"*; do
+        echo "  $(basename "$f")"
+    done
     echo ""
     echo "Discovery-Regeln:"
-    ls "$TARGET_DIR/discovery_rules/" | awk '{print "  - " $0}'
+    for f in "$TARGET_DIR/discovery_rules/"*.yaml; do
+        echo "  - $(basename "$f")"
+    done
     echo ""
     echo "----------------------------------------------"
     echo " Nächste Schritte:"

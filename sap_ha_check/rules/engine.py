@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Rules Engine for SAP Pacemaker Cluster Health Check
 

@@ -1,4 +1,3 @@
-#!/bin/bash
 #
 # SAP Cluster Discovery Tool - Self-extracting Installer
 #

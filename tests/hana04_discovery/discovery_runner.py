@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Discovery Runner - Executes YAML-based discovery rules
 

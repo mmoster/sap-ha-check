@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 SAP Pacemaker Cluster Health Check - Access Discovery Module
 

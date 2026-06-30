@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Unified Cluster Report Data Model
 
