@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 #
 # Wrapper-Script für Discovery auf hana04
 #

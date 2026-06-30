@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 #
 # SAP Cluster Discovery Tool - Deploy Script
 #
