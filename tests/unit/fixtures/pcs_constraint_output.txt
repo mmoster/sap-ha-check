@@ -1,0 +1,9 @@
+Location Constraints:
+  resource 'SAPHanaTopology_S4D_HDB00-clone' avoids node 'majority1' with score INFINITY
+    resource-discovery=never
+  resource 'SAPHanaController_S4D_HDB00-clone' avoids node 'majority1' with score INFINITY
+    resource-discovery=never
+Colocation Constraints:
+  g_ip_S4D_HDB00 with SAPHanaController_S4D_HDB00-clone (score:4000) (rsc-role:Started) (with-rsc-role:Promoted)
+Ordering Constraints:
+  SAPHanaTopology_S4D_HDB00-clone then SAPHanaController_S4D_HDB00-clone (kind:Mandatory) (non-symmetrical)

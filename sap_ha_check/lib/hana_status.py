@@ -7,8 +7,6 @@ System Replication topology analysis for ClusterHealthCheck.
 
 import re
 
-from ..rules.engine import CheckResult, CheckStatus, Severity
-
 
 class HanaStatusMixin:
     """Mixin providing HANA status methods for ClusterHealthCheck."""
@@ -27,6 +25,8 @@ class HanaStatusMixin:
 
         Results are stored in self._hana_db_status for report generation.
         """
+        from ..rules.engine import CheckStatus  # lazy import to avoid circular dependency
+
         cluster_running = True
         if self.access_config and hasattr(self.access_config, "clusters"):
             for cinfo in self.access_config.clusters.values():
@@ -210,6 +210,8 @@ class HanaStatusMixin:
 
     def _add_maintenance_sr_result(self, node_name: str):
         """Add a CHK_HANA_SR_STATUS check result for maintenance (not-managed) scenarios."""
+        from ..rules.engine import CheckResult, CheckStatus, Severity  # lazy import
+
         sr_info = self._hana_db_status.get("sr_info", "")
         self._hana_db_status["sr_source"] = "hdbnsutil -sr_state (direct query)"
 

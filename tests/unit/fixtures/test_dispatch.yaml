@@ -1,0 +1,35 @@
+version: "1.0"
+
+topologies:
+  - Scale-Up
+  - Scale-Out
+
+steps:
+  test_step:
+    name: "Test Step"
+    step_number: 1
+    phases:
+      - phase: 1
+        parallel: true
+        checks:
+          - check_id: CHK_A
+          - check_id: CHK_B
+            topology: [Scale-Up]
+          - check_id: CHK_C
+            topology: [Scale-Out]
+      - phase: 2
+        parallel: false
+        gate: some_gate
+        checks:
+          - check_id: CHK_D
+            gate: another_gate
+
+  second_step:
+    name: "Second Step"
+    step_number: 2
+    phases:
+      - phase: 1
+        parallel: true
+        checks:
+          - check_id: CHK_E
+          - check_id: CHK_A
