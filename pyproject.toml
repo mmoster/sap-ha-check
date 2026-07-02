@@ -57,4 +57,4 @@ good-names = ["i", "j", "k", "e", "f", "fd", "ip", "ok", "rc", "fn", "db", "n", 
 min-similarity-lines = 8
 
 [tool.pytest.ini_options]
-pythonpath = ["sap_ha_check/lib"]
+pythonpath = [".", "sap_ha_check/lib"]

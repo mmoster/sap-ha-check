@@ -1,0 +1,10 @@
+ * Clone Set: SAPHanaTopology_S4D_HDB00-clone [SAPHanaTopology_S4D_HDB00] (unmanaged):
+   * SAPHanaTopology_S4D_HDB00	(ocf:heartbeat:SAPHanaTopology):	 Started node1 (unmanaged)
+   * SAPHanaTopology_S4D_HDB00	(ocf:heartbeat:SAPHanaTopology):	 Started node2 (unmanaged)
+ * Clone Set: SAPHanaController_S4D_HDB00-clone [SAPHanaController_S4D_HDB00] (promotable, unmanaged):
+   * SAPHanaController_S4D_HDB00	(ocf:heartbeat:SAPHanaController):	 Promoted node1 (unmanaged)
+   * SAPHanaController_S4D_HDB00	(ocf:heartbeat:SAPHanaController):	 Demoted node2 (unmanaged)
+ * Resource Group: g_ip_S4D_HDB00:
+   * rsc_ip_S4D_HDB00	(ocf:heartbeat:IPaddr2):	 Started node1
+   * rsc_socat_S4D_HDB00	(ocf:heartbeat:azure-lb):	 Started node1
+ * stonith-sbd	(stonith:external/sbd):	 Started node1
