@@ -38,7 +38,7 @@ class AccessDiscovery(SOSReportDiscoveryMixin, SSHDiscoveryMixin):
     SSH_TIMEOUT = 5
     MAX_WORKERS = 10
 
-    def __init__(  # pylint: disable=too-many-positional-arguments
+    def __init__(  # pylint: disable=unknown-option-value,too-many-positional-arguments
         self,
         config_dir: str = ".",
         sosreport_dir: Optional[str] = None,

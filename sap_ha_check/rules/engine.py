@@ -1390,7 +1390,7 @@ class RulesEngine:
             return True, "shell script"
         return False, f"Commands not found on {node}: {', '.join(all_cmds)}"
 
-    def _run_check_on_node(  # pylint: disable=too-many-positional-arguments
+    def _run_check_on_node(  # pylint: disable=unknown-option-value,too-many-positional-arguments
         self, rule: RuleDefinition, node: str, method: str, user: str = None, sos_base: str = None
     ) -> CheckResult:
         """Run a single check on a specific node."""

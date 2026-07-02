@@ -874,7 +874,7 @@ def create_and_fetch_sosreports(
     return downloaded_files
 
 
-def fetch_sosreports(  # pylint: disable=too-many-positional-arguments
+def fetch_sosreports(  # pylint: disable=unknown-option-value,too-many-positional-arguments
     config_path: Path,
     cluster_name: str = None,
     nodes: list = None,
