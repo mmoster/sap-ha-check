@@ -115,6 +115,8 @@ Options:
   -s, --sosreport-dir   Directory containing SOSreport archives/directories
   --local               Run locally on this cluster node
   -f, --force           Force rediscovery (ignore existing config)
+  --reuse-config        Reuse existing config instead of fresh discovery
+                        (same as SAP_HA_CHECK_REUSE_CONFIG=1)
   -D, --delete-reports  Delete reports and restart
   -S, --show-config [CLUSTER|NODE]  Display configuration (optionally filter by cluster or node)
   -L, --list-rules      List available health check rules
@@ -275,6 +277,30 @@ nodes:
 ```
 
 Delete with `-D` to restart the investigation from scratch.
+
+### Reusing Access Discovery
+
+By default, access discovery runs from scratch on every invocation — even if `cluster_access_config.yaml` already exists. This ensures the tool always reflects the current state of the cluster.
+
+To reuse the cached config from a previous run (e.g., in CI/CD pipelines or repeated testing), set the `SAP_HA_CHECK_REUSE_CONFIG` environment variable or use the `--reuse-config` flag:
+
+```bash
+# Environment variable (accepts 1, true, or yes)
+export SAP_HA_CHECK_REUSE_CONFIG=1
+./sap_ha_check.py
+
+# CLI flag (equivalent)
+./sap_ha_check.py --reuse-config
+
+# Force fresh discovery even when reuse is enabled
+SAP_HA_CHECK_REUSE_CONFIG=1 ./sap_ha_check.py -f
+```
+
+| Flag / Variable | Behavior |
+|-----------------|----------|
+| *(default)* | Fresh discovery every run |
+| `--reuse-config` or `SAP_HA_CHECK_REUSE_CONFIG=1` | Reuse existing `cluster_access_config.yaml` |
+| `-f` / `--force` | Always force fresh discovery (overrides reuse) |
 
 ### Audit & Compliance Mode
 
