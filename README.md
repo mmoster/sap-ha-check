@@ -388,8 +388,8 @@ Access methods:
 - Offline analysis via SOSreport archives
 
 > **Testing Disclaimer**<br>
-> It is not possible to test every operating system, SAP HANA version, and cluster configuration combination with every release.<br>
-> Testing is regularly done for common scenarios: SAP HANA Scale-Up HA on RHEL 9 with ANGI resource agents.
+> It is not possible to test every combination of operating system, CPU architecture, SAP HANA version, and cluster configuration with every release.<br>
+> Testing is regularly done for common scenarios: SAP HANA Scale-Up HA on RHEL 9 with ANGI resource agents on x86_64.
 
 ## Disclaimer
 
@@ -397,12 +397,13 @@ Access methods:
 > This tool is designed for and tested on Red Hat Enterprise Linux for SAP Solutions 8.x, 9.x, and 10.x. SUSE Linux Enterprise Server for SAP Applications is not currently supported.
 
 > **Testing Coverage**<br>
-> Health checks are validated against SAP and Red Hat best practice documentation. Not every combination of SAP HANA version, RHEL version, cluster topology, and resource agent package can be covered. Results should be verified against the applicable Red Hat and SAP documentation for your specific environment.
+> Health checks are validated against SAP and Red Hat best practice documentation. Not every combination of SAP HANA version, RHEL version, CPU architecture (x86_64, ppc64le, aarch64), cluster topology, and resource agent package can be covered. Results should be verified against the applicable Red Hat and SAP documentation for your specific environment.
 
 > **Constraints and Limitations**
 > - Only SAP HANA System Replication (HSR) clusters managed by Pacemaker are supported
 > - ASCS/ERS cluster validation is not yet implemented
 > - SUSE Linux Enterprise Server is not supported
+> - Health checks do not include CPU-, architecture-, or platform-specific tuning recommendations (e.g. kernel parameters, NUMA settings, or power profiles)
 > - The tool performs read-only checks and does not modify any cluster or SAP configuration
 > - SOSreport analysis depends on the completeness of the collected SOSreport data
 > - PDF report generation requires the optional `fpdf2` package
