@@ -1300,8 +1300,12 @@ class ClusterHealthCheck(InstallStatusMixin, InstallGuideMixin, HanaStatusMixin)
             print(f"Source: Hosts file {self.hosts_file}")
         elif self.cluster_name:
             print(f"Source: Saved cluster '{self.cluster_name}'")
+        elif config_file.exists() and os.environ.get(
+            "SAP_HA_CHECK_REUSE_CONFIG", ""
+        ).strip() in ("1", "true", "yes"):
+            print("Source: Existing config (SAP_HA_CHECK_REUSE_CONFIG is set)")
         elif config_file.exists():
-            print("Source: Existing config (use -f to rediscover, -D to reset)")
+            print("Source: Fresh discovery (set SAP_HA_CHECK_REUSE_CONFIG=1 to reuse config)")
         else:
             print("Source: Ansible inventory (auto-discovery)")
 
@@ -2075,6 +2079,12 @@ Examples:
     parser.add_argument(
         "--force", "-f", action="store_true", help="Force rediscovery (ignore existing config)"
     )
+    parser.add_argument(
+        "--reuse-config",
+        action="store_true",
+        help="Reuse existing cluster_access_config.yaml instead of fresh discovery "
+        "(same as SAP_HA_CHECK_REUSE_CONFIG=1)",
+    )
 
     # Performance
     parser.add_argument(
@@ -2648,6 +2658,10 @@ Examples:
                 print(f"\n    Install with: pip install {' '.join(install_all)}")
             print("  " + "-" * 50)
             generate_pdf = False
+
+    # --reuse-config flag sets the env var so discover_access.py picks it up
+    if getattr(args, "reuse_config", False):
+        os.environ["SAP_HA_CHECK_REUSE_CONFIG"] = "1"
 
     health_check = ClusterHealthCheck(
         config_dir=str(config_dir),

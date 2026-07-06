@@ -64,9 +64,19 @@ class AccessDiscovery(SOSReportDiscoveryMixin, SSHDiscoveryMixin):
         self.config = self._load_or_create_config()
 
     def _load_or_create_config(self) -> AccessConfig:
-        """Load existing config or create new one."""
-        if self.config_path.exists() and not self.force_rediscover:
+        """Load existing config or create new one.
+
+        By default, discovery always runs from scratch. To reuse a previously
+        saved config set the environment variable SAP_HA_CHECK_REUSE_CONFIG=1
+        (or use the --reuse-config CLI flag).  The -f/--force flag always
+        overrides and forces a fresh discovery.
+        """
+        reuse_config = os.environ.get("SAP_HA_CHECK_REUSE_CONFIG", "").strip()
+        allow_reuse = reuse_config in ("1", "true", "yes")
+
+        if self.config_path.exists() and allow_reuse and not self.force_rediscover:
             print(f"Loading existing config from {self.config_path}")
+            print("  (SAP_HA_CHECK_REUSE_CONFIG is set)")
             with open(self.config_path, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f) or {}
                 config = AccessConfig(**data)
