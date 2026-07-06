@@ -316,6 +316,20 @@ The verbose report includes every check with its full result, the discovered clu
 
 See [docs/test_sequence.md](docs/test_sequence.md) for the full execution order of all 22 health checks, including steps, phases, gates, and the read-only commands used.
 
+## PDF Color Scheme
+
+The PDF report defaults to **Red Hat brand colors**. To use a **corporate-neutral blue/gray palette** instead, edit `sap_ha_check/report_generator.py` and change the `PdfColors` alias:
+
+```python
+# Default (Red Hat branding):
+PdfColors = RedHatColors
+
+# Alternative (neutral blue/gray):
+PdfColors = NeutralColors
+```
+
+This is a one-line change. All report elements (headers, status badges, tables, recommendation boxes) use the alias, so switching takes effect everywhere.
+
 ## Extending Health Checks
 
 See [docs/EXTENDING_HEALTH_CHECKS.md](docs/EXTENDING_HEALTH_CHECKS.md) for details on creating custom health check rules.

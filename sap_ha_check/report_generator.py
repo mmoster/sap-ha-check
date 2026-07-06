@@ -57,6 +57,28 @@ class RedHatColors:
     BLUE = (0, 102, 204)  # Link blue
 
 
+class NeutralColors:
+    """Corporate-neutral blue/gray palette (non-branded alternative)"""
+
+    RED = (0, 90, 156)  # Primary blue (replaces red accents)
+    DARK_RED = (0, 62, 110)  # Darker blue for headers
+    BLACK = (33, 37, 41)  # Near black
+    GRAY = (108, 117, 125)  # Medium gray
+    LIGHT_GRAY = (241, 243, 245)  # Background gray
+    WHITE = (255, 255, 255)
+    GREEN = (40, 167, 69)  # Success green
+    YELLOW = (255, 193, 7)  # Warning yellow
+    ORANGE = (253, 126, 20)  # Incomplete/in-progress orange
+    BLUE = (0, 123, 255)  # Link blue
+
+
+# --- Color scheme selection ---
+# Change this alias to switch the PDF report color scheme.
+# Default: RedHatColors (Red Hat brand colors)
+# Alternative: NeutralColors (corporate-neutral blue/gray palette)
+PdfColors = RedHatColors
+
+
 class HealthCheckPDF(FPDF):
     """PDF Report Generator following Red Hat style guidelines"""
 
@@ -78,12 +100,12 @@ class HealthCheckPDF(FPDF):
 
         # Red header bar (taller if two-line)
         header_height = 18 if cluster_name_long else 12
-        self.set_fill_color(*RedHatColors.RED)
+        self.set_fill_color(*PdfColors.RED)
         self.rect(0, 0, 210, header_height, "F")
 
         # Header text - first line
         self.set_font("Helvetica", "B", 10)
-        self.set_text_color(*RedHatColors.WHITE)
+        self.set_text_color(*PdfColors.WHITE)
         self.set_xy(10, 3)
         self.cell(0, 6, "SAP HANA Cluster Health Check Report", align="L")
 
@@ -110,16 +132,16 @@ class HealthCheckPDF(FPDF):
         """Page footer"""
         self.set_y(-15)
         self.set_font("Helvetica", "I", 8)
-        self.set_text_color(*RedHatColors.GRAY)
+        self.set_text_color(*PdfColors.GRAY)
         self.cell(0, 10, f"Page {self.page_no()}/{{nb}}", align="C")
 
     def chapter_title(self, title: str):
         """Section header with Red Hat styling"""
         self.set_font("Helvetica", "B", 14)
-        self.set_text_color(*RedHatColors.DARK_RED)
+        self.set_text_color(*PdfColors.DARK_RED)
         self.cell(0, 10, title, new_x="LMARGIN", new_y="NEXT")
         # Underline
-        self.set_draw_color(*RedHatColors.RED)
+        self.set_draw_color(*PdfColors.RED)
         self.set_line_width(0.5)
         self.line(10, self.get_y(), 200, self.get_y())
         self.ln(5)
@@ -127,13 +149,13 @@ class HealthCheckPDF(FPDF):
     def sub_section(self, title: str):
         """Subsection header"""
         self.set_font("Helvetica", "B", 11)
-        self.set_text_color(*RedHatColors.BLACK)
+        self.set_text_color(*PdfColors.BLACK)
         self.cell(0, 8, title, new_x="LMARGIN", new_y="NEXT")
 
     def body_text(self, text: str):
         """Regular body text"""
         self.set_font("Helvetica", "", 10)
-        self.set_text_color(*RedHatColors.BLACK)
+        self.set_text_color(*PdfColors.BLACK)
         self.multi_cell(0, 5, text)
         self.ln(2)
 
@@ -145,29 +167,29 @@ class HealthCheckPDF(FPDF):
             self.set_y(y)
 
         colors = {
-            "PASSED": RedHatColors.GREEN,
-            "FAILED": RedHatColors.RED,
-            "WARNING": RedHatColors.YELLOW,
-            "SKIPPED": RedHatColors.GRAY,
-            "ERROR": RedHatColors.RED,
-            "OK": RedHatColors.GREEN,
-            "CRITICAL": RedHatColors.RED,
-            "CRITICAL - INCOMPLETE": RedHatColors.RED,
-            "FAILED - INCOMPLETE": RedHatColors.ORANGE,
-            "INCOMPLETE": RedHatColors.ORANGE,
-            "NEEDS ATTENTION": RedHatColors.YELLOW,
-            "HEALTHY": RedHatColors.GREEN,
+            "PASSED": PdfColors.GREEN,
+            "FAILED": PdfColors.RED,
+            "WARNING": PdfColors.YELLOW,
+            "SKIPPED": PdfColors.GRAY,
+            "ERROR": PdfColors.RED,
+            "OK": PdfColors.GREEN,
+            "CRITICAL": PdfColors.RED,
+            "CRITICAL - INCOMPLETE": PdfColors.RED,
+            "FAILED - INCOMPLETE": PdfColors.ORANGE,
+            "INCOMPLETE": PdfColors.ORANGE,
+            "NEEDS ATTENTION": PdfColors.YELLOW,
+            "HEALTHY": PdfColors.GREEN,
         }
 
-        color = colors.get(status.upper(), RedHatColors.GRAY)
+        color = colors.get(status.upper(), PdfColors.GRAY)
 
         self.set_fill_color(*color)
-        self.set_text_color(*RedHatColors.WHITE)
+        self.set_text_color(*PdfColors.WHITE)
         self.set_font("Helvetica", "B", 8)
 
         width = self.get_string_width(status) + 6
         self.cell(width, 6, status, fill=True, align="C")
-        self.set_text_color(*RedHatColors.BLACK)
+        self.set_text_color(*PdfColors.BLACK)
 
     def info_table(self, data: Dict[str, str]):
         """Draw an info table with key-value pairs"""
@@ -176,11 +198,11 @@ class HealthCheckPDF(FPDF):
 
         for key, value in data.items():
             self.set_font("Helvetica", "B", 10)
-            self.set_text_color(*RedHatColors.GRAY)
+            self.set_text_color(*PdfColors.GRAY)
             self.cell(col_width, 7, f"{key}:", align="L")
 
             self.set_font("Helvetica", "", 10)
-            self.set_text_color(*RedHatColors.BLACK)
+            self.set_text_color(*PdfColors.BLACK)
             self.cell(0, 7, str(value), new_x="LMARGIN", new_y="NEXT")
 
     def check_result_row(
@@ -196,7 +218,7 @@ class HealthCheckPDF(FPDF):
 
         # Check ID
         self.set_font("Helvetica", "B", 9)
-        self.set_text_color(*RedHatColors.BLACK)
+        self.set_text_color(*PdfColors.BLACK)
         self.cell(45, 6, check_id, ln=False)
 
         # Description
@@ -213,7 +235,7 @@ class HealthCheckPDF(FPDF):
         if message or node:
             self.set_x(30)
             self.set_font("Helvetica", "I", 8)
-            self.set_text_color(*RedHatColors.GRAY)
+            self.set_text_color(*PdfColors.GRAY)
             prefix = f"Node: {node} | " if node else ""
             if message:
                 # Show full message with word-wrap (multi_cell handles line breaks)
@@ -228,13 +250,13 @@ class HealthCheckPDF(FPDF):
         """Draw a command block (code style)"""
         if description:
             self.set_font("Helvetica", "I", 9)
-            self.set_text_color(*RedHatColors.GRAY)
+            self.set_text_color(*PdfColors.GRAY)
             self.cell(0, 5, f"# {description}", new_x="LMARGIN", new_y="NEXT")
 
         # Command background
-        self.set_fill_color(*RedHatColors.LIGHT_GRAY)
+        self.set_fill_color(*PdfColors.LIGHT_GRAY)
         self.set_font("Courier", "", 9)
-        self.set_text_color(*RedHatColors.BLACK)
+        self.set_text_color(*PdfColors.BLACK)
 
         # Handle multi-line commands
         lines = command.split("\n")
@@ -250,11 +272,11 @@ class HealthCheckPDF(FPDF):
 
         # Priority indicator
         priority_colors = {
-            "1": RedHatColors.RED,
-            "2": RedHatColors.YELLOW,
-            "3": RedHatColors.BLUE,
+            "1": PdfColors.RED,
+            "2": PdfColors.YELLOW,
+            "3": PdfColors.BLUE,
         }
-        color = priority_colors.get(priority, RedHatColors.GRAY)
+        color = priority_colors.get(priority, PdfColors.GRAY)
 
         # Left border
         self.set_draw_color(*color)
@@ -264,13 +286,13 @@ class HealthCheckPDF(FPDF):
         # Title
         self.set_x(15)
         self.set_font("Helvetica", "B", 10)
-        self.set_text_color(*RedHatColors.BLACK)
+        self.set_text_color(*PdfColors.BLACK)
         self.cell(0, 6, f"Priority {priority}: {title}", new_x="LMARGIN", new_y="NEXT")
 
         # Description
         self.set_x(15)
         self.set_font("Helvetica", "", 9)
-        self.set_text_color(*RedHatColors.GRAY)
+        self.set_text_color(*PdfColors.GRAY)
         self.multi_cell(180, 5, description)
 
         # Commands
@@ -359,7 +381,7 @@ def _render_version_table(pdf, check):
     # Table header
     pdf.set_fill_color(240, 240, 240)
     pdf.set_font("Helvetica", "B", 7)
-    pdf.set_text_color(*RedHatColors.BLACK)
+    pdf.set_text_color(*PdfColors.BLACK)
     pdf.cell(pkg_col_width, row_height, "Package", border=1, fill=True)
     for node in all_nodes:
         display_node = node[:12] if len(node) > 12 else node
@@ -371,7 +393,7 @@ def _render_version_table(pdf, check):
         pdf.set_x(14)
         display_name = pkg_display_names.get(pkg_key, pkg_key)
         pdf.set_font("Helvetica", "B", 7)
-        pdf.set_text_color(*RedHatColors.BLACK)
+        pdf.set_text_color(*PdfColors.BLACK)
         pdf.cell(pkg_col_width, row_height, display_name, border=1)
 
         # Determine if values differ (to highlight)
@@ -387,13 +409,13 @@ def _render_version_table(pdf, check):
             version_str = _strip_pkg_prefix(version_str, pkg_key)
             # Highlight cells that differ from the reference node
             if has_diff and str(version) != str(ref_value):
-                pdf.set_text_color(*RedHatColors.RED)
+                pdf.set_text_color(*PdfColors.RED)
             else:
-                pdf.set_text_color(*RedHatColors.BLACK)
+                pdf.set_text_color(*PdfColors.BLACK)
             pdf.cell(node_col_width, row_height, version_str, border=1, align="C")
         pdf.ln()
 
-    pdf.set_text_color(*RedHatColors.BLACK)
+    pdf.set_text_color(*PdfColors.BLACK)
     pdf.ln(2)
 
 
@@ -514,9 +536,9 @@ def generate_health_check_report(  # pylint: disable=redefined-outer-name
     pdf.ln(6)
     # Add status description in smaller font
     pdf.set_font("Helvetica", "I", 9)
-    pdf.set_text_color(*RedHatColors.GRAY)
+    pdf.set_text_color(*PdfColors.GRAY)
     pdf.cell(0, 5, status_descriptions.get(overall_status, ""), ln=True)
-    pdf.set_text_color(*RedHatColors.BLACK)
+    pdf.set_text_color(*PdfColors.BLACK)
     pdf.ln(4)
 
     # Build info table with data source information
@@ -585,7 +607,7 @@ def generate_health_check_report(  # pylint: disable=redefined-outer-name
         pdf.set_font("Helvetica", "", 9)
         pdf.multi_cell(180, 4, box_text)
 
-        pdf.set_text_color(*RedHatColors.BLACK)
+        pdf.set_text_color(*PdfColors.BLACK)
         pdf.set_line_width(0.2)
         pdf.ln(8)
 
@@ -644,7 +666,7 @@ def generate_health_check_report(  # pylint: disable=redefined-outer-name
         pdf.set_fill_color(245, 245, 245)
         pdf.cell(180, 5, "  pcs cluster start --all", fill=True)
 
-        pdf.set_text_color(*RedHatColors.BLACK)
+        pdf.set_text_color(*PdfColors.BLACK)
         pdf.set_line_width(0.2)
         pdf.ln(20)
 
@@ -704,7 +726,7 @@ def generate_health_check_report(  # pylint: disable=redefined-outer-name
         pdf.set_font("Helvetica", "", 9)
         pdf.multi_cell(180, 4, warning_text)
 
-        pdf.set_text_color(*RedHatColors.BLACK)
+        pdf.set_text_color(*PdfColors.BLACK)
         pdf.set_line_width(0.2)
         pdf.ln(8)
 
@@ -773,7 +795,7 @@ def generate_health_check_report(  # pylint: disable=redefined-outer-name
                     f"Note: {', '.join(sorted(non_mm_excluded))} excluded from SAPHana resources by "
                     f"location constraints (resource-discovery=never).",
                 )
-        pdf.set_text_color(*RedHatColors.BLACK)
+        pdf.set_text_color(*PdfColors.BLACK)
 
     pdf.ln(5)
 
@@ -1008,7 +1030,7 @@ def generate_health_check_report(  # pylint: disable=redefined-outer-name
             mapping = sr_topology.get("mapping", "")
 
             pdf.set_font("Helvetica", "B", 10)
-            pdf.set_text_color(*RedHatColors.BLACK)
+            pdf.set_text_color(*PdfColors.BLACK)
             mapping_display = mapping if mapping else "Unknown"
             pdf.cell(0, 6, mapping_display, ln=True)
 
@@ -1023,7 +1045,7 @@ def generate_health_check_report(  # pylint: disable=redefined-outer-name
                 pdf.set_text_color(133, 100, 4)
                 pdf.cell(0, 4, "Note: HANA is NOT managed by Pacemaker", ln=True)
 
-            pdf.set_text_color(*RedHatColors.BLACK)
+            pdf.set_text_color(*PdfColors.BLACK)
             pdf.ln(2)
 
             # Site topology table
@@ -1043,12 +1065,12 @@ def generate_health_check_report(  # pylint: disable=redefined-outer-name
 
                 role = site.get("role", "")
                 if role == "primary":
-                    pdf.set_text_color(*RedHatColors.GREEN)
+                    pdf.set_text_color(*PdfColors.GREEN)
                 else:
                     pdf.set_text_color(0, 100, 180)  # Blue for secondary
                 pdf.set_font("Helvetica", "B", 8)
                 pdf.cell(25, row_h, role, border=1)
-                pdf.set_text_color(*RedHatColors.BLACK)
+                pdf.set_text_color(*PdfColors.BLACK)
 
                 pdf.set_font("Helvetica", "", 8)
                 op_mode_str = site.get("op_mode", "") or ""
@@ -1225,7 +1247,7 @@ def generate_health_check_report(  # pylint: disable=redefined-outer-name
                 "ERROR status below may be caused by the stopped cluster. Start the cluster "
                 "with 'pcs cluster start --all' and rerun the health check for accurate results.",
             )
-            pdf.set_text_color(*RedHatColors.BLACK)
+            pdf.set_text_color(*PdfColors.BLACK)
             pdf.set_line_width(0.2)
             pdf.ln(5)
 
@@ -1244,7 +1266,7 @@ def generate_health_check_report(  # pylint: disable=redefined-outer-name
         if error_checks and cluster_running:
             pdf.ln(3)
             pdf.set_font("Helvetica", "I", 9)
-            pdf.set_text_color(*RedHatColors.GRAY)
+            pdf.set_text_color(*PdfColors.GRAY)
             pdf.multi_cell(
                 0,
                 5,
@@ -1287,7 +1309,7 @@ def generate_health_check_report(  # pylint: disable=redefined-outer-name
         else:
             # Compact mode: list passed checks in 3-column format
             pdf.set_font("Helvetica", "", 9)
-            pdf.set_text_color(*RedHatColors.GREEN)
+            pdf.set_text_color(*PdfColors.GREEN)
             for i, check in enumerate(passed_checks):
                 if i > 0 and i % 3 == 0:
                     pdf.ln(5)
@@ -1304,7 +1326,7 @@ def generate_health_check_report(  # pylint: disable=redefined-outer-name
     if skipped_checks:
         pdf.sub_section(f"Skipped Checks ({len(skipped_checks)})")
         pdf.set_font("Helvetica", "I", 9)
-        pdf.set_text_color(*RedHatColors.GRAY)
+        pdf.set_text_color(*PdfColors.GRAY)
         # Group skip reasons for a meaningful summary
         skip_reasons = set()
         for c in skipped_checks:
@@ -1408,9 +1430,9 @@ def generate_health_check_report(  # pylint: disable=redefined-outer-name
         pdf.set_font("Helvetica", "B", 10)
         pdf.cell(70, 6, practice)
         pdf.set_font("Helvetica", "I", 9)
-        pdf.set_text_color(*RedHatColors.GRAY)
+        pdf.set_text_color(*PdfColors.GRAY)
         pdf.cell(0, 6, description, new_x="LMARGIN", new_y="NEXT")
-        pdf.set_text_color(*RedHatColors.BLACK)
+        pdf.set_text_color(*PdfColors.BLACK)
 
     # =========================================================================
     # DOCUMENTATION REFERENCES
@@ -1441,9 +1463,9 @@ def generate_health_check_report(  # pylint: disable=redefined-outer-name
         pdf.set_font("Helvetica", "B", 10)
         pdf.cell(60, 6, title)
         pdf.set_font("Helvetica", "", 9)
-        pdf.set_text_color(*RedHatColors.BLUE)
+        pdf.set_text_color(*PdfColors.BLUE)
         pdf.cell(0, 6, url, new_x="LMARGIN", new_y="NEXT")
-        pdf.set_text_color(*RedHatColors.BLACK)
+        pdf.set_text_color(*PdfColors.BLACK)
 
     # =========================================================================
     # SAVE PDF
