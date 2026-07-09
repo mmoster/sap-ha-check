@@ -416,8 +416,9 @@ Access methods:
 Contributions are welcome! Please open an issue or submit a pull request.
 
 ## Contributors
-
-jfuchs and amemon are available to review, test, and commit changes to this project.
+- [Markus Moster](https://github.com/mmoster) (Author)
+- [Janine Fuchs](https://github.com/ja9fuchs) (Maintainer)
+- [Amir Memon](https://github.com/amemon) (Maintainer)
 
 ## Support
 
