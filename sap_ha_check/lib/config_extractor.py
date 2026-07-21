@@ -165,6 +165,8 @@ class ConfigExtractor:
             "properties": {},
         }
 
+        self._clone_type_map = {}  # Maps clone name -> resource type category
+
         self._parse_cluster_info()
         self._parse_resources()
         self._parse_stonith()
@@ -248,6 +250,18 @@ class ConfigExtractor:
                 elif "IPaddr2" in res_type or "IPaddr" in res_type:
                     # Store VIP resource - will update IP when attributes are parsed
                     pending_vips.append(current_resource)
+
+                # Record clone-to-type mapping for _parse_clone_meta()
+                if current_clone:
+                    if "SAPHanaController" in res_type or (
+                        "SAPHana" in res_type
+                        and "Controller" not in res_type
+                        and "Topology" not in res_type
+                        and "Filesystem" not in res_type
+                    ):
+                        self._clone_type_map[current_clone] = "saphana"
+                    elif "SAPHanaTopology" in res_type:
+                        self._clone_type_map[current_clone] = "topology"
 
                 current_section = None
                 i += 1
@@ -367,15 +381,16 @@ class ConfigExtractor:
                 clone_meta[match.group(1)] = match.group(2)
             i += 1
 
-        # Store clone-max for the appropriate resource
-        if "SAPHanaController" in clone_name or "SAPHana_" in clone_name:
+        # Identify clone type by the resource agent type, not the clone name
+        clone_type = self._clone_type_map.get(clone_name)
+        if clone_type == "saphana":
             if "clone-max" in clone_meta:
                 self.config["sap_hana"]["clone_max"] = int(clone_meta["clone-max"])
             if "promotable" in clone_meta:
                 self.config["sap_hana"]["promotable"] = clone_meta["promotable"].lower() == "true"
             if "interleave" in clone_meta:
                 self.config["sap_hana"]["interleave"] = clone_meta["interleave"].lower() == "true"
-        elif "SAPHanaTopology" in clone_name:
+        elif clone_type == "topology":
             if "clone-max" in clone_meta:
                 self.config["sap_hana"]["topology_clone_max"] = int(clone_meta["clone-max"])
 

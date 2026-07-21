@@ -242,31 +242,89 @@ class SSHDiscoveryMixin:
                 pass
             return ""
 
-        # === Core SAP HANA Parameters ===
-        # Discover SID and instance from resource names
-        resource_commands = [
-            "pcs resource status 2>/dev/null | grep -oE 'SAPHana_[A-Z0-9]+_[0-9]+' | head -1",
-            "pcs resource status 2>/dev/null | grep -oE 'SAPHanaController_[A-Z0-9]+_[0-9]+' | head -1",
-            "crm resource status 2>/dev/null | grep -oE 'SAPHana_[A-Z0-9]+_[0-9]+' | head -1",
-        ]
+        # === Core SAP HANA Parameters + Virtual IP Configuration ===
+        # Discover resources by agent type (not by name pattern) using pcs resource config.
+        # This handles all naming conventions: default (SAPHana_SID_NN),
+        # SAP Ansible role (rsc_SAPHana_*, rsc_SAPHanaCon_*), and custom names.
+        # TODO: SLES environments use 'crm' instead of 'pcs'. The crm equivalent
+        # would be 'crm configure show' which uses a different output format.
+        # Updates required to support SLES/crmsh resource detection by agent type.
+        pcs_config_output = run_ssh_cmd("pcs resource config 2>/dev/null")
 
-        for cmd in resource_commands:
-            output = run_ssh_cmd(cmd)
-            if output:
-                match = re.match(r"(SAPHana(?:Controller)?)_([A-Z0-9]+)_(\d+)", output)
-                if match:
-                    hana_info["resource_type"] = match.group(1)
-                    hana_info["sid"] = match.group(2)
-                    hana_info["instance_number"] = match.group(3)
-                    hana_info["resource_name"] = output
-                    break
+        if pcs_config_output:
+            resource_re = re.compile(
+                r"\s*Resource:\s*(\S+)\s*\(class=(\S+)\s+(?:provider=(\S+)\s+)?type=(\S+)\)"
+            )
+            current_res_name = None
+            current_res_type = None
+            vip_resources = []  # List of {"name": ..., "ip": ...} dicts
 
-        # Get topology resource
-        topo_output = run_ssh_cmd(
-            "pcs resource status 2>/dev/null | grep -oE 'SAPHanaTopology_[A-Z0-9]+_[0-9]+' | head -1"
-        )
-        if topo_output:
-            hana_info["topology_resource"] = topo_output
+            for line in pcs_config_output.split("\n"):
+                stripped = line.strip()
+
+                # Match resource definition lines
+                res_match = resource_re.match(line)
+                if res_match:
+                    current_res_name = res_match.group(1)
+                    current_res_type = res_match.group(4)
+
+                    # SAPHana or SAPHanaController resource
+                    if "SAPHanaController" in current_res_type or (
+                        "SAPHana" in current_res_type
+                        and "Controller" not in current_res_type
+                        and "Topology" not in current_res_type
+                        and "Filesystem" not in current_res_type
+                    ):
+                        hana_info["resource_name"] = current_res_name
+                        if "SAPHanaController" in current_res_type:
+                            hana_info["resource_type"] = "SAPHanaController"
+                        else:
+                            hana_info["resource_type"] = "SAPHana"
+
+                    # SAPHanaTopology resource
+                    elif "SAPHanaTopology" in current_res_type:
+                        hana_info["topology_resource"] = current_res_name
+
+                    # IPaddr2 or IPaddr resource (VIP candidate)
+                    elif "IPaddr2" in current_res_type or "IPaddr" in current_res_type:
+                        # IP will be extracted from attributes below
+                        vip_resources.append({"name": current_res_name, "ip": None})
+
+                    continue
+
+                # Parse attributes for the current resource
+                if current_res_type and "=" in stripped:
+                    attr_match = re.match(r"(\S+)=(.+)", stripped)
+                    if attr_match:
+                        key = attr_match.group(1)
+                        value = attr_match.group(2).strip()
+
+                        # Extract SID and InstanceNumber from HANA resources
+                        if "SAPHana" in (current_res_type or ""):
+                            if key == "SID" and "sid" not in hana_info:
+                                hana_info["sid"] = value
+                            elif key == "InstanceNumber" and "instance_number" not in hana_info:
+                                hana_info["instance_number"] = value
+
+                        # Extract IP from VIP resources
+                        if (
+                            key == "ip"
+                            and vip_resources
+                            and vip_resources[-1]["ip"] is None
+                        ):
+                            vip_resources[-1]["ip"] = value
+
+            # Assign VIP info from collected resources
+            if vip_resources:
+                first_vip = vip_resources[0]
+                if first_vip["ip"]:
+                    hana_info["virtual_ip"] = first_vip["ip"]
+                hana_info["vip_resource"] = first_vip["name"]
+                if len(vip_resources) > 1:
+                    second_vip = vip_resources[1]
+                    if second_vip["ip"]:
+                        hana_info["secondary_vip"] = second_vip["ip"]
+                    hana_info["secondary_vip_resource"] = second_vip["name"]
 
         # === Cluster Node Information ===
         nodes = cluster_nodes or []
@@ -292,29 +350,6 @@ class SSHDiscoveryMixin:
             node2_ip = run_ssh_cmd("hostname -i 2>/dev/null | awk '{print $1}'", nodes[1])
             if node2_ip:
                 hana_info["node2_ip"] = node2_ip
-
-        # === Virtual IP Configuration ===
-        # Get all VIP resources and addresses
-        vip_output = run_ssh_cmd(
-            "pcs resource config 2>/dev/null | grep -B2 -A5 'IPaddr2' | grep -oE 'ip=[0-9.]+' | cut -d= -f2"
-        )
-        if vip_output:
-            vips = [v.strip() for v in vip_output.split("\n") if v.strip()]
-            if vips:
-                hana_info["virtual_ip"] = vips[0]
-                if len(vips) > 1:
-                    hana_info["secondary_vip"] = vips[1]
-
-        # Get VIP resource names
-        vip_names = run_ssh_cmd(
-            "pcs resource status 2>/dev/null | grep -oE 'vip[-_][A-Za-z0-9_]+|rsc_ip_[A-Za-z0-9_]+|ip[-_][A-Za-z0-9_]+'"
-        )
-        if vip_names:
-            vip_list = [v.strip() for v in vip_names.split("\n") if v.strip()]
-            if vip_list:
-                hana_info["vip_resource"] = vip_list[0]
-                if len(vip_list) > 1:
-                    hana_info["secondary_vip_resource"] = vip_list[1]
 
         # Check if secondary read is enabled (look for second VIP or AUTOMATED_REGISTER)
         auto_reg = run_ssh_cmd(
