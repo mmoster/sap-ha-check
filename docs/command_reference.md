@@ -1,7 +1,12 @@
 # SAP Cluster Health Check – Command Reference
 
-This document lists all commands executed by the health check on the cluster nodes
-and evaluates whether they **modify the cluster, HANA, or SAP configuration**.
+This document lists all health check commands executed on the cluster nodes and evaluates their potential impact on the cluster, HANA, or SAP configuration.
+
+- **Expert-Designed**: The commands and analytical methods are based on recommendations from human cluster experts rather than being AI-generated. (Claude and existing documentation were referenced solely to evaluate additional command parameters.)
+
+- **Production-Safe**: The health check commands do not modify the cluster, HANA, or SAP configurations and can safely be run on live production systems.
+
+- **Remote Processing Only**: The only extraction and processing tasks occur on separate remote systems designed to unpack and analyze the generated sosreport files.
 
 ---
 
