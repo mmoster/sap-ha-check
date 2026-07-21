@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from sap_ha_check.rules.engine import (
+from tool.sap_cluster_checks.rules.engine import (
     CheckDispatch,
     DispatchStep,
     RuleDefinition,

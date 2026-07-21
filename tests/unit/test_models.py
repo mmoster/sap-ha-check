@@ -2,7 +2,7 @@
 
 from dataclasses import asdict
 
-from sap_ha_check.access.models import NodeAccess, AccessConfig
+from tool.sap_cluster_checks.access.models import NodeAccess, AccessConfig
 
 
 class TestNodeAccess:

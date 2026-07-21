@@ -1,6 +1,6 @@
 """Tests for RulesEngine.get_summary() and get_data_source_info()."""
 
-from sap_ha_check.rules.engine import RulesEngine, CheckResult, CheckStatus, Severity
+from tool.sap_cluster_checks.rules.engine import RulesEngine, CheckResult, CheckStatus, Severity
 
 
 class TestGetSummary:

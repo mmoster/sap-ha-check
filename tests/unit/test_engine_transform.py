@@ -1,6 +1,6 @@
 """Tests for RulesEngine._transform_pcs_for_cib()."""
 
-from sap_ha_check.rules.engine import RulesEngine
+from tool.sap_cluster_checks.rules.engine import RulesEngine
 
 
 def _transform(cmd):

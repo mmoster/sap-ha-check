@@ -1,6 +1,6 @@
 """Tests for RulesEngine._validate_clone_max()."""
 
-from sap_ha_check.rules.engine import RulesEngine, RuleDefinition, CheckStatus, Severity
+from tool.sap_cluster_checks.rules.engine import RulesEngine, RuleDefinition, CheckStatus, Severity
 
 
 def _parsed(**overrides):

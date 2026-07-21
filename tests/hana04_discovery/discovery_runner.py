@@ -50,7 +50,7 @@ SCRIPT_DIR = Path(__file__).parent.resolve()
 PROJECT_ROOT = SCRIPT_DIR.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from sap_ha_check.access.discover_access import AccessDiscovery  # noqa: E402
+from tool.sap_cluster_checks.access.discover_access import AccessDiscovery  # noqa: E402
 
 
 @dataclass

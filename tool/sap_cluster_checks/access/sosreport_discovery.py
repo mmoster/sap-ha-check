@@ -187,8 +187,8 @@ class SOSReportDiscoveryMixin:
   To collect extended SAP HANA HA data in future SOSreports, deploy
   the following configuration to all cluster nodes:
 
-  Run: ./sap_ha_check.py -R --configure-extensions
-  Or:  ./sap_ha_check.py -R <node>
+  Run: ./sap_cluster_checks.py -R --configure-extensions
+  Or:  ./sap_cluster_checks.py -R <node>
 
   This will configure SAP HANA HA data collection (global.ini,
   sudoers, SAPHanaSR-showAttr, cluster state) and create SOSreports.

@@ -146,7 +146,7 @@ class InstallGuideMixin:
             print(" All installation steps completed!")
             print("=" * 63)
             print("\n  Run health check to verify configuration:")
-            print("    ./sap_ha_check.py")
+            print("    ./sap_cluster_checks.py")
             return
 
         # Determine the immediate next step
@@ -362,5 +362,5 @@ STEP {step_num}: CONFIGURE SAP HANA RESOURCES (one node only)
 
         print("-" * 63)
         print(" After completing these steps, rerun the health check:")
-        print("   ./sap_ha_check.py")
+        print("   ./sap_cluster_checks.py")
         print("-" * 63)

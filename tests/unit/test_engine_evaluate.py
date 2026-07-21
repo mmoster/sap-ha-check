@@ -1,6 +1,6 @@
 """Tests for RulesEngine._evaluate_expectation()."""
 
-from sap_ha_check.rules.engine import RulesEngine
+from tool.sap_cluster_checks.rules.engine import RulesEngine
 
 
 def _evaluate(parsed, expectation):

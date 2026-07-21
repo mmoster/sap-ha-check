@@ -16,35 +16,35 @@ This tool is designed for **SAP Basis administrators, Linux system administrator
 
 ```bash
 # Clone and run locally
-git clone https://github.com/mmoster/sap-ha-check.git
-cd sap-ha-check
-./sap_ha_check.py --local
+git clone https://github.com/mmoster/tool.sap_cluster_checks.git
+cd tool.sap_cluster_checks
+./sap_cluster_checks.py --local
 ```
 
 ### Remote Check
 
 ```bash
 # Check specific nodes
-./sap_ha_check.py hana01 hana02
+./sap_cluster_checks.py hana01 hana02
 
 # Use a hosts file
-./sap_ha_check.py -H hosts.txt
+./sap_cluster_checks.py -H hosts.txt
 
 # Analyze SOSreports offline
-./sap_ha_check.py -s /path/to/sosreports/
+./sap_cluster_checks.py -s /path/to/sosreports/
 
 # Verbose PDF (show all checks in detail, not just failures)
-./sap_ha_check.py hana01 -v
+./sap_cluster_checks.py hana01 -v
 
 # Collect SOSreports from cluster (auto-discovers all nodes)
-./sap_ha_check.py -R hana01
+./sap_cluster_checks.py -R hana01
 ```
 
 ### Interactive Mode
 
 ```bash
 # Scan directory for sosreports/inventory/results
-./sap_ha_check.py -u
+./sap_cluster_checks.py -u
 ```
 
 This scans the current directory for:
@@ -90,24 +90,24 @@ sudo dnf install git    # RHEL/Fedora
 sudo yum install git    # RHEL 7
 
 # Clone and run
-git clone https://github.com/mmoster/sap-ha-check.git
-cd sap-ha-check
-./sap_ha_check.py --local
+git clone https://github.com/mmoster/tool.sap_cluster_checks.git
+cd tool.sap_cluster_checks
+./sap_cluster_checks.py --local
 ```
 
 ### Option 2: Download without git
 
 ```bash
 # Download and extract
-curl -L https://github.com/mmoster/sap-ha-check/archive/refs/heads/main.tar.gz | tar xz
-cd sap-ha-check-main
-./sap_ha_check.py --local
+curl -L https://github.com/mmoster/tool.sap_cluster_checks/archive/refs/heads/main.tar.gz | tar xz
+cd tool.sap_cluster_checks-main
+./sap_cluster_checks.py --local
 ```
 
 ## Usage
 
 ```
-./sap_ha_check.py [OPTIONS] [NODES...]
+./sap_cluster_checks.py [OPTIONS] [NODES...]
 
 Options:
   -u, --usage           Interactive mode - scan directory for resources
@@ -225,13 +225,13 @@ nodes:
 
 ```bash
 # Show all discovered clusters and nodes
-./sap_ha_check.py --show-config
+./sap_cluster_checks.py --show-config
 
 # Show config for a specific cluster
-./sap_ha_check.py --show-config my_cluster
+./sap_cluster_checks.py --show-config my_cluster
 
 # Show config for cluster containing a specific node
-./sap_ha_check.py -S hana01
+./sap_cluster_checks.py -S hana01
 ```
 
 **Example Output:**
@@ -287,13 +287,13 @@ To reuse the cached config from a previous run (e.g., in CI/CD pipelines or repe
 ```bash
 # Environment variable (accepts 1, true, or yes)
 export SAP_HA_CHECK_REUSE_CONFIG=1
-./sap_ha_check.py
+./sap_cluster_checks.py
 
 # CLI flag (equivalent)
-./sap_ha_check.py --reuse-config
+./sap_cluster_checks.py --reuse-config
 
 # Force fresh discovery even when reuse is enabled
-SAP_HA_CHECK_REUSE_CONFIG=1 ./sap_ha_check.py -f
+SAP_HA_CHECK_REUSE_CONFIG=1 ./sap_cluster_checks.py -f
 ```
 
 | Flag / Variable | Behavior |
@@ -307,7 +307,7 @@ SAP_HA_CHECK_REUSE_CONFIG=1 ./sap_ha_check.py -f
 Use `-v` (verbose) to generate a complete PDF report documenting **all** health checks — not just failures. This is ideal for audits, compliance reviews, or handover documentation:
 
 ```bash
-./sap_ha_check.py --local -v
+./sap_cluster_checks.py --local -v
 ```
 
 The verbose report includes every check with its full result, the discovered cluster configuration, and system details — providing a complete snapshot of your cluster's health status.
@@ -318,7 +318,7 @@ See [docs/test_sequence.md](docs/test_sequence.md) for the full execution order 
 
 ## PDF Color Scheme
 
-The PDF report defaults to **Red Hat brand colors**. To use a **corporate-neutral blue/gray palette** instead, edit `sap_ha_check/report_generator.py` and change the `PdfColors` alias:
+The PDF report defaults to **Red Hat brand colors**. To use a **corporate-neutral blue/gray palette** instead, edit `tool/sap_cluster_checks/report_generator.py` and change the `PdfColors` alias:
 
 ```python
 # Default (Red Hat branding):
@@ -422,7 +422,7 @@ Contributions are welcome! Please open an issue or submit a pull request.
 
 ## Support
 
-You can report any issues using the [Issues](https://github.com/mmoster/sap-ha-check/issues) section.
+You can report any issues using the [Issues](https://github.com/mmoster/tool.sap_cluster_checks/issues) section.
 
 ## License
 

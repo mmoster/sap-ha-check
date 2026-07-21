@@ -15,10 +15,10 @@ tags:
   - sap
   - tool
 dependencies: {}
-repository: https://github.com/mmoster/sap-ha-check
-documentation: https://github.com/mmoster/sap-ha-check/blob/main/README.md
-homepage: https://github.com/mmoster/sap-ha-check
-issues: https://github.com/mmoster/sap-ha-check/issues
+repository: https://github.com/mmoster/tool.sap_cluster_checks
+documentation: https://github.com/mmoster/tool.sap_cluster_checks/blob/main/README.md
+homepage: https://github.com/mmoster/tool.sap_cluster_checks
+issues: https://github.com/mmoster/tool.sap_cluster_checks/issues
 build_ignore:
   - 'tests'
   - '.git*'

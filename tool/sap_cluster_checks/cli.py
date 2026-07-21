@@ -1310,8 +1310,8 @@ class ClusterHealthCheck(InstallStatusMixin, InstallGuideMixin, HanaStatusMixin)
             print("Source: Ansible inventory (auto-discovery)")
 
         print("-" * 63)
-        print("To use different nodes:  ./sap_ha_check.py <node1> <node2>")
-        print("To reset configuration:  ./sap_ha_check.py -D")
+        print("To use different nodes:  ./sap_cluster_checks.py <node1> <node2>")
+        print("To reset configuration:  ./sap_cluster_checks.py -D")
         print("-" * 63)
 
         skip_steps = skip_steps or []
@@ -1457,8 +1457,8 @@ class ClusterHealthCheck(InstallStatusMixin, InstallGuideMixin, HanaStatusMixin)
                     print(f"  Missing commands: {', '.join(commands_missing)}")
                 print()
                 print("  To see installation steps, run:")
-                print("    ./sap_ha_check.py -i")
-                print("    ./sap_ha_check.py --suggest install")
+                print("    ./sap_cluster_checks.py -i")
+                print("    ./sap_cluster_checks.py --suggest install")
                 print("=" * 63)
 
             elif failed_checks:
@@ -1641,8 +1641,8 @@ class ClusterHealthCheck(InstallStatusMixin, InstallGuideMixin, HanaStatusMixin)
         if failed:
             # Show hint about --suggest
             first_failed = failed[0]
-            print(f"\n  Get help: ./sap_ha_check.py --suggest {first_failed}")
-            print("  Or auto:  ./sap_ha_check.py --suggest")
+            print(f"\n  Get help: ./sap_cluster_checks.py --suggest {first_failed}")
+            print("  Or auto:  ./sap_cluster_checks.py --suggest")
 
         # Show next steps
         self._print_next_steps(results)
@@ -1660,7 +1660,7 @@ class ClusterHealthCheck(InstallStatusMixin, InstallGuideMixin, HanaStatusMixin)
             )
             print("    systemctl enable --now pcsd")
             print("    ... (more steps required)")
-            print("\n  For full guide: ./sap_ha_check.py -i")
+            print("\n  For full guide: ./sap_cluster_checks.py -i")
 
             print("\nOptions:")
             print("  [Enter]  Rerun health check (monitor installation progress)")
@@ -1760,7 +1760,7 @@ class ClusterHealthCheck(InstallStatusMixin, InstallGuideMixin, HanaStatusMixin)
                 )
                 if missing_steps:
                     print(f"          Missing: {', '.join(missing_steps)}")
-                print("          Run ./sap_ha_check.py -i to see remaining steps.")
+                print("          Run ./sap_cluster_checks.py -i to see remaining steps.")
             else:
                 print("\n[WARNING] Some health checks FAILED. Review report for details.")
             return 1
@@ -1770,7 +1770,7 @@ class ClusterHealthCheck(InstallStatusMixin, InstallGuideMixin, HanaStatusMixin)
             )
             if missing_steps:
                 print(f"             Missing: {', '.join(missing_steps)}")
-            print("             Run ./sap_ha_check.py -i to see remaining steps.")
+            print("             Run ./sap_cluster_checks.py -i to see remaining steps.")
             return 2
         if has_skipped:
             print("\n[INFO] Some checks were skipped (commands not available).")
@@ -1791,8 +1791,8 @@ class ClusterHealthCheck(InstallStatusMixin, InstallGuideMixin, HanaStatusMixin)
         if not results.get("access"):
             print("""
   Access discovery failed. Try:
-    ./sap_ha_check.py --debug hana01    # Debug with specific node
-    ./sap_ha_check.py -s /path/to/sos   # Use SOSreports instead
+    ./sap_cluster_checks.py --debug hana01    # Debug with specific node
+    ./sap_cluster_checks.py -s /path/to/sos   # Use SOSreports instead
 """)
             return
 
@@ -1867,7 +1867,7 @@ class ClusterHealthCheck(InstallStatusMixin, InstallGuideMixin, HanaStatusMixin)
             if packages_missing or essential_cmd_missing:
                 print("""
   INSTALLATION REQUIRED: Cluster packages not installed!
-    Run: ./sap_ha_check.py --suggest install
+    Run: ./sap_cluster_checks.py --suggest install
 
     This will show step-by-step installation instructions for:
     - Pacemaker, Corosync, pcs
@@ -1900,7 +1900,7 @@ class ClusterHealthCheck(InstallStatusMixin, InstallGuideMixin, HanaStatusMixin)
                 for i, step in enumerate(missing_steps, 1):
                     print(f"  ║  {i}. {step:<55} ║")
                 print("""  ║                                                               ║
-  ║  Run ./sap_ha_check.py -i for detailed guide          ║
+  ║  Run ./sap_cluster_checks.py -i for detailed guide          ║
   ╚═══════════════════════════════════════════════════════════════╝
 """)
             elif cluster_not_running:
@@ -1933,12 +1933,12 @@ class ClusterHealthCheck(InstallStatusMixin, InstallGuideMixin, HanaStatusMixin)
 
         print("""
   Common next steps:
-    ./sap_ha_check.py --suggest install   # Installation guide
-    ./sap_ha_check.py --show-config       # View all clusters config
-    ./sap_ha_check.py -S mycluster        # View specific cluster config
-    ./sap_ha_check.py -f hana01           # Force re-discovery
-    ./sap_ha_check.py --list-rules        # List all health checks
-    ./sap_ha_check.py --guide             # Show detailed usage guide
+    ./sap_cluster_checks.py --suggest install   # Installation guide
+    ./sap_cluster_checks.py --show-config       # View all clusters config
+    ./sap_cluster_checks.py -S mycluster        # View specific cluster config
+    ./sap_cluster_checks.py -f hana01           # Force re-discovery
+    ./sap_cluster_checks.py --list-rules        # List all health checks
+    ./sap_cluster_checks.py --guide             # Show detailed usage guide
 """)
 
         doc_urls = get_redhat_doc_urls(self._get_rhel_major())
@@ -2389,9 +2389,9 @@ Examples:
 
             if not status_file.exists():
                 print("No previous run found. Run a health check first:")
-                print("  ./sap_ha_check.py hana01")
+                print("  ./sap_cluster_checks.py hana01")
                 print("\nOr specify a step directly:")
-                print("  ./sap_ha_check.py --suggest config")
+                print("  ./sap_cluster_checks.py --suggest config")
                 sys.exit(1)
 
             with open(status_file, "r", encoding="utf-8") as f:
@@ -2945,8 +2945,8 @@ Examples:
                                 config_file.unlink()
                                 print("  Configuration deleted.")
                                 print("\n  To rediscover, run:")
-                                print("    ./sap_ha_check.py <hostname>")
-                                print("    ./sap_ha_check.py -s sosreports/")
+                                print("    ./sap_cluster_checks.py <hostname>")
+                                print("    ./sap_cluster_checks.py -s sosreports/")
                             else:
                                 print("  Cancelled.")
                         except (EOFError, KeyboardInterrupt):

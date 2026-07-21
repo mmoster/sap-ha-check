@@ -4,14 +4,14 @@ import subprocess
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-from sap_ha_check.lib.cib_parser import CIBParser
+from tool.sap_cluster_checks.lib.cib_parser import CIBParser
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
 def _make_parser(cib_path="/tmp/test/cib.xml", pcs_available=True):
     """Create a CIBParser with mocked shutil.which."""
-    with patch("sap_ha_check.lib.cib_parser.shutil.which", return_value="/usr/sbin/pcs" if pcs_available else None):
+    with patch("tool.sap_cluster_checks.lib.cib_parser.shutil.which", return_value="/usr/sbin/pcs" if pcs_available else None):
         return CIBParser(cib_path)
 
 
@@ -95,8 +95,8 @@ class TestRunPcs:
         assert success is False
         assert "not found" in output
 
-    @patch("sap_ha_check.lib.cib_parser.subprocess.run")
-    @patch("sap_ha_check.lib.cib_parser.Path.exists", return_value=True)
+    @patch("tool.sap_cluster_checks.lib.cib_parser.subprocess.run")
+    @patch("tool.sap_cluster_checks.lib.cib_parser.Path.exists", return_value=True)
     def test_caching(self, mock_exists, mock_run):
         mock_run.return_value = _mock_run("cached output")
         parser = _make_parser(pcs_available=True)
@@ -113,8 +113,8 @@ class TestRunPcs:
         assert output2 == "cached output"
         assert mock_run.call_count == 1  # still 1
 
-    @patch("sap_ha_check.lib.cib_parser.subprocess.run")
-    @patch("sap_ha_check.lib.cib_parser.Path.exists", return_value=True)
+    @patch("tool.sap_cluster_checks.lib.cib_parser.subprocess.run")
+    @patch("tool.sap_cluster_checks.lib.cib_parser.Path.exists", return_value=True)
     def test_timeout_handling(self, mock_exists, mock_run):
         mock_run.side_effect = subprocess.TimeoutExpired(cmd="pcs", timeout=30)
         parser = _make_parser(pcs_available=True)
@@ -124,8 +124,8 @@ class TestRunPcs:
 
 
 class TestGetResources:
-    @patch("sap_ha_check.lib.cib_parser.subprocess.run")
-    @patch("sap_ha_check.lib.cib_parser.Path.exists", return_value=True)
+    @patch("tool.sap_cluster_checks.lib.cib_parser.subprocess.run")
+    @patch("tool.sap_cluster_checks.lib.cib_parser.Path.exists", return_value=True)
     def test_parses_resource_list(self, mock_exists, mock_run):
         fixture_output = (FIXTURES / "pcs_resource_output.txt").read_text()
         mock_run.return_value = _mock_run(fixture_output)
@@ -138,8 +138,8 @@ class TestGetResources:
         assert "SAPHanaTopology" in resources_text
         assert "SAPHanaController" in resources_text
 
-    @patch("sap_ha_check.lib.cib_parser.subprocess.run")
-    @patch("sap_ha_check.lib.cib_parser.Path.exists", return_value=True)
+    @patch("tool.sap_cluster_checks.lib.cib_parser.subprocess.run")
+    @patch("tool.sap_cluster_checks.lib.cib_parser.Path.exists", return_value=True)
     def test_error_returns_failure(self, mock_exists, mock_run):
         mock_run.return_value = _mock_run("Error: something failed", returncode=1)
         parser = _make_parser(pcs_available=True)
@@ -149,8 +149,8 @@ class TestGetResources:
 
 
 class TestGetResourceConfig:
-    @patch("sap_ha_check.lib.cib_parser.subprocess.run")
-    @patch("sap_ha_check.lib.cib_parser.Path.exists", return_value=True)
+    @patch("tool.sap_cluster_checks.lib.cib_parser.subprocess.run")
+    @patch("tool.sap_cluster_checks.lib.cib_parser.Path.exists", return_value=True)
     def test_extracts_sap_hana_config(self, mock_exists, mock_run):
         config_output = """Clone: SAPHanaController_S4D_HDB00-clone
   Resource: SAPHanaController_S4D_HDB00 (class=ocf provider=heartbeat type=SAPHanaController)
@@ -175,8 +175,8 @@ class TestGetResourceConfig:
 
 
 class TestGetConstraints:
-    @patch("sap_ha_check.lib.cib_parser.subprocess.run")
-    @patch("sap_ha_check.lib.cib_parser.Path.exists", return_value=True)
+    @patch("tool.sap_cluster_checks.lib.cib_parser.subprocess.run")
+    @patch("tool.sap_cluster_checks.lib.cib_parser.Path.exists", return_value=True)
     def test_parses_constraint_sections(self, mock_exists, mock_run):
         fixture_output = (FIXTURES / "pcs_constraint_output.txt").read_text()
         mock_run.return_value = _mock_run(fixture_output)
@@ -192,8 +192,8 @@ class TestGetConstraints:
         assert "majority1" in location_text
         assert "SAPHanaTopology" in location_text
 
-    @patch("sap_ha_check.lib.cib_parser.subprocess.run")
-    @patch("sap_ha_check.lib.cib_parser.Path.exists", return_value=True)
+    @patch("tool.sap_cluster_checks.lib.cib_parser.subprocess.run")
+    @patch("tool.sap_cluster_checks.lib.cib_parser.Path.exists", return_value=True)
     def test_detects_majority_maker(self, mock_exists, mock_run):
         fixture_output = (FIXTURES / "pcs_constraint_output.txt").read_text()
         mock_run.return_value = _mock_run(fixture_output)
@@ -205,8 +205,8 @@ class TestGetConstraints:
         assert result["majority_maker_info"]["has_topology_constraint"] is True
         assert result["majority_maker_info"]["has_controller_constraint"] is True
 
-    @patch("sap_ha_check.lib.cib_parser.subprocess.run")
-    @patch("sap_ha_check.lib.cib_parser.Path.exists", return_value=True)
+    @patch("tool.sap_cluster_checks.lib.cib_parser.subprocess.run")
+    @patch("tool.sap_cluster_checks.lib.cib_parser.Path.exists", return_value=True)
     def test_detects_resource_discovery(self, mock_exists, mock_run):
         fixture_output = (FIXTURES / "pcs_constraint_output.txt").read_text()
         mock_run.return_value = _mock_run(fixture_output)
@@ -219,8 +219,8 @@ class TestGetConstraints:
 
 
 class TestGetProperties:
-    @patch("sap_ha_check.lib.cib_parser.subprocess.run")
-    @patch("sap_ha_check.lib.cib_parser.Path.exists", return_value=True)
+    @patch("tool.sap_cluster_checks.lib.cib_parser.subprocess.run")
+    @patch("tool.sap_cluster_checks.lib.cib_parser.Path.exists", return_value=True)
     def test_parses_property_pairs(self, mock_exists, mock_run):
         # The parser requires both ':' and '=' on a line (filters section headers)
         # Real pcs output can have '=' in values like dc-version lines
@@ -237,8 +237,8 @@ class TestGetProperties:
         assert "dc-version" in result["properties"]
         assert "2.1.7" in result["properties"]["dc-version"]
 
-    @patch("sap_ha_check.lib.cib_parser.subprocess.run")
-    @patch("sap_ha_check.lib.cib_parser.Path.exists", return_value=True)
+    @patch("tool.sap_cluster_checks.lib.cib_parser.subprocess.run")
+    @patch("tool.sap_cluster_checks.lib.cib_parser.Path.exists", return_value=True)
     def test_skips_lines_without_both_colon_and_equals(self, mock_exists, mock_run):
         # Lines with only ':' or only '=' are skipped
         output = (
@@ -258,8 +258,8 @@ class TestGetProperties:
 
 
 class TestGetStonith:
-    @patch("sap_ha_check.lib.cib_parser.subprocess.run")
-    @patch("sap_ha_check.lib.cib_parser.Path.exists", return_value=True)
+    @patch("tool.sap_cluster_checks.lib.cib_parser.subprocess.run")
+    @patch("tool.sap_cluster_checks.lib.cib_parser.Path.exists", return_value=True)
     def test_parses_stonith_devices(self, mock_exists, mock_run):
         def side_effect(cmd, **kwargs):
             if "stonith config" in cmd:
@@ -278,8 +278,8 @@ class TestGetStonith:
         # The parsed value is "true (default=true)" which doesn't match "true" exactly
         # This reflects the actual parser behavior with combined ':' and '=' format
 
-    @patch("sap_ha_check.lib.cib_parser.subprocess.run")
-    @patch("sap_ha_check.lib.cib_parser.Path.exists", return_value=True)
+    @patch("tool.sap_cluster_checks.lib.cib_parser.subprocess.run")
+    @patch("tool.sap_cluster_checks.lib.cib_parser.Path.exists", return_value=True)
     def test_stonith_enabled_stays_none_when_property_format_has_extra_text(self, mock_exists, mock_run):
         """Stonith-enabled detection requires exact 'true'/'false' value.
 
@@ -295,8 +295,8 @@ class TestGetStonith:
         assert "stonith-sbd" in result["devices"]
         assert result["enabled"] is None
 
-    @patch("sap_ha_check.lib.cib_parser.subprocess.run")
-    @patch("sap_ha_check.lib.cib_parser.Path.exists", return_value=True)
+    @patch("tool.sap_cluster_checks.lib.cib_parser.subprocess.run")
+    @patch("tool.sap_cluster_checks.lib.cib_parser.Path.exists", return_value=True)
     def test_stonith_device_star_format(self, mock_exists, mock_run):
         def side_effect(cmd, **kwargs):
             if "stonith config" in cmd:
@@ -313,8 +313,8 @@ class TestGetStonith:
 
 
 class TestGetNodes:
-    @patch("sap_ha_check.lib.cib_parser.subprocess.run")
-    @patch("sap_ha_check.lib.cib_parser.Path.exists", return_value=True)
+    @patch("tool.sap_cluster_checks.lib.cib_parser.subprocess.run")
+    @patch("tool.sap_cluster_checks.lib.cib_parser.Path.exists", return_value=True)
     def test_parses_node_names(self, mock_exists, mock_run):
         output = """Pacemaker Nodes:
  Online: node1 node2
@@ -330,8 +330,8 @@ class TestGetNodes:
 
 
 class TestConstraintsNoMajorityMaker:
-    @patch("sap_ha_check.lib.cib_parser.subprocess.run")
-    @patch("sap_ha_check.lib.cib_parser.Path.exists", return_value=True)
+    @patch("tool.sap_cluster_checks.lib.cib_parser.subprocess.run")
+    @patch("tool.sap_cluster_checks.lib.cib_parser.Path.exists", return_value=True)
     def test_no_majority_maker_when_only_topology_constraint(self, mock_exists, mock_run):
         output = """Location Constraints:
   resource 'SAPHanaTopology_S4D_HDB00-clone' avoids node 'appserver1' with score INFINITY
@@ -344,8 +344,8 @@ Ordering Constraints:"""
         # Only topology constraint, no controller constraint -> not a majority maker
         assert result["majority_maker"] is None
 
-    @patch("sap_ha_check.lib.cib_parser.subprocess.run")
-    @patch("sap_ha_check.lib.cib_parser.Path.exists", return_value=True)
+    @patch("tool.sap_cluster_checks.lib.cib_parser.subprocess.run")
+    @patch("tool.sap_cluster_checks.lib.cib_parser.Path.exists", return_value=True)
     def test_no_constraints_no_majority_maker(self, mock_exists, mock_run):
         output = """Location Constraints:
 Colocation Constraints:

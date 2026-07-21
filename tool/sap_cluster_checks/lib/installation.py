@@ -60,16 +60,16 @@ def print_guide(rhel_major: int = 9):
 QUICK START
 -----------
   1. Run directly on a cluster node (auto-detects local mode):
-     ./sap_ha_check.py
+     ./sap_cluster_checks.py
 
   2. Check a live cluster remotely (auto-discovers all members):
-     ./sap_ha_check.py hana01
+     ./sap_cluster_checks.py hana01
 
   3. Analyze SOSreports offline:
-     ./sap_ha_check.py -s /path/to/sosreports/
+     ./sap_cluster_checks.py -s /path/to/sosreports/
 
   4. Show current configuration:
-     ./sap_ha_check.py --show-config
+     ./sap_cluster_checks.py --show-config
 
 WORKFLOW
 --------
@@ -79,14 +79,14 @@ WORKFLOW
     - Ansible inventory
     - SOSreport directories
 
-    Example: ./sap_ha_check.py --access-only hana01
+    Example: ./sap_cluster_checks.py --access-only hana01
 
   Step 2: CLUSTER DISCOVERY
     From the first reachable node, discovers all cluster members:
     - Uses: crm_node -l, pcs status nodes, corosync-cmapctl
     - Saves cluster name for future runs
 
-    Example: ./sap_ha_check.py -C mycluster  # Use saved cluster
+    Example: ./sap_cluster_checks.py -C mycluster  # Use saved cluster
 
   Step 3: HEALTH CHECKS
     Runs all CHK_*.yaml rules against discovered nodes:
@@ -94,7 +94,7 @@ WORKFLOW
     - Pacemaker status (nodes, resources, failures)
     - SAP-specific (HANA SR status, hooks, systemd)
 
-    Example: ./sap_ha_check.py --list-rules  # See all checks
+    Example: ./sap_cluster_checks.py --list-rules  # See all checks
 
   Step 4: REPORT GENERATION
     Generates YAML report with all findings:
@@ -105,29 +105,29 @@ WORKFLOW
 COMMON USE CASES
 ----------------
   Run on the cluster node itself (local mode):
-    ./sap_ha_check.py              # Auto-detects local mode
-    ./sap_ha_check.py --local      # Explicit local mode
+    ./sap_cluster_checks.py              # Auto-detects local mode
+    ./sap_cluster_checks.py --local      # Explicit local mode
 
   Live cluster check from remote:
-    ./sap_ha_check.py hana01 hana02
+    ./sap_cluster_checks.py hana01 hana02
 
   SOSreport analysis (auto-extracts .tar.xz):
-    ./sap_ha_check.py -s /path/to/sosreports/
+    ./sap_cluster_checks.py -s /path/to/sosreports/
 
   Debug mode (verbose output):
-    ./sap_ha_check.py -d hana01
+    ./sap_cluster_checks.py -d hana01
 
   Use saved cluster:
-    ./sap_ha_check.py -C production_cluster
+    ./sap_cluster_checks.py -C production_cluster
 
   Skip specific steps:
-    ./sap_ha_check.py --skip sap report hana01
+    ./sap_cluster_checks.py --skip sap report hana01
 
   Force re-discovery:
-    ./sap_ha_check.py -f hana01
+    ./sap_cluster_checks.py -f hana01
 
   Ansible inventory group:
-    ./sap_ha_check.py -g sap_hana_cluster
+    ./sap_cluster_checks.py -g sap_hana_cluster
 
 OPTIONS REFERENCE
 -----------------
@@ -168,7 +168,7 @@ AUTOMATION & CRONJOB SUPPORT
   - PDF can be skipped: --no-pdf avoids PDF generation overhead
 
   Example cronjob:
-    0 6 * * 1 /opt/sap-ha-check/sap_ha_check.py --local \
+    0 6 * * 1 /opt/sap-cluster-checks/sap_cluster_checks.py --local \
         --no-update-check --no-pdf >> /var/log/sap_healthcheck.log 2>&1
 
 AUTO-DETECTION & INTELLIGENCE
@@ -206,10 +206,10 @@ SOSREPORT SPECIAL FEATURES
     configure SAP extensions, create and fetch SOSreports in one step
 
   SOSreport collection examples:
-    ./sap_ha_check.py -R hana01                  # Full workflow
-    ./sap_ha_check.py -R hana01 --configure-extensions  # Auto-config
-    ./sap_ha_check.py -F mycluster               # Fetch existing
-    ./sap_ha_check.py -F mycluster --create-sosreports  # Create & fetch
+    ./sap_cluster_checks.py -R hana01                  # Full workflow
+    ./sap_cluster_checks.py -R hana01 --configure-extensions  # Auto-config
+    ./sap_cluster_checks.py -F mycluster               # Fetch existing
+    ./sap_cluster_checks.py -F mycluster --create-sosreports  # Create & fetch
 
 PERFORMANCE FEATURES
 --------------------
@@ -248,15 +248,15 @@ TROUBLESHOOTING
 ---------------
   No SSH access:
     - Check SSH keys: ssh-copy-id root@hana01
-    - Try: ./sap_ha_check.py -d hana01  # Debug output
+    - Try: ./sap_cluster_checks.py -d hana01  # Debug output
 
   Commands timing out:
     - Some SAP commands are slow, tool uses 15s timeout
     - Use SOSreports for offline analysis
 
   Wrong nodes discovered:
-    - Specify nodes explicitly: ./sap_ha_check.py hana01 hana02
-    - Use hosts file: ./sap_ha_check.py -H my_hosts.txt
+    - Specify nodes explicitly: ./sap_cluster_checks.py hana01 hana02
+    - Use hosts file: ./sap_cluster_checks.py -H my_hosts.txt
 
 DOCUMENTATION
 -------------""")
@@ -288,7 +288,7 @@ HEALTH CHECK RULES
     - Parser to extract values (regex patterns)
     - Validation logic (expectations)
 
-  Custom rules: ./sap_ha_check.py -r /path/to/my_rules/
+  Custom rules: ./sap_cluster_checks.py -r /path/to/my_rules/
 
 ===============================================================================
 """)
@@ -325,22 +325,22 @@ report      Generate health check report             (no suggestions)
 USAGE EXAMPLES
 --------------
   # Show full installation guide
-  ./sap_ha_check.py --suggest install
+  ./sap_cluster_checks.py --suggest install
 
   # Run all steps
-  ./sap_ha_check.py hana01
+  ./sap_cluster_checks.py hana01
 
   # Skip specific steps
-  ./sap_ha_check.py --skip sap report hana01
+  ./sap_cluster_checks.py --skip sap report hana01
 
   # Only run access discovery
-  ./sap_ha_check.py --access-only hana01
+  ./sap_cluster_checks.py --access-only hana01
 
   # Get suggestions for a step
-  ./sap_ha_check.py --suggest config
+  ./sap_cluster_checks.py --suggest config
 
   # Get suggestions for all steps
-  ./sap_ha_check.py --suggest all
+  ./sap_cluster_checks.py --suggest all
 
 ===============================================================================
 """)
@@ -378,23 +378,23 @@ COMMON ISSUES & SOLUTIONS
 
   3. Host Not Found
      - Verify hostname in /etc/hosts or DNS
-     - Try IP address: ./sap_ha_check.py 192.168.1.100
+     - Try IP address: ./sap_cluster_checks.py 192.168.1.100
 
   4. Ansible Inventory Issues
      - Check inventory: ansible-inventory --list
-     - Use specific group: ./sap_ha_check.py -g sap_cluster
+     - Use specific group: ./sap_cluster_checks.py -g sap_cluster
      - Skip Ansible: specify hosts directly
 
 COMMANDS TO TRY
 ---------------
   # Debug connection
-  ./sap_ha_check.py -d --access-only hana01
+  ./sap_cluster_checks.py -d --access-only hana01
 
   # Use SOSreports instead
-  ./sap_ha_check.py -s /path/to/sosreports/
+  ./sap_cluster_checks.py -s /path/to/sosreports/
 
   # Specify hosts manually
-  ./sap_ha_check.py hana01 hana02
+  ./sap_cluster_checks.py hana01 hana02
 
 DOCUMENTATION
 -------------

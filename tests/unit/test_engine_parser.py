@@ -1,6 +1,6 @@
 """Tests for RulesEngine._parse_output()."""
 
-from sap_ha_check.rules.engine import RulesEngine
+from tool.sap_cluster_checks.rules.engine import RulesEngine
 
 
 def _parse(output, parser_config):

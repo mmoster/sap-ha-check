@@ -28,7 +28,7 @@ def show_config(config_path: Path, cluster_or_node: str = None, config_only: boo
     if not config_path.exists():
         print(f"No configuration file found at {config_path}")
         print("\nRun discovery first:")
-        print("  ./sap_ha_check.py hana01")
+        print("  ./sap_cluster_checks.py hana01")
         return False
 
     with open(config_path, "r", encoding="utf-8") as f:
@@ -69,10 +69,10 @@ def show_config(config_path: Path, cluster_or_node: str = None, config_only: boo
                     else:
                         print()
                     print("\nTo show all configuration:")
-                    print("  ./sap_ha_check.py --show-config")
+                    print("  ./sap_cluster_checks.py --show-config")
                 else:
                     print("\nNo clusters discovered yet. Run discovery first:")
-                    print("  ./sap_ha_check.py hana01")
+                    print("  ./sap_cluster_checks.py hana01")
                 return False
 
     print("\n" + "=" * 60)
@@ -365,10 +365,10 @@ def show_config(config_path: Path, cluster_or_node: str = None, config_only: boo
 
             if not config_only:
                 print("\n    To check this cluster:")
-                print(f"      ./sap_ha_check.py -C {name}")
+                print(f"      ./sap_cluster_checks.py -C {name}")
     else:
         print("\n[INFO] No clusters discovered yet")
-        print("  Run: ./sap_ha_check.py hana01")
+        print("  Run: ./sap_cluster_checks.py hana01")
 
     # Skip remaining sections if config_only mode
     if config_only:
@@ -419,15 +419,15 @@ def show_config(config_path: Path, cluster_or_node: str = None, config_only: boo
 
     print("\n--- Quick Commands ---")
     if cluster_name:
-        print(f"  Check cluster:    ./sap_ha_check.py -C {cluster_name}")
-        print("  Show all config:  ./sap_ha_check.py --show-config")
+        print(f"  Check cluster:    ./sap_cluster_checks.py -C {cluster_name}")
+        print("  Show all config:  ./sap_cluster_checks.py --show-config")
     elif clusters:
         first_cluster = list(clusters.keys())[0]
-        print(f"  Check cluster:    ./sap_ha_check.py -C {first_cluster}")
-        print(f"  Show one cluster: ./sap_ha_check.py --show-config {first_cluster}")
-    print("  Force rediscover: ./sap_ha_check.py -f hana01")
-    print("  Delete config:    ./sap_ha_check.py -D")
-    print("  Show guide:       ./sap_ha_check.py --guide")
+        print(f"  Check cluster:    ./sap_cluster_checks.py -C {first_cluster}")
+        print(f"  Show one cluster: ./sap_cluster_checks.py --show-config {first_cluster}")
+    print("  Force rediscover: ./sap_cluster_checks.py -f hana01")
+    print("  Delete config:    ./sap_cluster_checks.py -D")
+    print("  Show guide:       ./sap_cluster_checks.py --guide")
 
     return True
 
@@ -461,7 +461,7 @@ def export_ansible_vars(config_path: Path, cluster_name: str, output_file: str =
 
     if not sid:
         print(f"No SAP HANA configuration found for cluster '{cluster_name}'.")
-        print("Run discovery with: ./sap_ha_check.py -f <node>")
+        print("Run discovery with: ./sap_cluster_checks.py -f <node>")
         return False
 
     # Build Ansible vars dictionary
